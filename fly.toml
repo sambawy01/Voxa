@@ -1,23 +1,31 @@
-# fly.toml app configuration file generated for voxa-zpukmw on 2026-10-22T09:02:41Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
-app = 'voxa-zpukmw'
-primary_region = 'ams'
+# fly.toml — Voxa, server-side Kokoro TTS
+app = "voxa-zpukmw"
+primary_region = "fra"
 
 [build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = "suspend"
   auto_start_machines = true
-  min_machines_running = 0
-  processes = ['app']
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "10s"
+    grace_period = "180s"
+    method = "GET"
+    path = "/health"
 
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
-  cpus = 1
-  memory_mb = 256
+  # Kokoro-82M plus the CPU torch runtime needs headroom; 2 GB is comfortable and
+  # leaves room for one more language pipeline loaded lazily.
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 2

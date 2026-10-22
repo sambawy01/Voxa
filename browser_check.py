@@ -12,8 +12,8 @@ import tempfile
 import time
 import urllib.request
 
-PORT = 9333
-URL = 'http://127.0.0.1:5210/Voxa/'
+PORT = 9334
+URL = 'https://sambawy01.github.io/Voxa/'
 CHROME = '/opt/data/.pw-browsers/chromium-1243/chrome-linux64/chrome'
 PROFILE = tempfile.mkdtemp(prefix='voxa-chrome-')
 

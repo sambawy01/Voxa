@@ -1,1 +1,6 @@
-fly.toml
+node_modules
+dist
+.git
+.github
+*.log
+browser_check.py

@@ -75,29 +75,51 @@ LANG_LABELS = {
     'z': 'Chinese (Mandarin)',
 }
 
-# The full Kokoro v1.0 voice catalogue (54 voices), taken from the HF repo's voices/ listing.
-# Hardcoded because KPipeline.voices only reports the voices already WARM in this process —
-# reporting from it gave users a single choice ("1 voices for English"), which was wrong.
-# The first voice of each language is its default.
-VOICES = {
-    'a': ['af_heart', 'af_bella', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah',
-          'af_alloy', 'af_nova', 'af_sky', 'af_jessica', 'af_river',
-          'am_fenrir', 'am_michael', 'am_puck', 'am_adam', 'am_echo', 'am_eric',
-          'am_liam', 'am_onyx', 'am_santa'],
-    'b': ['bf_emma', 'bf_isabella', 'bf_alice', 'bf_lily',
-          'bm_fable', 'bm_george', 'bm_lewis', 'bm_daniel'],
-    'e': ['ef_dora', 'em_alex', 'em_santa'],
-    'f': ['ff_siwis'],
-    'h': ['hf_alpha', 'hf_beta', 'hm_omega', 'hm_psi'],
-    'i': ['if_sara', 'im_nicola'],
-    'j': ['jf_alpha', 'jf_gongitsune', 'jf_tebukuro', 'jf_nezumi', 'jm_kumo'],
-    'p': ['pf_dora', 'pm_alex', 'pm_santa'],
-    'z': ['zf_xiaobei', 'zf_xiaoni', 'zf_xiaoxiao', 'zf_xiaoyi',
-          'zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang'],
-}
+# The voice catalogue: Voxa's own names for all 54 Kokoro v1.0 voices plus signature blends.
+# Kept in voices.json so names can change without touching code. It is the source of truth
+# because KPipeline.voices only reports the voices already WARM in this process — reporting
+# from it gave users a single choice ("1 voices for English"), which was wrong.
+CATALOGUE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'voices.json')
+GRADE_LABELS = {'A': 'Best quality', 'B': 'Very good quality', 'C': 'Good quality',
+                'D': 'Fair quality', 'F': 'Basic quality'}
+
+
+def load_catalogue(path=CATALOGUE_PATH):
+    """Read voices.json and check it. Returns the voice list, each language's default first."""
+    with open(path, encoding='utf-8') as f:
+        voices = json.load(f)['voices']
+    seen = set()
+    for v in voices:
+        if v['id'] in seen:
+            raise ValueError(f'duplicate voice id {v["id"]!r}')
+        seen.add(v['id'])
+        if v['lang'] not in LANG_LABELS:
+            raise ValueError(f'voice {v["id"]!r} has unknown language {v["lang"]!r}')
+        src = v['source']
+        parts = [src] if isinstance(src, str) else list(src)
+        if any(p[0] != v['lang'] for p in parts):
+            raise ValueError(f'voice {v["id"]!r} mixes in another language')
+        if not isinstance(src, str) and abs(sum(src.values()) - 1) > 1e-6:
+            raise ValueError(f'blend weights of {v["id"]!r} must add up to 1')
+        grade = (v.get('grade') or '')[:1]
+        bits = [v['gender'].capitalize(), v['accent']]
+        bits.append('Voxa signature blend' if v.get('signature') else GRADE_LABELS.get(grade))
+        v['description'] = ' · '.join(b for b in bits if b)
+    voices.sort(key=lambda v: not v.get('default'))
+    return voices
+
+
+CATALOGUE = load_catalogue()
+VOICE_BY_ID = {v['id']: v for v in CATALOGUE}
+# Kokoro's own ids (e.g. af_heart) are still accepted from API callers written before the
+# catalogue; they map to the Voxa voice built from that one Kokoro voice.
+KOKORO_ALIASES = {v['source']: v['id'] for v in CATALOGUE if isinstance(v['source'], str)}
+# Voxa voice ids per language; the first is the language's default.
+VOICES = {lang: [v['id'] for v in CATALOGUE if v['lang'] == lang] for lang in LANG_LABELS}
 
 _shared_model = None
 _pipelines = {}
+_blends = {}
 _model_lock = threading.Lock()
 _pipe_lock = threading.Lock()
 
@@ -137,6 +159,20 @@ def get_pipeline(lang_code):
         return _pipelines[lang_code]
 
 
+def kokoro_voice(pipe, voice_id):
+    """What Kokoro takes for a Voxa voice: its voice id, or a weighted blend tensor.
+
+    Kokoro's own "a,b" syntax only averages voices equally, so blends are summed here,
+    once per process."""
+    src = VOICE_BY_ID[voice_id]['source']
+    if isinstance(src, str):
+        return src
+    with _pipe_lock:
+        if voice_id not in _blends:
+            _blends[voice_id] = sum(w * pipe.load_single_voice(k) for k, w in src.items())
+        return _blends[voice_id]
+
+
 def synth(text, voice, speed, lang_code, on_progress=None):
     """Yield one WAV (bytes) per sentence chunk, reporting the share of text consumed."""
     import numpy as np
@@ -144,7 +180,7 @@ def synth(text, voice, speed, lang_code, on_progress=None):
 
     pipe = get_pipeline(lang_code)
     consumed = 0
-    for graphemes, _, audio in pipe(text, voice=voice, speed=speed):
+    for graphemes, _, audio in pipe(text, voice=kokoro_voice(pipe, voice), speed=speed):
         if audio is None:
             continue
         arr = audio.detach().cpu().numpy() if hasattr(audio, 'detach') else np.asarray(audio)
@@ -213,6 +249,9 @@ def parse_request(body):
         raise BadRequest(f'unsupported language code: {lang!r}; see /api/languages')
 
     voice = body.get('voice') or VOICES[lang][0]
+    if not isinstance(voice, str):
+        raise BadRequest('voice must be a string')
+    voice = KOKORO_ALIASES.get(voice, voice)
     if voice not in VOICES[lang]:
         raise BadRequest(f'voice {voice!r} is not available for {LANG_LABELS[lang]}; '
                          f'choose one of: {", ".join(VOICES[lang])}')
@@ -607,24 +646,30 @@ languages share the same memory. Repeated phrases are cached and come back insta
 <script>
 const $=s=>document.querySelector(s);
 const MAX=4000;
-let LANG={}, VOICES={};
+let LANG={}, VOICES={}, CAT={};
 const langSel=$('#lang'), voiceSel=$('#voice');
 Promise.all([
   fetch('/api/languages').then(r=>r.json()),
   fetch('/api/voices').then(r=>r.json())
 ]).then(([l,v])=>{
-  LANG=l.languages||{}; VOICES=v.voices||{};
+  LANG=l.languages||{}; VOICES=v.voices||{}; CAT=v.catalogue||{};
   langSel.innerHTML=Object.entries(LANG).map(([k,lab])=>`<option value="${k}">${lab}</option>`).join('');
   refreshVoices();
 }).catch(()=>{ langSel.innerHTML='<option value="a">English (US)</option>'; });
 
 function refreshVoices(){
-  const k=langSel.value, list=VOICES[k]||[];
-  voiceSel.innerHTML=list.length?list.map(v=>`<option value="${v}">${v}</option>`).join(''):'<option value="">default</option>';
+  const k=langSel.value, list=CAT[k]||(VOICES[k]||[]).map(id=>({id,name:id}));
+  voiceSel.innerHTML=list.length?list.map(v=>`<option value="${v.id}">${v.name}${v.signature?' ✦':''}</option>`).join(''):'<option value="">default</option>';
   const n=list.length;
   $('#langnote').textContent = n ? `${n} voice${n===1?'':'s'} for ${LANG[k]}${n===1?' — the model only ships one for this language':''}.` : '';
+  describeVoice();
+}
+function describeVoice(){
+  const v=(CAT[langSel.value]||[]).find(x=>x.id===voiceSel.value);
+  $('#voicenote').textContent=v?v.description:'';
 }
 langSel.addEventListener('change',refreshVoices);
+voiceSel.addEventListener('change',describeVoice);
 $('#speed').addEventListener('input',e=>$('#speedv').textContent=(+e.target.value).toFixed(2)+'×');
 function upd(){const t=$('#text').value;const c=$('#count');c.textContent=`${t.length} / ${MAX} characters`;c.className=t.length>MAX?'over':'';$('#est').textContent=t.length?`≈ ${Math.ceil(t.length/14)}s of audio`:'';}
 $('#text').addEventListener('input',upd);upd();
@@ -882,7 +927,12 @@ class Handler(BaseHTTPRequestHandler):
         if p == '/api/languages':
             return self._send(200, {'languages': LANG_LABELS})
         if p == '/api/voices':
-            return self._send(200, {'voices': VOICES, 'languages': LANG_LABELS})
+            catalogue = {lang: [{k: VOICE_BY_ID[vid][k]
+                                 for k in ('id', 'name', 'description', 'gender', 'signature')}
+                                for vid in ids]
+                         for lang, ids in VOICES.items()}
+            return self._send(200, {'voices': VOICES, 'catalogue': catalogue,
+                                    'languages': LANG_LABELS})
         return self._send(404, {'error': 'not found'})
 
     def do_OPTIONS(self):

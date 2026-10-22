@@ -54,9 +54,9 @@ class ParseRequestTest(unittest.TestCase):
         self.assertIn(fragment, str(cm.exception))
 
     def test_defaults_voice_and_speed(self):
-        self.assertEqual(self.ok(text=' hi '), ('hi', 'a', 'af_heart', 1.0))
+        self.assertEqual(self.ok(text=' hi '), ('hi', 'a', 'harper', 1.0))
         self.assertEqual(self.ok(text='hola', lang='e', voice=None, speed=None),
-                         ('hola', 'e', 'ef_dora', 1.0))
+                         ('hola', 'e', 'lucia', 1.0))
 
     def test_every_language_has_a_default_voice(self):
         for lang in server.LANG_LABELS:
@@ -68,6 +68,10 @@ class ParseRequestTest(unittest.TestCase):
         self.bad({}, 'string')
         self.bad({'text': 'a' * (server.MAX_TEXT + 1)}, 'longer')
         self.bad(['not', 'an', 'object'], 'JSON object')
+
+    def test_accepts_kokoro_ids_from_older_callers(self):
+        self.assertEqual(self.ok(text='x', voice='af_bella')[2], 'sienna')
+        self.assertEqual(self.ok(text='x', lang='b', voice='bf_emma')[2], 'eleanor')
 
     def test_rejects_unknown_language_and_voice(self):
         self.bad({'text': 'x', 'lang': 'xx'}, 'unsupported language')
@@ -81,6 +85,41 @@ class ParseRequestTest(unittest.TestCase):
                 self.bad({'text': 'x', 'speed': s}, 'speed')
         self.assertEqual(self.ok(text='x', speed='0.9')[3], 0.9)
         self.assertEqual(self.ok(text='x', speed=2)[3], 2.0)
+
+
+class CatalogueTest(unittest.TestCase):
+    def test_covers_every_kokoro_voice_once(self):
+        singles = [v['source'] for v in server.CATALOGUE if isinstance(v['source'], str)]
+        self.assertEqual(len(singles), 54)
+        self.assertEqual(len(set(singles)), 54)
+
+    def test_every_language_has_voices_and_a_default(self):
+        for lang in server.LANG_LABELS:
+            self.assertTrue(server.VOICES[lang], lang)
+        self.assertEqual(server.VOICES['a'][0], 'harper')
+        self.assertEqual(server.VOICES['b'][0], 'eleanor')
+
+    def test_signature_blends(self):
+        aurora = server.VOICE_BY_ID['aurora']
+        self.assertEqual(aurora['source'], {'af_heart': 0.6, 'af_bella': 0.4})
+        self.assertIn('signature', aurora['description'])
+
+    def test_bad_catalogues_are_rejected(self):
+        import tempfile
+        good = {'id': 'x', 'name': 'X', 'lang': 'a', 'gender': 'female', 'accent': 'American',
+                'grade': 'A', 'source': 'af_heart'}
+        cases = {
+            'duplicate': [good, dict(good)],
+            'another language': [dict(good, source={'af_heart': 0.5, 'bf_emma': 0.5})],
+            'add up to 1': [dict(good, source={'af_heart': 0.5, 'af_bella': 0.4})],
+            'unknown language': [dict(good, lang='xx')],
+        }
+        for message, voices in cases.items():
+            with self.subTest(message), tempfile.NamedTemporaryFile('w', suffix='.json') as f:
+                json.dump({'voices': voices}, f)
+                f.flush()
+                with self.assertRaisesRegex(ValueError, message):
+                    server.load_catalogue(f.name)
 
 
 class AudioCacheTest(unittest.TestCase):
@@ -218,7 +257,11 @@ class HTTPTest(ServerTestCase):
         self.assertEqual(code, 200)
         self.assertIn(b'/api/jobs', body)
         code, _, body = self.req('/api/voices')
-        self.assertEqual(sum(len(v) for v in json.loads(body)['voices'].values()), 54)
+        voices = json.loads(body)
+        self.assertEqual(sum(len(v) for v in voices['voices'].values()), 57)
+        first = voices['catalogue']['a'][0]
+        self.assertEqual((first['id'], first['name']), ('harper', 'Harper'))
+        self.assertEqual(first['description'], 'Female · American · Best quality')
         code, _, body = self.req('/health')
         self.assertTrue(json.loads(body)['ok'])
 

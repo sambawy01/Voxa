@@ -42,7 +42,7 @@ m = KModel(repo_id='hexgrad/Kokoro-82M').eval(); \
 # Everything is local now; fail fast rather than reach the network at runtime.
 ENV HF_HUB_OFFLINE=1
 
-COPY server.py /app/server.py
+COPY server.py voices.json /app/
 
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s \

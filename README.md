@@ -61,8 +61,14 @@ Request fields:
 
 - `text` — required string, at most 4,000 characters.
 - `lang` — optional, default `a`. Unknown codes are a 400.
-- `voice` — optional, defaults to the language's first voice. Must belong to that language
-  (see `/api/voices`); anything else is a 400.
+- `voice` — optional, defaults to the language's first voice. A Voxa voice id from
+  `/api/voices` (e.g. `harper`), which must belong to that language; anything else is a 400.
+  Kokoro's own ids (e.g. `af_heart`) are still accepted and map to the matching Voxa voice.
+
+Voices are defined in `voices.json`: a Voxa name, gender, accent, Kokoro's published quality
+grade, and the Kokoro voice behind it, or a weighted blend of same-language Kokoro voices
+(the "signature" voices, marked ✦ on the page). Rename or add voices there; the server checks
+the file at startup (unique ids, one language per blend, weights adding up to 1).
 - `speed` — optional number, default 1.0, must be 0.5–2.0. Audio length and memory scale
   with 1/speed: `0.01` once took 4.6 GB and OOM-killed the machine.
 

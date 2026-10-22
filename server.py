@@ -40,6 +40,8 @@ import threading
 import time
 import urllib.request
 import uuid
+
+import billing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -83,6 +85,8 @@ IP_DAILY_FACTOR = 5
 # Where usage counts are stored. Mount a Fly volume at /data to keep them across restarts.
 DATA_DIR = os.environ.get('VOXA_DATA_DIR') or ('/data' if os.path.isdir('/data') else '.')
 COOKIE = 'voxa_id'
+# The site's public address, for links Stripe sends people back to. Falls back to the request.
+PUBLIC_URL = os.environ.get('VOXA_PUBLIC_URL', '').rstrip('/')
 # Voxa Lite: the phonon-tts browser package, fetched by scripts/fetch_phonon.py into static/
 # and served from here, since its worker must be same-origin. Pages that run it are served
 # cross-origin isolated, which is what gives WebAssembly its threads.
@@ -500,7 +504,8 @@ def identity_from_claims(claims, ip):
     # webhook) can write. user_metadata is editable by the user, so it is never trusted.
     app = claims.get('app_metadata') if isinstance(claims.get('app_metadata'), dict) else {}
     tier = 'paid' if app.get('tier') == 'paid' else 'free'
-    return Identity(ip, user=claims['sub'], tier=tier, email=claims.get('email'))
+    return Identity(ip, user=claims['sub'], tier=tier, email=claims.get('email'),
+                    customer=app.get('stripe_customer'))
 
 
 _auth = None  # a TokenVerifier once sign-in is configured
@@ -523,8 +528,9 @@ class Identity:
     """Who a request is for. Signed-in users are counted by account; guests by their
     cookie id, or by IP when there is no cookie (scripts)."""
 
-    def __init__(self, ip, visitor=None, user=None, tier='guest', email=None):
+    def __init__(self, ip, visitor=None, user=None, tier='guest', email=None, customer=None):
         self.ip, self.visitor, self.user, self.tier, self.email = ip, visitor, user, tier, email
+        self.customer = customer  # Stripe customer id, once the account has subscribed
 
 
 class Quota:
@@ -1367,7 +1373,8 @@ class Handler(BaseHTTPRequestHandler):
                               extra={'Cache-Control': 'no-store'})
         if p == '/api/config':
             auth = {'url': SUPABASE_URL, 'anon_key': SUPABASE_ANON_KEY} if _auth else None
-            return self._send(200, {'auth': auth, 'limits': tier_limits()})
+            paying = {'price_label': billing.PRICE_LABEL} if _auth and billing.enabled(SUPABASE_URL) else None
+            return self._send(200, {'auth': auth, 'limits': tier_limits(), 'billing': paying})
         if p.startswith('/api/jobs/'):
             job = _jobs.get(p.rsplit('/', 1)[-1])
             if job is None:
@@ -1412,8 +1419,50 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', '0')
         self.end_headers()
 
+    def _billing(self, p):
+        """Upgrade, manage the plan, and Stripe's webhook."""
+        if not (_auth and billing.enabled(SUPABASE_URL)):
+            return self._send(404, {'error': 'payments are not set up'})
+        if p == '/api/billing/webhook':
+            n = int(self.headers.get('Content-Length') or 0)
+            if n > 256 * 1024:
+                self.close_connection = True
+                return self._send(413, {'error': 'too large'})
+            payload = self.rfile.read(n)
+            try:
+                event = billing.verify(payload, self.headers.get('Stripe-Signature'))
+            except (billing.BadSignature, ValueError) as e:
+                log.warning('rejected Stripe webhook: %s', e)
+                return self._send(400, {'error': 'bad signature'})
+            try:
+                result = billing.handle_event(event, SUPABASE_URL)
+            except Exception:
+                # A non-2xx makes Stripe retry the event later, which is what we want here.
+                log.exception('Stripe event %s failed', event.get('id'))
+                return self._send(500, {'error': 'could not apply the event'})
+            log.info('Stripe %s %s: %s', event.get('type'), event.get('id'), result)
+            return self._send(200, {'received': True})
+        who = self._identity()
+        if not who.user:
+            return self._send(401, {'error': 'Sign in first.'})
+        origin = PUBLIC_URL or f"{self.headers.get('X-Forwarded-Proto', 'http')}://{self.headers.get('Host', 'localhost')}"
+        try:
+            if p == '/api/billing/checkout':
+                if who.tier == 'paid':
+                    return self._send(409, {'error': 'This account already has the paid plan.'})
+                return self._send(200, {'url': billing.checkout_url(who, origin + '/')})
+            if p == '/api/billing/portal':
+                if not who.customer:
+                    return self._send(409, {'error': 'There is no subscription on this account yet.'})
+                return self._send(200, {'url': billing.portal_url(who, origin + '/')})
+        except billing.BillingError as e:
+            return self._send(502, {'error': str(e)})
+        return self._send(404, {'error': 'not found'})
+
     def _post(self):
         p = urlparse(self.path).path
+        if p.startswith('/api/billing/'):
+            return self._billing(p)
         if p == '/api/jobs':
             job, who = self._submit()
             out = job_json(job)

@@ -47,7 +47,7 @@ RUN python /tmp/fetch_vendor.py /app/static && rm /tmp/fetch_vendor.py
 # Everything is local now; fail fast rather than reach the network at runtime.
 ENV HF_HUB_OFFLINE=1
 
-COPY server.py voices.json /app/
+COPY server.py billing.py voices.json /app/
 COPY web /app/web
 
 EXPOSE 8080

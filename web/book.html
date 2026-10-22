@@ -36,10 +36,34 @@ ol.chapters{list-style:none;margin:0;padding:0;display:flex;flex-direction:colum
 .chapter .meta button{background:none;border:0;color:var(--accent);font:inherit;font-size:12.5px;padding:0;cursor:pointer}
 .chapter textarea{grid-column:1/-1;width:100%;min-height:200px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;font-size:14px;resize:vertical}
 .chapter textarea[hidden]{display:none}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.controls label{display:flex;flex-direction:column;gap:6px;font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim)}
+.controls label[hidden]{display:none}
+select{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;text-transform:none;letter-spacing:0}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+button.primary{flex:1 1 200px;background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:680;cursor:pointer}
+button.primary:disabled{opacity:.45;cursor:default}
+button.ghost{flex:1 1 120px;background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit;cursor:pointer}
+button[hidden]{display:none}
+.bar{height:6px;background:var(--panel2);border-radius:6px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
+ol.outputs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+ol.outputs li{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+ol.outputs .head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+ol.outputs .state{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
+ol.outputs .state.ready{color:var(--good)}
+ol.outputs audio{width:100%}
+a.dl{color:var(--accent);font-size:14px;font-weight:600;text-decoration:none}
+.note{font-size:14px;color:var(--dim)}
 </style></head>
 <body><div class="wrap">
 <div class="brand"><h1>Voxa audiobooks</h1><a href="/">← Back to Voxa</a></div>
 <p class="dim">Open a PDF or a text file. Voxa finds the chapters and removes page headers, footers and page numbers. Check the text before any audio is made.</p>
+
+<section class="card" id="savedbox" hidden>
+  <h2>Continue a saved book</h2>
+  <ol class="outputs" id="saved"></ol>
+</section>
 
 <section class="card">
   <div class="pick">
@@ -59,11 +83,31 @@ ol.chapters{list-style:none;margin:0;padding:0;display:flex;flex-direction:colum
   </div>
   <ol class="chapters" id="chapters"></ol>
 </section>
+
+<section class="card" id="make" hidden>
+  <h2>Voice and audio</h2>
+  <div class="controls">
+    <label>Language<select id="lang"></select></label>
+    <label>Voice<select id="voice"></select></label>
+    <label id="exprbox" hidden>Expressiveness<select id="expr"></select></label>
+  </div>
+  <p class="note" id="costnote"></p>
+  <div class="row">
+    <button class="primary" id="start" type="button">Make the audiobook</button>
+    <button class="ghost" id="pause" type="button" hidden>Pause</button>
+  </div>
+  <div class="bar" id="bar"><i></i></div>
+  <p class="status" id="genstatus" role="status"></p>
+  <ol class="outputs" id="outputs"></ol>
+  <div class="row"><button class="small" id="forget" type="button" hidden>Delete saved audio for this book</button></div>
+</section>
 </div>
 
 <script type="module">
 import * as pdfjs from '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.min.mjs';
-import { readPdf, paragraphsFromText, findChapters, estimateSeconds, formatDuration } from '/book.js?v={{BOOK_VERSION}}';
+import { readPdf, paragraphsFromText, findChapters, estimateSeconds, formatDuration, planChunks, bookKey,
+  openStore, saveChunk, loadChunk, savedChunkKeys, saveBook, listBooks, deleteBook, parseWav, encodeWav,
+  floatToInt16, joinPcm, SAMPLE_RATE } from '/book.js?v={{BOOK_VERSION}}';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.worker.min.mjs';
 const PDF_OPTIONS = { cMapUrl: '/static/pdfjs-{{PDFJS_VERSION}}/cmaps/', cMapPacked: true };
@@ -76,6 +120,8 @@ function el(tag, props = {}, ...children) {
   e.append(...children);
   return e;
 }
+
+let refreshPlan = () => {};
 
 function summarise() {
   const on = BOOK.chapters.filter(c => c.include);
@@ -100,6 +146,8 @@ function renderChapters() {
     const title = el('input', { className: 'title', value: c.title, ariaLabel: `Title of chapter ${i + 1}` });
     const li = el('li', { className: 'chapter' + (c.include ? '' : ' off') }, box, title, meta, text);
     box.onchange = () => { c.include = box.checked; li.classList.toggle('off', !c.include); summarise(); };
+    box.addEventListener('change', () => refreshPlan());
+    text.addEventListener('input', () => refreshPlan());
     title.oninput = () => { c.title = title.value; };
     text.oninput = () => { c.text = text.value; updateMeta(); summarise(); };
     updateMeta();
@@ -131,6 +179,7 @@ async function open(file) {
     st.textContent = `Found ${chapters.length} chapter${chapters.length === 1 ? '' : 's'} · ${note}. Untick anything you don't want read aloud.`;
     renderChapters();
     $('#review').hidden = false;
+    await setupMake();
   } catch (e) {
     st.className = 'status err';
     st.textContent = e.name === 'PasswordException' ? 'This PDF is password-protected. Open it without a password and try again.'
@@ -139,7 +188,286 @@ async function open(file) {
 }
 
 $('#file').addEventListener('change', e => { if (e.target.files[0]) open(e.target.files[0]); });
-$('#all').onclick = () => { BOOK.chapters.forEach(c => c.include = true); renderChapters(); };
-$('#none').onclick = () => { BOOK.chapters.forEach(c => c.include = false); renderChapters(); };
+// --- Making the audio ------------------------------------------------------------------------
+// On-device voices (Phonon, English) are free and unlimited; Studio voices (Kokoro on the server)
+// use the daily allowance. Every finished part is saved on this device straight away, so a
+// closed tab, a lost connection or a used-up allowance only ever pauses the book.
+
+const LITE_SEED = 4242424242424242;  // fixed, so a part regenerated later sounds the same
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let VOICES = null, CONFIG = { auth: null, limits: {} }, SB = null, accountReady = null;
+let db = null, running = false, controller = null, currentKey = null, OUT = {};
+
+async function token() {
+  if (!SB) return null;
+  try { const { data } = await SB.auth.getSession(); return data.session ? data.session.access_token : null; }
+  catch (e) { return null; }
+}
+async function api(url, opts = {}) {
+  const send = t => fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...(t ? { Authorization: 'Bearer ' + t } : {}) } });
+  let r = await send(await token());
+  if (r.status === 401 && SB) {
+    const { data } = await SB.auth.refreshSession().catch(() => ({ data: {} }));
+    r = await send(data && data.session ? data.session.access_token : null);
+  }
+  return r;
+}
+function setupAccount() {
+  // The same sign-in as the main page: the session lives in this site's storage.
+  return accountReady ||= (async () => {
+    CONFIG = await fetch('/api/config', { cache: 'no-store' }).then(r => r.json()).catch(() => CONFIG);
+    if (!CONFIG.auth) return;
+    await new Promise((ok, fail) => document.head.appendChild(Object.assign(document.createElement('script'),
+      { crossOrigin: 'anonymous', src: 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js', onload: ok, onerror: fail })))
+      .then(() => { SB = window.supabase.createClient(CONFIG.auth.url, CONFIG.auth.anon_key); })
+      .catch(() => {});
+  })();
+}
+
+const liteOK = () => typeof WebAssembly === 'object' && 'Worker' in window;
+const liteVoices = () => (VOICES && VOICES.lite && liteOK() && VOICES.lite.voices[$('#lang').value]) || [];
+const isLite = () => liteVoices().some(v => v.id === $('#voice').value);
+const voiceInfo = id => liteVoices().find(v => v.id === id) || (VOICES.catalogue[$('#lang').value] || []).find(v => v.id === id);
+
+function fillVoices(selected) {
+  const k = $('#lang').value, lite = liteVoices(), studio = VOICES.catalogue[k] || [];
+  const opt = v => el('option', { value: v.id, textContent: v.name + (v.signature ? ' ✦' : ''), selected: v.id === selected });
+  const groups = [];
+  // On-device first for English: whole books cost nothing and never hit a daily limit.
+  if (lite.length) groups.push(el('optgroup', { label: 'On this device · free, no daily limit' }, ...lite.map(opt)));
+  groups.push(el('optgroup', { label: 'Studio voices' }, ...studio.map(opt)));
+  $('#voice').replaceChildren(...groups);
+  $('#exprbox').hidden = !isLite();
+}
+
+function settings() {
+  return isLite()
+    ? { engine: 'lite', lang: $('#lang').value, voice: $('#voice').value, temperature: +$('#expr').value, seed: LITE_SEED }
+    : { engine: 'studio', lang: $('#lang').value, voice: $('#voice').value, speed: 1 };
+}
+
+async function setupMake(restore) {
+  if (!VOICES) {
+    const [l, v] = await Promise.all([fetch('/api/languages').then(r => r.json()), fetch('/api/voices').then(r => r.json())]);
+    VOICES = v;
+    $('#lang').replaceChildren(...Object.entries(l.languages).map(([k, lab]) => el('option', { value: k, textContent: lab })));
+    $('#expr').replaceChildren(...((v.lite && v.lite.expressiveness) || []).map(e =>
+      el('option', { value: e.temperature, textContent: e.name, selected: !!e.default })));
+    $('#lang').onchange = () => { fillVoices(); updatePlan(); };
+    $('#voice').onchange = () => { $('#exprbox').hidden = !isLite(); updatePlan(); };
+    $('#expr').onchange = () => updatePlan();
+    setupAccount();
+  }
+  if (restore) { $('#lang').value = restore.lang; fillVoices(restore.voice); if (restore.temperature != null) $('#expr').value = restore.temperature; }
+  else fillVoices();
+  refreshPlan = updatePlan;
+  $('#make').hidden = false;
+  await updatePlan();
+}
+
+async function savedSet(key) {
+  return new Set((await savedChunkKeys(db, key)).map(k => k[1] + ':' + k[2]));
+}
+
+async function updatePlan() {
+  if (!BOOK || running) return;
+  db ||= await openStore();
+  const s = settings(), plan = planChunks(BOOK.chapters);
+  currentKey = await bookKey(BOOK.chapters, s);
+  const saved = await savedSet(currentKey);
+  const left = plan.filter(c => !saved.has(c.chapter + ':' + c.index));
+  const leftChars = left.reduce((a, c) => a + c.text.length, 0);
+  const done = plan.length - left.length;
+  const note = $('#costnote'), v = voiceInfo(s.voice);
+  if (!plan.length) note.textContent = 'Include at least one chapter.';
+  else if (!left.length) note.textContent = `All ${plan.length} parts are made and saved on this device.`;
+  else if (s.engine === 'lite') note.textContent = `${v ? v.name + ' reads' : 'Read'} on this device: free, with no daily limit. Keep this page open while it works; progress is saved as it goes.`;
+  else {
+    await setupAccount();
+    const q = await api('/api/quota', { cache: 'no-store' }).then(r => r.json()).then(j => j.quota).catch(() => null);
+    if (!q || q.unlimited) note.textContent = 'Studio voices on your plan have no daily limit.';
+    else {
+      const fits = leftChars <= q.remaining;
+      note.textContent = `This needs ${leftChars.toLocaleString()} characters of Studio voice; you have ${q.remaining.toLocaleString()} left today. ` +
+        (fits ? '' : `Voxa makes what fits, saves it, and continues when you come back after midnight UTC. `) +
+        (liteVoices().length ? 'English on-device voices have no limit.' : '');
+    }
+  }
+  $('#start').disabled = !plan.length;
+  $('#start').hidden = plan.length > 0 && !left.length;
+  $('#start').textContent = done ? `Continue (${done} of ${plan.length} parts made)` : 'Make the audiobook';
+  $('#forget').hidden = !saved.size;
+  $('#bar i').style.width = plan.length ? (100 * done / plan.length) + '%' : '0';
+  renderOutputs(plan, saved);
+  for (const i of Object.keys(OUT)) if (OUT[i].done === OUT[i].total) await showChapter(+i, plan);
+}
+
+function renderOutputs(plan, saved) {
+  OUT = {};
+  const items = BOOK.chapters.map((c, i) => {
+    const parts = plan.filter(p => p.chapter === i);
+    if (!parts.length) return null;
+    const state = el('span', { className: 'state' });
+    const li = el('li', {}, el('div', { className: 'head' }, el('b', { textContent: c.title }), state));
+    OUT[i] = { li, state, total: parts.length, done: parts.filter(p => saved.has(i + ':' + p.index)).length };
+    setState(i);
+    return li;
+  }).filter(Boolean);
+  $('#outputs').replaceChildren(...items);
+}
+
+function setState(i, busy) {
+  const o = OUT[i];
+  o.state.className = 'state' + (o.done === o.total ? ' ready' : '');
+  o.state.textContent = o.done === o.total ? 'Ready' : busy ? `Making part ${o.done + 1} of ${o.total}…` : `${o.done} of ${o.total} parts`;
+}
+
+const fileName = (i, title) => `${String(i + 1).padStart(2, '0')} ${title}`.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) + '.wav';
+
+async function showChapter(i, plan) {
+  const parts = [];
+  for (const c of plan.filter(p => p.chapter === i)) parts.push(await loadChunk(db, currentKey, i, c.index));
+  if (parts.some(p => !p)) return;
+  const blob = new Blob([encodeWav(joinPcm(parts), SAMPLE_RATE)], { type: 'audio/wav' });
+  const url = URL.createObjectURL(blob), name = fileName(i, BOOK.chapters[i].title);
+  const link = el('a', { className: 'dl', href: url, download: name, textContent: `⬇ Download (${(blob.size / 1e6).toFixed(1)} MB)` });
+  // iOS ignores `download` on blob links; its share sheet is what offers "Save to Files".
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent) && navigator.canShare) {
+    link.textContent = '⬇ Save or share';
+    link.onclick = async ev => {
+      const file = new File([blob], name, { type: 'audio/wav' });
+      if (navigator.canShare({ files: [file] })) { ev.preventDefault(); await navigator.share({ files: [file], title: name }).catch(() => {}); }
+    };
+  }
+  const o = OUT[i];
+  o.li.querySelector('audio')?.remove(); o.li.querySelector('a.dl')?.remove();
+  o.li.append(el('audio', { controls: true, preload: 'none', src: url }), link);
+}
+
+// On-device engine, loaded once (~65 MB the first time, then from the browser cache).
+let LITE_TTS = null;
+const LITE_ADDED = new Set();
+async function liteEngine(st) {
+  if (LITE_TTS) return LITE_TTS;
+  const { PhononTTS } = await import(`/static/phonon-${VOICES.phonon_version}/index.js`);
+  const seen = {};
+  LITE_TTS = await PhononTTS.load({ lang: 'en', model: VOICES.lite.model, onProgress: ({ file, loaded, cached }) => {
+    seen[file] = loaded || 0;
+    st.textContent = cached ? 'Loading the on-device voice…' : `Downloading the on-device voice (once)… ${(Object.values(seen).reduce((a, b) => a + b, 0) / 1e6).toFixed(0)} MB of about 65`;
+  } });
+  return LITE_TTS;
+}
+
+class QuotaReached extends Error {}
+
+async function makePart(c, s, signal, st) {
+  if (s.engine === 'lite') {
+    const tts = await liteEngine(st);
+    if (!LITE_ADDED.has(s.voice)) { await tts.addVoice(s.voice, voiceInfo(s.voice).url); LITE_ADDED.add(s.voice); }
+    return floatToInt16(await tts.synth(c.text, { voice: s.voice, temperature: s.temperature, seed: s.seed, signal }));
+  }
+  let r = await api('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+    body: JSON.stringify({ text: c.text, lang: s.lang, voice: s.voice, speed: s.speed }) });
+  let job = await r.json().catch(() => ({}));
+  if (r.status === 429) throw new QuotaReached(job.error || 'Daily limit reached.');
+  if (!r.ok) throw new Error(job.error || `Server error (${r.status})`);
+  while (job.status === 'queued' || job.status === 'running') {
+    await sleep(800);
+    r = await api('/api/jobs/' + job.id, { signal, cache: 'no-store' });
+    if (!r.ok) throw new Error(`Server error (${r.status})`);
+    job = await r.json();
+  }
+  if (job.status !== 'done') throw new Error(job.error || 'Generation failed.');
+  r = await fetch(job.audio_url, { signal });
+  if (!r.ok) throw new Error(`Server error (${r.status})`);
+  return parseWav(await r.arrayBuffer()).pcm;
+}
+
+async function start() {
+  const st = $('#genstatus'), s = settings(), key = currentKey, plan = planChunks(BOOK.chapters);
+  running = true; controller = new AbortController();
+  $('#start').hidden = true; $('#pause').hidden = false; ['#lang', '#voice', '#expr', '#file'].forEach(x => $(x).disabled = true);
+  st.className = 'status'; st.textContent = 'Starting…';
+  let wake = navigator.wakeLock ? await navigator.wakeLock.request('screen').catch(() => null) : null;
+  await setupAccount();
+  await saveBook(db, key, { key, name: BOOK.name, chapters: BOOK.chapters, settings: s, parts: plan.length, saved: Date.now() });
+  const saved = await savedSet(key);
+  const canSignIn = !!CONFIG.auth && !(await token());
+  let made = 0, madeChars = 0;
+  const t0 = performance.now();
+  try {
+    for (const c of plan) {
+      if (!running) break;
+      if (saved.has(c.chapter + ':' + c.index)) continue;
+      setState(c.chapter, true);
+      const remaining = plan.filter(p => !saved.has(p.chapter + ':' + p.index)).reduce((a, p) => a + p.text.length, 0);
+      const rate = madeChars / ((performance.now() - t0) / 1000);
+      st.textContent = `Making part ${saved.size + 1} of ${plan.length}` + (made >= 2 ? ` · about ${formatDuration(remaining / rate)} left` : '');
+      let pcm;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          pcm = await makePart(c, s, controller.signal, st);
+          // A cancelled on-device synth resolves with the audio it had so far rather than
+          // throwing; saving that would leave a part cut short forever.
+          if (controller.signal.aborted) throw new DOMException('Paused', 'AbortError');
+          break;
+        }
+        catch (e) {
+          // A dropped connection or a restarted server is retried; a used-up allowance or Pause is not.
+          if (e instanceof QuotaReached || e.name === 'AbortError' || attempt >= 3) throw e;
+          st.textContent = `Connection trouble, retrying part ${saved.size + 1}…`;
+          await sleep(2000 * 2 ** attempt);
+        }
+      }
+      await saveChunk(db, key, c.chapter, c.index, pcm);
+      saved.add(c.chapter + ':' + c.index); made++; madeChars += c.text.length;
+      OUT[c.chapter].done++; setState(c.chapter);
+      $('#bar i').style.width = (100 * saved.size / plan.length) + '%';
+      if (OUT[c.chapter].done === OUT[c.chapter].total) await showChapter(c.chapter, plan);
+    }
+    st.textContent = saved.size === plan.length ? `Done: ${Object.keys(OUT).length} chapter files, saved on this device.` : `Paused. ${saved.size} of ${plan.length} parts are saved on this device.`;
+  } catch (e) {
+    st.className = 'status' + (e.name === 'AbortError' ? '' : ' err');
+    const kept = `${saved.size} of ${plan.length} parts are saved on this device`;
+    st.textContent = e instanceof QuotaReached ? `Paused at today's limit. ${kept}; come back after midnight UTC to continue${canSignIn ? ', or sign in for more' : ''}, or pick an English on-device voice.`
+      : e.name === 'AbortError' ? `Paused. ${kept}.` : `Stopped: ${e.message}. ${kept}; press Continue to try again.`;
+  } finally {
+    running = false; controller = null; if (wake) wake.release().catch(() => {});
+    // Rebuild the list and its files first, so the buttons come back with everything in place.
+    await updatePlan();  // also attaches every finished chapter's file
+    $('#pause').hidden = true; ['#lang', '#voice', '#expr', '#file'].forEach(x => $(x).disabled = false);
+    listSaved();
+  }
+}
+
+$('#start').onclick = () => start();
+$('#pause').onclick = () => { running = false; if (controller) controller.abort(); };
+$('#forget').onclick = async () => { await deleteBook(db, currentKey); await updatePlan(); listSaved(); };
+
+async function listSaved() {
+  db ||= await openStore();
+  const books = (await listBooks(db).catch(() => [])).sort((a, b) => b.saved - a.saved);
+  const rows = [];
+  for (const b of books) {
+    const done = (await savedChunkKeys(db, b.key)).length;
+    if (!done) continue;
+    rows.push(el('li', {}, el('div', { className: 'head' },
+      el('b', { textContent: b.name }), el('span', { className: 'state' + (done === b.parts ? ' ready' : ''), textContent: `${done} of ${b.parts} parts` })),
+      el('div', { className: 'row' }, el('button', { className: 'small', type: 'button', textContent: done === b.parts ? 'Open' : 'Continue',
+        onclick: async () => {
+          BOOK = { name: b.name, chapters: b.chapters };
+          $('#booktitle').textContent = b.name; renderChapters(); $('#review').hidden = false;
+          $('#status').textContent = `Opened ${b.name} from this device.`;
+          await setupMake(b.settings);
+          $('#make').scrollIntoView({ behavior: 'smooth' });
+        } }))));
+  }
+  $('#saved').replaceChildren(...rows);
+  $('#savedbox').hidden = !rows.length;
+}
+listSaved().catch(() => {});
+
+$('#all').onclick = () => { BOOK.chapters.forEach(c => c.include = true); renderChapters(); refreshPlan(); };
+$('#none').onclick = () => { BOOK.chapters.forEach(c => c.include = false); renderChapters(); refreshPlan(); };
 </script>
 </body></html>

@@ -190,3 +190,112 @@ export async function readPdf(pdfjs, data, onProgress = () => {}, options = {}) 
   }
   return { pages: doc.numPages, chapters: findChapters(paras, starts), outline: starts.length > 0 };
 }
+
+// --- Audio ---------------------------------------------------------------------------------
+// Both engines produce 24 kHz mono 16-bit speech; chapters are joined as raw samples.
+
+export const SAMPLE_RATE = 24000;
+export const PAUSE_BETWEEN_CHUNKS = 0.4;  // seconds; chunks end at paragraph boundaries
+
+/** Samples from a 16-bit PCM WAV file (any chunk layout). */
+export function parseWav(buffer) {
+  const v = new DataView(buffer instanceof ArrayBuffer ? buffer : buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
+  const tag = o => String.fromCharCode(v.getUint8(o), v.getUint8(o + 1), v.getUint8(o + 2), v.getUint8(o + 3));
+  if (v.byteLength < 12 || tag(0) !== 'RIFF' || tag(8) !== 'WAVE') throw new Error('not a WAV file');
+  let fmt = null;
+  for (let o = 12; o + 8 <= v.byteLength;) {
+    const id = tag(o), size = v.getUint32(o + 4, true), body = o + 8;
+    if (id === 'fmt ') {
+      fmt = { format: v.getUint16(body, true), channels: v.getUint16(body + 2, true),
+              rate: v.getUint32(body + 4, true), bits: v.getUint16(body + 14, true) };
+    } else if (id === 'data') {
+      if (!fmt || fmt.format !== 1 || fmt.bits !== 16 || fmt.channels !== 1) throw new Error('expected mono 16-bit PCM');
+      const end = Math.min(body + size, v.byteLength);
+      return { rate: fmt.rate, pcm: new Int16Array(v.buffer.slice(body, body + ((end - body) & ~1))) };
+    }
+    o = body + size + (size & 1);
+  }
+  throw new Error('WAV file has no audio data');
+}
+
+/** A 16-bit mono WAV file (bytes) from samples. */
+export function encodeWav(pcm, rate = SAMPLE_RATE) {
+  const out = new Uint8Array(44 + pcm.length * 2), v = new DataView(out.buffer);
+  const put = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  put(0, 'RIFF'); v.setUint32(4, 36 + pcm.length * 2, true); put(8, 'WAVE');
+  put(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  put(36, 'data'); v.setUint32(40, pcm.length * 2, true);
+  new Int16Array(out.buffer, 44).set(pcm);
+  return out;
+}
+
+export function floatToInt16(f32) {
+  const out = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) out[i] = Math.max(-32768, Math.min(32767, Math.round(f32[i] * 32767)));
+  return out;
+}
+
+/** Join chunks with `pause` seconds of silence between them. */
+export function joinPcm(parts, rate = SAMPLE_RATE, pause = PAUSE_BETWEEN_CHUNKS) {
+  const gap = Math.round(rate * pause);
+  const out = new Int16Array(parts.reduce((a, p) => a + p.length, 0) + gap * Math.max(0, parts.length - 1));
+  let at = 0;
+  parts.forEach((p, i) => { if (i) at += gap; out.set(p, at); at += p.length; });
+  return out;
+}
+
+/** Every chunk to generate, in reading order: [{chapter, index, text}]. */
+export function planChunks(chapters, max = CHUNK_CHARS) {
+  const plan = [];
+  chapters.forEach((c, chapter) => {
+    if (c.include) splitChunks(c.text, max).forEach((text, index) => plan.push({ chapter, index, text }));
+  });
+  return plan;
+}
+
+/** A fingerprint of what will be read and how, so saved progress is only reused for the same book. */
+export async function bookKey(chapters, settings) {
+  const data = JSON.stringify({ settings, chapters: chapters.filter(c => c.include).map(c => [c.title, c.text]) });
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(data));
+  return [...new Uint8Array(hash)].slice(0, 12).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// --- Saved progress (IndexedDB) -----------------------------------------------------------
+// Finished chunks are kept per book key, so closing the tab or losing the connection never
+// costs work already done.
+
+export function openStore(name = 'voxa-audiobooks') {
+  return new Promise((ok, fail) => {
+    const req = indexedDB.open(name, 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore('chunks');  // key: [book, chapter, index] -> ArrayBuffer of Int16
+      req.result.createObjectStore('books');   // key: book -> {name, chapters, settings, saved}
+    };
+    req.onsuccess = () => ok(req.result);
+    req.onerror = () => fail(req.error);
+  });
+}
+
+function tx(db, store, mode, fn) {
+  return new Promise((ok, fail) => {
+    const t = db.transaction(store, mode), result = fn(t.objectStore(store));
+    t.oncomplete = () => ok(result && 'result' in result ? result.result : undefined);
+    t.onerror = () => fail(t.error); t.onabort = () => fail(t.error);
+  });
+}
+
+export const saveChunk = (db, book, chapter, index, pcm) =>
+  tx(db, 'chunks', 'readwrite', s => s.put(pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength), [book, chapter, index]));
+export const loadChunk = async (db, book, chapter, index) => {
+  const buf = await tx(db, 'chunks', 'readonly', s => s.get([book, chapter, index]));
+  return buf ? new Int16Array(buf) : null;
+};
+export const savedChunkKeys = (db, book) =>
+  tx(db, 'chunks', 'readonly', s => s.getAllKeys(IDBKeyRange.bound([book], [book, []])));
+export const saveBook = (db, book, record) => tx(db, 'books', 'readwrite', s => s.put(record, book));
+export const listBooks = db => tx(db, 'books', 'readonly', s => s.getAll());
+export async function deleteBook(db, book) {
+  await tx(db, 'chunks', 'readwrite', s => s.delete(IDBKeyRange.bound([book], [book, []])));
+  await tx(db, 'books', 'readwrite', s => s.delete(book));
+}

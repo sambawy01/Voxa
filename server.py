@@ -837,7 +837,8 @@ audio[hidden]{display:none}
   </div>
   <p id="signin-msg" role="status"></p>
 </form>
-<p class="tagline">Text to speech. Nine languages, real voices. Generated on a server, so it sounds the same on every device.</p>
+<p class="tagline">Text to speech. Nine languages, real voices. Generated on a server, so it sounds the same on every device.
+<a href="/book" style="color:var(--accent)">Turn a PDF into an audiobook →</a></p>
 <div class="grid">
   <section class="card">
     <label for="text">Your script</label>

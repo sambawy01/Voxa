@@ -103,3 +103,46 @@ test('durations read naturally', () => {
   assert.equal(formatDuration(45 * 60), '45 min');
   assert.equal(formatDuration(10 * 3600 + 5 * 60), '10 h 05 min');
 });
+
+import { parseWav, encodeWav, floatToInt16, joinPcm, planChunks, bookKey } from '../web/book.js';
+
+test('WAV round trip, and extra chunks before the data are skipped', () => {
+  const pcm = Int16Array.from([0, 1000, -1000, 32767, -32768]);
+  const wav = encodeWav(pcm, 24000);
+  assert.deepEqual(Array.from(parseWav(wav.buffer).pcm), Array.from(pcm));
+  // Insert a LIST chunk between fmt and data, as some writers do.
+  const list = new Uint8Array([...'LIST'].map(c => c.charCodeAt(0)).concat([4, 0, 0, 0, 1, 2, 3, 4]));
+  const withList = new Uint8Array(wav.length + list.length);
+  withList.set(wav.subarray(0, 36)); withList.set(list, 36); withList.set(wav.subarray(36), 36 + list.length);
+  const parsed = parseWav(withList.buffer);
+  assert.equal(parsed.rate, 24000);
+  assert.deepEqual(Array.from(parsed.pcm), Array.from(pcm));
+  assert.throws(() => parseWav(new Uint8Array(8).buffer), /not a WAV/);
+});
+
+test('float samples clamp into 16 bits', () => {
+  assert.deepEqual(Array.from(floatToInt16(Float32Array.from([0, 0.5, -1, 2, -2]))), [0, 16384, -32767, 32767, -32768]);
+});
+
+test('chunks join with silence between, not after', () => {
+  const out = joinPcm([Int16Array.from([1, 1]), Int16Array.from([2])], 10, 0.3);
+  assert.deepEqual(Array.from(out), [1, 1, 0, 0, 0, 2]);
+});
+
+test('the plan covers included chapters only, in order', () => {
+  const plan = planChunks([
+    { include: false, text: 'skip me' },
+    { include: true, text: 'a'.repeat(30) + '\n\n' + 'b'.repeat(30) },
+    { include: true, text: 'c' },
+  ], 40);
+  assert.deepEqual(plan.map(p => [p.chapter, p.index, p.text[0]]), [[1, 0, 'a'], [1, 1, 'b'], [2, 0, 'c']]);
+});
+
+test('the book key changes with text, voice or included chapters', async () => {
+  const ch = [{ include: true, title: 'One', text: 'Hello.' }];
+  const base = await bookKey(ch, { voice: 'wren' });
+  assert.equal(base, await bookKey(ch, { voice: 'wren' }));
+  assert.notEqual(base, await bookKey(ch, { voice: 'calvin' }));
+  assert.notEqual(base, await bookKey([{ ...ch[0], text: 'Hello!' }], { voice: 'wren' }));
+  assert.equal(base, await bookKey([...ch, { include: false, title: 'x', text: 'y' }], { voice: 'wren' }));
+});

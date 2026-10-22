@@ -1,0 +1,80 @@
+name: GPU service (Modal)
+
+# Deploys gpu/modal_app.py to Modal and benchmarks it, so the GPU service can be set up from
+# a browser (an iPad, say) with no terminal. Needs three repository secrets:
+#   MODAL_TOKEN_ID, MODAL_TOKEN_SECRET  a Modal API token (modal.com > Settings > API Tokens)
+#   VOXA_GPU_TOKEN                      any long random string; Fly needs the same one
+# Without them the run stops with a notice. Re-run the workflow after adding them.
+on:
+  push:
+    branches: [feat/phase-5-gpu]
+    paths: [gpu/**, server.py, voices.json, .github/workflows/gpu.yml]
+  workflow_dispatch:
+    inputs:
+      benchmark:
+        description: Run the speed and cost benchmark after deploying
+        type: boolean
+        default: true
+
+concurrency:
+  group: gpu-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      VOXA_GPU_TOKEN: ${{ secrets.VOXA_GPU_TOKEN }}
+    steps:
+      - name: Check the secrets
+        id: check
+        run: |
+          missing=""
+          for name in MODAL_TOKEN_ID MODAL_TOKEN_SECRET VOXA_GPU_TOKEN; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::notice::Not deploying: add these repository secrets, then re-run:$missing"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.ready == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.ready == 'true'
+        with:
+          python-version: '3.11'
+
+      - name: Install the Modal client
+        if: steps.check.outputs.ready == 'true'
+        run: pip install modal==1.6.2
+
+      - name: Give the service its token
+        if: steps.check.outputs.ready == 'true'
+        run: modal secret create voxa-gpu VOXA_GPU_TOKEN="$VOXA_GPU_TOKEN" --force > /dev/null
+
+      - name: Deploy
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          modal deploy gpu/modal_app.py 2>&1 | tee deploy.log
+          url=$(grep -oE 'https://[A-Za-z0-9.-]+\.modal\.run' deploy.log | head -1)
+          {
+            echo "## GPU service deployed"
+            echo
+            echo "URL: \`$url\`"
+            echo
+            echo "Set on Fly: \`VOXA_GPU_URL=$url\` and \`VOXA_GPU_TOKEN\` = the same value as this repository's secret."
+          } >> "$GITHUB_STEP_SUMMARY"
+          curl -fsS --retry 5 --retry-delay 20 --max-time 600 "$url/health" && echo
+
+      - name: Benchmark
+        if: steps.check.outputs.ready == 'true' && (github.event_name == 'push' || inputs.benchmark)
+        run: |
+          modal run gpu/modal_app.py::benchmark 2>&1 | tee bench.log
+          { echo; echo "## Benchmark"; echo; echo '```'; grep -E '^(T4|L4):' bench.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

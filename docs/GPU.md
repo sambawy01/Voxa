@@ -28,6 +28,19 @@ modal deploy gpu/modal_app.py                     # the first build takes severa
 `modal deploy` prints the web URL, like `https://<workspace>--voxa-gpu-voxa-web.modal.run`.
 In the Modal dashboard, **Settings → Usage and billing**, set a monthly spending limit.
 
+### From an iPad (no terminal): GitHub Actions
+
+In the repository on github.com, **Settings → Secrets and variables → Actions → New
+repository secret**, add three secrets:
+
+- `MODAL_TOKEN_ID`: the `ak-...` value from `modal token set --token-id ak-... --token-secret as-...`
+- `MODAL_TOKEN_SECRET`: the `as-...` value
+- `VOXA_GPU_TOKEN`: any long random string (a password manager can generate one); Fly needs the same value
+
+Then **Actions → GPU service (Modal) → Run workflow** (or re-run its latest run). It stores the
+token in Modal, deploys, checks `/health`, runs the benchmark, and puts the service URL and
+the results on the run's summary page.
+
 ## 2. Measure it
 
 ```bash

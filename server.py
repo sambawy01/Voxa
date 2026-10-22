@@ -50,6 +50,26 @@ LANG_REQUIRES = {
     'j': 'pyopenjtalk',
 }
 
+# The full Kokoro v1.0 voice catalogue (54 voices), taken from the HF repo's voices/ listing.
+# Hardcoded because KPipeline.voices only reports the voices already WARM in this process —
+# reporting from it gave users a single choice ("1 voices for English"), which was wrong.
+VOICES = {
+    'a': ['af_heart', 'af_bella', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah',
+          'af_alloy', 'af_nova', 'af_sky', 'af_jessica', 'af_river',
+          'am_fenrir', 'am_michael', 'am_puck', 'am_adam', 'am_echo', 'am_eric',
+          'am_liam', 'am_onyx', 'am_santa'],
+    'b': ['bf_emma', 'bf_isabella', 'bf_alice', 'bf_lily',
+          'bm_fable', 'bm_george', 'bm_lewis', 'bm_daniel'],
+    'e': ['ef_dora', 'em_alex', 'em_santa'],
+    'f': ['ff_siwis'],
+    'h': ['hf_alpha', 'hf_beta', 'hm_omega', 'hm_psi'],
+    'i': ['if_sara', 'im_nicola'],
+    'j': ['jf_alpha', 'jf_gongitsune', 'jf_tebukuro', 'jf_nezumi', 'jm_kumo'],
+    'p': ['pf_dora', 'pm_alex', 'pm_santa'],
+    'z': ['zf_xiaobei', 'zf_xiaoni', 'zf_xiaoxiao', 'zf_xiaoyi',
+          'zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang'],
+}
+
 _shared_model = None
 _pipelines = {}
 _cache = {}
@@ -245,7 +265,8 @@ Promise.all([
 function refreshVoices(){
   const k=langSel.value, list=VOICES[k]||[];
   voiceSel.innerHTML=list.length?list.map(v=>`<option value="${v}">${v}</option>`).join(''):'<option value="">default</option>';
-  $('#langnote').textContent=list.length?`${list.length} voices for ${LANG[k]}.`:'';
+  const n=list.length;
+  $('#langnote').textContent = n ? `${n} voice${n===1?'':'s'} for ${LANG[k]}${n===1?' — the model only ships one for this language':''}.` : '';
 }
 langSel.addEventListener('change',refreshVoices);
 $('#speed').addEventListener('input',e=>$('#speedv').textContent=(+e.target.value).toFixed(2)+'×');
@@ -358,14 +379,7 @@ class Handler(BaseHTTPRequestHandler):
         if p == '/api/languages':
             return self._send(200, {'languages': LANG_LABELS})
         if p == '/api/voices':
-            voices = {}
-            try:
-                pipe = get_pipeline('a')
-                for name in getattr(pipe, 'voices', []):
-                    voices.setdefault(name[0], []).append(name)
-            except Exception as e:
-                log.warning('voices probe failed: %s', e)
-            return self._send(200, {'voices': voices, 'languages': LANG_LABELS})
+            return self._send(200, {'voices': VOICES, 'languages': LANG_LABELS})
         return self._send(404, {'error': 'not found'})
 
     def do_OPTIONS(self):

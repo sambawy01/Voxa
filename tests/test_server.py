@@ -734,3 +734,18 @@ class BookPagesTest(ServerTestCase):
         self.assertEqual(code, 200)
         self.assertTrue(headers['Content-Type'].startswith('text/javascript'))
         self.assertIn(b'export function splitChunks', js)
+
+
+class CreditsTest(ServerTestCase):
+    def test_credits_name_every_model_and_attribution(self):
+        code, _, body = self.req('/credits')
+        self.assertEqual(code, 200)
+        for needle in (b'Kokoro-82M', b'Phonon 31m', b'koniwa', b'SIWIS', b'lamejs', b'LGPL-3.0', b'pdf.js',
+                       b'/static/lamejs-1.2.1/lame.min.js'):
+            self.assertIn(needle, body)
+        _, _, page = self.req('/')
+        self.assertIn(b'href="/credits"', page)
+        # Every Voxa voice whose source voice needs attribution is named on the page.
+        for kokoro in ('jf_gongitsune', 'jf_tebukuro', 'jf_nezumi', 'jm_kumo', 'ff_siwis'):
+            name = server.VOICE_BY_ID[server.KOKORO_ALIASES[kokoro]]['name']
+            self.assertIn(name.encode(), body, kokoro)

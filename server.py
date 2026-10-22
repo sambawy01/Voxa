@@ -104,7 +104,7 @@ ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
 # Pages and scripts served from web/, all cross-origin isolated. {{NAME}} placeholders in them
 # are filled from web_values().
 WEB_PAGES = {'/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
-             '/mp3-worker.js': 'mp3-worker.js'}
+             '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html'}
 
 
 def web_values():
@@ -937,7 +937,7 @@ audio[hidden]{display:none}
 <div class="card note"><strong>About the voices.</strong> Studio voices run Kokoro-82M (Apache 2.0) on our
 server: one set of weights serves all nine languages, and repeated phrases are cached and come
 back instantly. On-device voices run Phonon 31m by Gradium (Apache 2.0) in your browser, so
-they cost nothing and work offline once loaded. Voice names are Voxa's own.</div>
+they cost nothing and work offline once loaded. Voice names are Voxa's own. <a href="/credits" style="color:var(--accent)">Credits</a></div>
 </div>
 <script>
 const $=s=>document.querySelector(s);

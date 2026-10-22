@@ -180,8 +180,12 @@ button.ghost{width:100%;margin-top:8px;background:transparent;color:var(--ink);b
 .status.busy{color:var(--accent)}
 audio{width:100%;margin-top:12px}
 audio[hidden]{display:none}
-.download{display:inline-block;margin-top:10px;color:var(--accent);font-size:13px;text-decoration:none;border-bottom:1px dotted var(--accent)}
+.download{display:block;margin-top:12px;text-align:center;background:var(--panel2);color:var(--ink);font-size:14px;font-weight:600;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:11px 16px;cursor:pointer}
+.download:hover{border-color:var(--accent)}
 .download[hidden]{display:none}
+.dlrow{display:flex;gap:8px;margin-top:12px}
+.dlrow .download{margin-top:0;flex:1}
+.dlrow .ghost{margin-top:0;flex:1}
 .note{margin-top:16px;color:var(--dim);font-size:13px;line-height:1.65}
 .note strong{color:var(--ink)}
 .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
@@ -217,7 +221,8 @@ audio[hidden]{display:none}
     <button id="cancel" class="ghost" hidden>Cancel</button>
     <p class="status" id="status"></p>
     <audio id="player" controls hidden></audio>
-    <a id="download" class="download" download="voxa.wav" hidden>Download WAV</a>
+    <a id="download" class="download" download="voxa.wav" hidden>⬇ Download audio</a>
+    <a id="playerlink" class="download" hidden>Open in player</a>
   </section>
 </div>
 <div class="card note"><strong>About the model.</strong> Kokoro-82M, 82 million parameters, Apache 2.0.
@@ -272,7 +277,13 @@ $('#go').addEventListener('click',async()=>{
     const blob=await r.blob();
     const url=URL.createObjectURL(blob);
     const p=$('#player'); p.src=url; p.hidden=false; p.play().catch(()=>{});
-    const a=$('#download'); a.href=url; a.hidden=false;
+
+    // iOS Safari ignores the HTML `download` attribute on blob URLs, so offer a direct
+    // link to the server file as well — tapping that shows the share/"Save to Files" sheet.
+    const realUrl = r.headers.get('X-Voxa-File');
+    const a=$('#download'); a.href=url; a.download='voxa.wav'; a.hidden=false;
+    const pl=$('#playerlink');
+    if(realUrl){ pl.href=realUrl; pl.download='voxa.wav'; pl.hidden=false; } else { pl.hidden=true; }
     const cls=r.headers.get('X-Voxa-Cache');
     st.className='status';
     st.textContent=`Done in ${((performance.now()-t0)/1000).toFixed(1)}s`+(cls==='hit'?' · from cache':'');
@@ -308,6 +319,17 @@ class Handler(BaseHTTPRequestHandler):
         p = urlparse(self.path).path
         if p in ('/', '/index.html'):
             return self._send(200, PAGE, 'text/html; charset=utf-8')
+        # Download endpoint: lets iOS Safari fetch the file directly, which is the only way
+        # its share sheet offers "Save to Files" for generated audio.
+        if p.startswith('/api/audio/'):
+            key = p.rsplit('/', 1)[-1]
+            with _pipe_lock:
+                audio = _cache.get(key)
+            if audio is None:
+                return self._send(404, {'error': 'audio not found or expired from cache'})
+            return self._send(200, audio, 'audio/wav', {
+                'Content-Disposition': f'attachment; filename="voxa-{key[:8]}.wav"',
+            })
         if p == '/health':
             return self._send(200, {
                 'ok': True,
@@ -370,7 +392,16 @@ class Handler(BaseHTTPRequestHandler):
                 if len(_cache) >= MAX_CACHE_ITEMS:
                     _cache.pop(next(iter(_cache)))
                 _cache[key] = audio
-            return self._send(200, audio, 'audio/wav', {'X-Voxa-Cache': 'miss'})
+
+            # Content-Disposition gives the browser a real filename. iOS Safari ignores the
+            # HTML `download` attribute for blob URLs, so this header is what actually makes
+            # "Save to Files" behave on a phone.
+            fname = f'voxa-{key[:8]}.wav'
+            return self._send(200, audio, 'audio/wav', {
+                'X-Voxa-Cache': 'miss',
+                'X-Voxa-File': f'/api/audio/{key}',
+                'Content-Disposition': f'attachment; filename="{fname}"',
+            })
         except Exception as e:
             log.exception('tts failed')
             return self._send(500, {'error': f'{type(e).__name__}: {e}'})

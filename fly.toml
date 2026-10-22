@@ -24,8 +24,9 @@ primary_region = "fra"
     path = "/health"
 
 [[vm]]
-  # Both Kokoro (~1.26 GB resident) and Habibi Arabic (~1.35 GB) need to be live at once,
-  # plus two runtimes. 2 GB measurably could not hold even two Kokoro pipelines; 4 GB does.
+  # Measured with all nine language pipelines loaded, after a 4,000-character job:
+  # 2.3 GB resident, 2.9 GB peak. One generation runs at a time, so this does not stack;
+  # 2 GB measurably could not hold even two Kokoro pipelines.
   memory = "4gb"
   cpu_kind = "shared"
   cpus = 2

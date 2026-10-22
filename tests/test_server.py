@@ -1,0 +1,261 @@
+"""Server tests that run without torch or the model: generation is stubbed out.
+
+    python -m unittest discover -s tests
+"""
+import io
+import json
+import os
+import sys
+import threading
+import time
+import unittest
+import urllib.error
+import urllib.request
+import wave
+from http.server import ThreadingHTTPServer
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import server  # noqa: E402
+
+
+def make_wav(seconds=0.1, rate=24000):
+    buf = io.BytesIO()
+    with wave.open(buf, 'wb') as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b'\x01\x00' * int(seconds * rate))
+    return buf.getvalue()
+
+
+class FakeGenerator:
+    def __init__(self):
+        self.calls = []
+        self.gate = threading.Event()
+        self.gate.set()
+        self.fail = False
+
+    def __call__(self, job):
+        self.calls.append(job)
+        job.progress = 0.5
+        self.gate.wait(10)
+        if self.fail:
+            raise RuntimeError('boom: /secret/internal/path')
+        return make_wav()
+
+
+class ParseRequestTest(unittest.TestCase):
+    def ok(self, **body):
+        return server.parse_request(body)
+
+    def bad(self, body, fragment):
+        with self.assertRaises(server.BadRequest) as cm:
+            server.parse_request(body)
+        self.assertIn(fragment, str(cm.exception))
+
+    def test_defaults_voice_and_speed(self):
+        self.assertEqual(self.ok(text=' hi '), ('hi', 'a', 'af_heart', 1.0))
+        self.assertEqual(self.ok(text='hola', lang='e', voice=None, speed=None),
+                         ('hola', 'e', 'ef_dora', 1.0))
+
+    def test_every_language_has_a_default_voice(self):
+        for lang in server.LANG_LABELS:
+            self.assertEqual(self.ok(text='x', lang=lang)[2], server.VOICES[lang][0])
+
+    def test_rejects_bad_text(self):
+        self.bad({'text': '   '}, 'empty')
+        self.bad({'text': 123}, 'string')
+        self.bad({}, 'string')
+        self.bad({'text': 'a' * (server.MAX_TEXT + 1)}, 'longer')
+        self.bad(['not', 'an', 'object'], 'JSON object')
+
+    def test_rejects_unknown_language_and_voice(self):
+        self.bad({'text': 'x', 'lang': 'xx'}, 'unsupported language')
+        self.bad({'text': 'x', 'voice': 'nope'}, 'not available')
+        self.bad({'text': 'x', 'lang': 'f', 'voice': 'am_adam'}, 'not available for French')
+
+    def test_speed_is_bounded(self):
+        # 0.01 used to OOM-kill the machine; 50 crashed the request.
+        for s in (0.01, 0.49, 2.01, 50, -5, 0, float('inf'), float('nan'), 'fast', True, [1]):
+            with self.subTest(speed=s):
+                self.bad({'text': 'x', 'speed': s}, 'speed')
+        self.assertEqual(self.ok(text='x', speed='0.9')[3], 0.9)
+        self.assertEqual(self.ok(text='x', speed=2)[3], 2.0)
+
+
+class AudioCacheTest(unittest.TestCase):
+    def test_bounded_by_bytes_lru(self):
+        c = server.AudioCache(100)
+        c.put('a', b'x' * 40)
+        c.put('b', b'x' * 40)
+        c.get('a')  # a is now most recent
+        c.put('c', b'x' * 40)
+        self.assertIsNone(c.get('b'))
+        self.assertIsNotNone(c.get('a'))
+        self.assertIsNotNone(c.get('c'))
+        self.assertLessEqual(c.nbytes, 100)
+
+    def test_oversized_item_is_not_cached(self):
+        c = server.AudioCache(10)
+        c.put('big', b'x' * 11)
+        self.assertEqual(len(c), 0)
+
+    def test_replacing_a_key_keeps_byte_count_right(self):
+        c = server.AudioCache(100)
+        c.put('a', b'x' * 30)
+        c.put('a', b'x' * 50)
+        self.assertEqual(c.nbytes, 50)
+
+
+class JoinWavsTest(unittest.TestCase):
+    def test_joins_frames(self):
+        joined = server.join_wavs([make_wav(0.1), make_wav(0.2)])
+        with wave.open(io.BytesIO(joined)) as w:
+            self.assertEqual(w.getnframes(), int(0.1 * 24000) + int(0.2 * 24000))
+
+    def test_empty(self):
+        self.assertEqual(server.join_wavs([]), b'')
+
+    def test_mismatch(self):
+        with self.assertRaises(ValueError):
+            server.join_wavs([make_wav(rate=24000), make_wav(rate=16000)])
+
+
+class HTTPTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.gen = FakeGenerator()
+        server._jobs = server.JobQueue(cls.gen)
+        server._jobs.start()
+        cls.httpd = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
+        cls.httpd.daemon_threads = True
+        cls.base = f'http://127.0.0.1:{cls.httpd.server_address[1]}'
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def setUp(self):
+        self.gen.gate.set()
+        self.gen.fail = False
+        server._cache = server.AudioCache(server.MAX_CACHE_BYTES)
+
+    def req(self, path, body=None, raw=None):
+        data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
+        r = urllib.request.Request(self.base + path, data=data,
+                                   headers={'Content-Type': 'application/json'})
+        try:
+            with urllib.request.urlopen(r, timeout=10) as resp:
+                return resp.status, dict(resp.headers), resp.read()
+        except urllib.error.HTTPError as e:
+            return e.code, dict(e.headers), e.read()
+
+    def poll(self, job_id):
+        for _ in range(100):
+            code, _, body = self.req(f'/api/jobs/{job_id}')
+            job = json.loads(body)
+            if job['status'] in ('done', 'error'):
+                return job
+            time.sleep(0.05)
+        self.fail('job never finished')
+
+    def test_page_and_metadata(self):
+        code, headers, body = self.req('/')
+        self.assertEqual(code, 200)
+        self.assertIn(b'/api/jobs', body)
+        code, _, body = self.req('/api/voices')
+        self.assertEqual(sum(len(v) for v in json.loads(body)['voices'].values()), 54)
+        code, _, body = self.req('/health')
+        self.assertTrue(json.loads(body)['ok'])
+
+    def test_job_flow_then_cache_hit(self):
+        code, _, body = self.req('/api/jobs', {'text': 'job flow', 'speed': 0.9})
+        self.assertEqual(code, 202)
+        job = self.poll(json.loads(body)['id'])
+        self.assertEqual(job['status'], 'done')
+        code, headers, audio = self.req(job['audio_url'])
+        self.assertEqual(code, 200)
+        self.assertTrue(audio.startswith(b'RIFF'))
+
+        calls = len(self.gen.calls)
+        code, _, body = self.req('/api/jobs', {'text': 'job flow', 'speed': 0.9})
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body)['cache'], 'hit')
+        self.assertEqual(len(self.gen.calls), calls)
+
+    def test_duplicate_submission_joins_running_job(self):
+        self.gen.gate.clear()
+        _, _, a = self.req('/api/jobs', {'text': 'double tap'})
+        _, _, b = self.req('/api/jobs', {'text': 'double tap'})
+        self.assertEqual(json.loads(a)['id'], json.loads(b)['id'])
+        self.gen.gate.set()
+        self.assertEqual(self.poll(json.loads(a)['id'])['status'], 'done')
+
+    def test_sync_tts(self):
+        code, headers, audio = self.req('/api/tts', {'text': 'sync', 'lang': 'z'})
+        self.assertEqual(code, 200)
+        self.assertEqual(headers['X-Voxa-Cache'], 'miss')
+        self.assertTrue(audio.startswith(b'RIFF'))
+        code, headers, _ = self.req('/api/tts', {'text': 'sync', 'lang': 'z'})
+        self.assertEqual(headers['X-Voxa-Cache'], 'hit')
+
+    def test_generation_failure_is_a_clean_500_without_internals(self):
+        self.gen.fail = True
+        code, _, body = self.req('/api/tts', {'text': 'will fail'})
+        self.assertEqual(code, 500)
+        self.assertNotIn(b'secret', body)
+        # The worker survives a failed job.
+        self.gen.fail = False
+        code, _, _ = self.req('/api/tts', {'text': 'after failure'})
+        self.assertEqual(code, 200)
+
+    def test_bad_input_is_400_not_a_dropped_connection(self):
+        cases = [
+            {'text': 'x', 'speed': 'fast'},
+            {'text': 'x', 'speed': 0.01},
+            {'text': 123},
+            {'text': 'x', 'lang': 'xx'},
+            {'text': 'x', 'voice': 'nope'},
+        ]
+        for body in cases:
+            for path in ('/api/tts', '/api/jobs'):
+                with self.subTest(path=path, body=body):
+                    code, _, resp = self.req(path, body)
+                    self.assertEqual(code, 400)
+                    self.assertIn('error', json.loads(resp))
+        code, _, _ = self.req('/api/tts', raw=b'not json')
+        self.assertEqual(code, 400)
+        code, _, _ = self.req('/api/tts', raw=b'\xff\xfe')
+        self.assertEqual(code, 400)
+
+    def test_oversized_body_rejected(self):
+        code, _, _ = self.req('/api/tts', raw=b'{"text":"' + b'a' * server.MAX_BODY + b'"}')
+        self.assertEqual(code, 400)
+
+    def test_queue_limit_returns_503(self):
+        self.gen.gate.clear()
+        ids = []
+        try:
+            for i in range(server.MAX_PENDING):
+                code, _, body = self.req('/api/jobs', {'text': f'fill {i}'})
+                self.assertEqual(code, 202)
+                ids.append(json.loads(body)['id'])
+            code, headers, _ = self.req('/api/jobs', {'text': 'one too many'})
+            self.assertEqual(code, 503)
+            self.assertIn('Retry-After', headers)
+            _, _, body = self.req(f'/api/jobs/{ids[-1]}')
+            self.assertEqual(json.loads(body)['ahead'], server.MAX_PENDING - 1)
+        finally:
+            self.gen.gate.set()
+        for i in ids:
+            self.poll(i)
+
+    def test_unknown_job_and_audio(self):
+        self.assertEqual(self.req('/api/jobs/nope')[0], 404)
+        self.assertEqual(self.req('/api/audio/nope')[0], 404)
+        self.assertEqual(self.req('/nope')[0], 404)
+
+
+if __name__ == '__main__':
+    unittest.main()

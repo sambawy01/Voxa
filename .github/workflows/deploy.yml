@@ -1,8 +1,11 @@
 name: Deploy to GitHub Pages
 
+# The app is served from Fly (see fly.toml). GitHub Pages only redirects there, so old
+# links to sambawy01.github.io/Voxa/ stop loading the abandoned in-browser build.
 on:
   push:
     branches: [main]
+    paths: [pages/**, .github/workflows/deploy.yml]
   workflow_dispatch:
 
 permissions:
@@ -19,16 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: pages
 
   deploy:
     needs: build

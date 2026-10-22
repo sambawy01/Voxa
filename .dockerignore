@@ -4,3 +4,10 @@ dist
 .github
 *.log
 browser_check.py
+src
+pages
+scripts
+tests
+package*.json
+vite.config.js
+index.html

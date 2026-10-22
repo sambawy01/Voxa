@@ -20,8 +20,13 @@ which is longer than a phone browser or the edge proxy will hold a silent connec
 open — the request dropped and Safari reported "Load failed". The page now submits a
 job, polls its progress, then fetches the finished audio.
 """
+import base64
+import binascii
 import collections
+import datetime
 import hashlib
+import hmac
+import http.cookies
 import io
 import itertools
 import json
@@ -29,9 +34,14 @@ import logging
 import math
 import os
 import queue
+import re
+import sqlite3
 import threading
 import time
+import urllib.request
 import uuid
+
+import billing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -39,6 +49,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 log = logging.getLogger('voxa')
 
 PORT = int(os.environ.get('PORT', '8080'))
+# Where Kokoro runs: 'cpu' here; the GPU service (gpu/service.py) sets 'cuda'.
+DEVICE = os.environ.get('VOXA_DEVICE', 'cpu')
+# Paid users' jobs go to the GPU service when it is configured (see docs/GPU.md). Calls are
+# remote, so several run at once on their own workers and never wait behind CPU jobs.
+GPU_URL = os.environ.get('VOXA_GPU_URL', '').rstrip('/')
+GPU_TOKEN = os.environ.get('VOXA_GPU_TOKEN', '')
+GPU_WORKERS = int(os.environ.get('VOXA_GPU_WORKERS', '4'))
+GPU_TIMEOUT = 600
 MAX_TEXT = 4000
 MAX_BODY = 64 * 1024
 # Audio length scales with 1/speed, and so does the model's working memory for a chunk.
@@ -50,6 +68,50 @@ MAX_PENDING = 16
 JOB_TTL = 30 * 60
 # How long the synchronous /api/tts endpoint waits for its job.
 SYNC_TIMEOUT = 300
+# Daily characters per tier; 0 means no limit. Cached replays are free; only new
+# generation counts. Guests are visitors who are not signed in.
+GUEST_DAILY_CHARS = int(os.environ.get('VOXA_GUEST_DAILY_CHARS', '1000'))
+FREE_DAILY_CHARS = int(os.environ.get('VOXA_FREE_DAILY_CHARS', '4000'))
+PAID_DAILY_CHARS = int(os.environ.get('VOXA_PAID_DAILY_CHARS', '0'))
+# Sign-in (Supabase). SUPABASE_URL and the public anon key turn accounts on; the page uses
+# them to sign people in. Tokens signed with the project's asymmetric keys are checked
+# against its published JWKS; SUPABASE_JWT_SECRET covers projects on the older shared secret.
+SUPABASE_URL = os.environ.get('SUPABASE_URL', '').rstrip('/')
+SUPABASE_ANON_KEY = os.environ.get('SUPABASE_ANON_KEY', '')
+SUPABASE_JWT_SECRET = os.environ.get('SUPABASE_JWT_SECRET', '')
+# Backstop per IP address, so clearing cookies cannot buy unlimited use. Generous because
+# phones on one mobile carrier often share a single address.
+IP_DAILY_FACTOR = 5
+# Where usage counts are stored. Mount a Fly volume at /data to keep them across restarts.
+DATA_DIR = os.environ.get('VOXA_DATA_DIR') or ('/data' if os.path.isdir('/data') else '.')
+COOKIE = 'voxa_id'
+# The site's public address, for links Stripe sends people back to. Falls back to the request.
+PUBLIC_URL = os.environ.get('VOXA_PUBLIC_URL', '').rstrip('/')
+# Voxa Lite: the phonon-tts browser package, fetched by scripts/fetch_phonon.py into static/
+# and served from here, since its worker must be same-origin. Pages that run it are served
+# cross-origin isolated, which is what gives WebAssembly its threads.
+HERE = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(HERE, 'static')
+WEB_DIR = os.path.join(HERE, 'web')
+PHONON_VERSION = '0.4.1'
+PDFJS_VERSION = '4.4.168'
+LAMEJS_VERSION = '1.2.1'
+STATIC_TYPES = {'.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+                '.wasm': 'application/wasm', '.bcmap': 'application/octet-stream',
+                '.json': 'application/json', '.css': 'text/css; charset=utf-8'}
+ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
+             'Cross-Origin-Embedder-Policy': 'require-corp'}
+# Pages and scripts served from web/, all cross-origin isolated. {{NAME}} placeholders in them
+# are filled from web_values().
+WEB_PAGES = {'/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
+             '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html'}
+
+
+def web_values():
+    with open(os.path.join(WEB_DIR, 'book.js'), 'rb') as f:
+        book_version = hashlib.sha256(f.read()).hexdigest()[:12]
+    return {'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,
+            'LAMEJS_VERSION': LAMEJS_VERSION, 'BOOK_VERSION': book_version}
 
 LANG_LABELS = {
     'a': 'English (US)',
@@ -63,29 +125,81 @@ LANG_LABELS = {
     'z': 'Chinese (Mandarin)',
 }
 
-# The full Kokoro v1.0 voice catalogue (54 voices), taken from the HF repo's voices/ listing.
-# Hardcoded because KPipeline.voices only reports the voices already WARM in this process —
-# reporting from it gave users a single choice ("1 voices for English"), which was wrong.
-# The first voice of each language is its default.
-VOICES = {
-    'a': ['af_heart', 'af_bella', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah',
-          'af_alloy', 'af_nova', 'af_sky', 'af_jessica', 'af_river',
-          'am_fenrir', 'am_michael', 'am_puck', 'am_adam', 'am_echo', 'am_eric',
-          'am_liam', 'am_onyx', 'am_santa'],
-    'b': ['bf_emma', 'bf_isabella', 'bf_alice', 'bf_lily',
-          'bm_fable', 'bm_george', 'bm_lewis', 'bm_daniel'],
-    'e': ['ef_dora', 'em_alex', 'em_santa'],
-    'f': ['ff_siwis'],
-    'h': ['hf_alpha', 'hf_beta', 'hm_omega', 'hm_psi'],
-    'i': ['if_sara', 'im_nicola'],
-    'j': ['jf_alpha', 'jf_gongitsune', 'jf_tebukuro', 'jf_nezumi', 'jm_kumo'],
-    'p': ['pf_dora', 'pm_alex', 'pm_santa'],
-    'z': ['zf_xiaobei', 'zf_xiaoni', 'zf_xiaoxiao', 'zf_xiaoyi',
-          'zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang'],
-}
+# The voice catalogue: Voxa's own names for all 54 Kokoro v1.0 voices plus signature blends.
+# Kept in voices.json so names can change without touching code. It is the source of truth
+# because KPipeline.voices only reports the voices already WARM in this process — reporting
+# from it gave users a single choice ("1 voices for English"), which was wrong.
+CATALOGUE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'voices.json')
+GRADE_LABELS = {'A': 'Best quality', 'B': 'Very good quality', 'C': 'Good quality',
+                'D': 'Fair quality', 'F': 'Basic quality'}
+
+
+def load_catalogue(path=CATALOGUE_PATH):
+    """Read voices.json and check it. Returns the voice list, each language's default first."""
+    with open(path, encoding='utf-8') as f:
+        voices = json.load(f)['voices']
+    seen = set()
+    for v in voices:
+        if v['id'] in seen:
+            raise ValueError(f'duplicate voice id {v["id"]!r}')
+        seen.add(v['id'])
+        if v['lang'] not in LANG_LABELS:
+            raise ValueError(f'voice {v["id"]!r} has unknown language {v["lang"]!r}')
+        src = v['source']
+        parts = [src] if isinstance(src, str) else list(src)
+        if any(p[0] != v['lang'] for p in parts):
+            raise ValueError(f'voice {v["id"]!r} mixes in another language')
+        if not isinstance(src, str) and abs(sum(src.values()) - 1) > 1e-6:
+            raise ValueError(f'blend weights of {v["id"]!r} must add up to 1')
+        grade = (v.get('grade') or '')[:1]
+        bits = [v['gender'].capitalize(), v['accent']]
+        bits.append('Voxa signature blend' if v.get('signature') else GRADE_LABELS.get(grade))
+        v['description'] = ' · '.join(b for b in bits if b)
+    voices.sort(key=lambda v: not v.get('default'))
+    return voices
+
+
+def load_lite(path=CATALOGUE_PATH, studio_ids=()):
+    """The Voxa Lite section of voices.json: Phonon voices the browser runs itself."""
+    with open(path, encoding='utf-8') as f:
+        lite = json.load(f).get('lite')
+    if not lite:
+        return None
+    ids = [v['id'] for v in lite['voices']]
+    if len(set(ids)) != len(ids) or set(ids) & set(studio_ids):
+        raise ValueError('Lite voice ids must be unique and differ from Studio voice ids')
+    for v in lite['voices']:
+        if v['lang'] not in ('a', 'b'):
+            raise ValueError(f'Lite voice {v["id"]!r}: Phonon 31m speaks English only')
+        if not re.fullmatch(r'voices/[A-Za-z0-9_-]+\.safetensors', v['file']):
+            raise ValueError(f'Lite voice {v["id"]!r} has an unexpected file path')
+        v['description'] = ' · '.join([v['gender'].capitalize(), v['accent'], v['age'],
+                                       'On this device'])
+    if not any(e.get('default') for e in lite['expressiveness']):
+        raise ValueError('one expressiveness preset must be the default')
+    base = f'https://huggingface.co/{lite["voices_repo"]}/resolve/{lite["revision"]}/'
+    return {
+        'model': lite['model'],
+        'expressiveness': lite['expressiveness'],
+        'voices': {lang: [{'id': v['id'], 'name': v['name'], 'description': v['description'],
+                           'url': base + v['file']}
+                          for v in lite['voices'] if v['lang'] == lang]
+                   for lang in ('a', 'b')},
+    }
+
+
+CATALOGUE = load_catalogue()
+VOICE_BY_ID = {v['id']: v for v in CATALOGUE}
+# Kokoro's own ids (e.g. af_heart) are still accepted from API callers written before the
+# catalogue; they map to the Voxa voice built from that one Kokoro voice.
+KOKORO_ALIASES = {v['source']: v['id'] for v in CATALOGUE if isinstance(v['source'], str)}
+# Voxa voice ids per language; the first is the language's default.
+VOICES = {lang: [v['id'] for v in CATALOGUE if v['lang'] == lang] for lang in LANG_LABELS}
+LITE = load_lite(studio_ids=VOICE_BY_ID)
 
 _shared_model = None
 _pipelines = {}
+_blends = {}
 _model_lock = threading.Lock()
 _pipe_lock = threading.Lock()
 
@@ -102,7 +216,7 @@ def get_shared_model():
             from kokoro import KModel
 
             log.info('loading Kokoro KModel (shared across languages)')
-            _shared_model = KModel(repo_id='hexgrad/Kokoro-82M').to('cpu').eval()
+            _shared_model = KModel(repo_id='hexgrad/Kokoro-82M').to(DEVICE).eval()
             log.info('KModel ready')
         return _shared_model
 
@@ -125,6 +239,20 @@ def get_pipeline(lang_code):
         return _pipelines[lang_code]
 
 
+def kokoro_voice(pipe, voice_id):
+    """What Kokoro takes for a Voxa voice: its voice id, or a weighted blend tensor.
+
+    Kokoro's own "a,b" syntax only averages voices equally, so blends are summed here,
+    once per process."""
+    src = VOICE_BY_ID[voice_id]['source']
+    if isinstance(src, str):
+        return src
+    with _pipe_lock:
+        if voice_id not in _blends:
+            _blends[voice_id] = sum(w * pipe.load_single_voice(k) for k, w in src.items())
+        return _blends[voice_id]
+
+
 def synth(text, voice, speed, lang_code, on_progress=None):
     """Yield one WAV (bytes) per sentence chunk, reporting the share of text consumed."""
     import numpy as np
@@ -132,7 +260,7 @@ def synth(text, voice, speed, lang_code, on_progress=None):
 
     pipe = get_pipeline(lang_code)
     consumed = 0
-    for graphemes, _, audio in pipe(text, voice=voice, speed=speed):
+    for graphemes, _, audio in pipe(text, voice=kokoro_voice(pipe, voice), speed=speed):
         if audio is None:
             continue
         arr = audio.detach().cpu().numpy() if hasattr(audio, 'detach') else np.asarray(audio)
@@ -201,6 +329,9 @@ def parse_request(body):
         raise BadRequest(f'unsupported language code: {lang!r}; see /api/languages')
 
     voice = body.get('voice') or VOICES[lang][0]
+    if not isinstance(voice, str):
+        raise BadRequest('voice must be a string')
+    voice = KOKORO_ALIASES.get(voice, voice)
     if voice not in VOICES[lang]:
         raise BadRequest(f'voice {voice!r} is not available for {LANG_LABELS[lang]}; '
                          f'choose one of: {", ".join(VOICES[lang])}')
@@ -262,6 +393,252 @@ class AudioCache:
 _cache = AudioCache(MAX_CACHE_BYTES)
 
 
+class AuthError(Exception):
+    """A sign-in token we cannot accept."""
+
+
+def _b64url(text):
+    return base64.urlsafe_b64decode(text + '=' * (-len(text) % 4))
+
+
+def _verify_asymmetric(jwk, alg, signed, signature):
+    """Check an ES256 or RS256 signature against one key from the project's JWKS."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, utils
+
+    def num(field):
+        return int.from_bytes(_b64url(jwk[field]), 'big')
+
+    try:
+        if alg == 'ES256' and jwk.get('kty') == 'EC' and jwk.get('crv') == 'P-256':
+            if len(signature) != 64:
+                return False
+            key = ec.EllipticCurvePublicNumbers(num('x'), num('y'), ec.SECP256R1()).public_key()
+            der = utils.encode_dss_signature(int.from_bytes(signature[:32], 'big'),
+                                             int.from_bytes(signature[32:], 'big'))
+            key.verify(der, signed, ec.ECDSA(hashes.SHA256()))
+            return True
+        if alg == 'RS256' and jwk.get('kty') == 'RSA':
+            key = rsa.RSAPublicNumbers(num('e'), num('n')).public_key()
+            key.verify(signature, signed, padding.PKCS1v15(), hashes.SHA256())
+            return True
+    except (InvalidSignature, KeyError, ValueError):
+        pass
+    return False
+
+
+class TokenVerifier:
+    """Checks Supabase access tokens: signature, expiry, issuer, audience and role."""
+
+    LEEWAY = 30  # seconds of clock skew tolerated on expiry
+
+    def __init__(self, url, hs256_secret='', fetch_jwks=None, clock=time.time):
+        self.issuer = f'{url}/auth/v1'
+        self.jwks_url = f'{url}/auth/v1/.well-known/jwks.json'
+        self.secret = hs256_secret.encode() if hs256_secret else None
+        self._fetch = fetch_jwks or self._fetch_jwks
+        self._clock = clock
+        self._keys = {}
+        self._fetched_at = None
+        self._lock = threading.Lock()
+
+    def _fetch_jwks(self):
+        with urllib.request.urlopen(self.jwks_url, timeout=5) as r:
+            return json.load(r)
+
+    def _key(self, kid):
+        """The signing key with this id. An unknown id means the project rotated its keys,
+        so the JWKS is fetched again, at most once a minute."""
+        with self._lock:
+            now = self._clock()
+            stale = self._fetched_at is None or now - self._fetched_at > 60
+            if kid not in self._keys and stale:
+                self._fetched_at = now
+                try:
+                    jwks = self._fetch()
+                    self._keys = {k['kid']: k for k in jwks.get('keys', []) if k.get('kid')}
+                except Exception as e:
+                    log.warning('cannot fetch signing keys from %s: %s', self.jwks_url, e)
+            return self._keys.get(kid)
+
+    def verify(self, token):
+        """Return the token's claims, or raise AuthError."""
+        try:
+            head, body, sig = token.split('.')
+            header = json.loads(_b64url(head))
+            claims = json.loads(_b64url(body))
+            signature = _b64url(sig)
+        except (ValueError, binascii.Error, UnicodeDecodeError):
+            raise AuthError('malformed token')
+        if not isinstance(header, dict) or not isinstance(claims, dict):
+            raise AuthError('malformed token')
+        signed = f'{head}.{body}'.encode()
+        alg = header.get('alg')
+        if alg == 'HS256' and self.secret:
+            valid = hmac.compare_digest(
+                hmac.new(self.secret, signed, hashlib.sha256).digest(), signature)
+        elif alg in ('ES256', 'RS256'):
+            jwk = self._key(header.get('kid'))
+            valid = jwk is not None and _verify_asymmetric(jwk, alg, signed, signature)
+        else:
+            valid = False
+        if not valid:
+            raise AuthError('bad signature')
+        exp = claims.get('exp')
+        if not isinstance(exp, (int, float)) or exp < self._clock() - self.LEEWAY:
+            raise AuthError('expired')
+        if claims.get('iss') != self.issuer:
+            raise AuthError('wrong issuer')
+        aud = claims.get('aud')
+        if 'authenticated' not in (aud if isinstance(aud, list) else [aud]):
+            raise AuthError('wrong audience')
+        # The project's anon key is itself a valid token with role "anon"; it is not a user.
+        if claims.get('role') != 'authenticated' or not claims.get('sub'):
+            raise AuthError('not a signed-in user')
+        return claims
+
+
+def identity_from_claims(claims, ip):
+    # The tier comes from app_metadata, which only the server side (service role, Stripe
+    # webhook) can write. user_metadata is editable by the user, so it is never trusted.
+    app = claims.get('app_metadata') if isinstance(claims.get('app_metadata'), dict) else {}
+    tier = 'paid' if app.get('tier') == 'paid' else 'free'
+    return Identity(ip, user=claims['sub'], tier=tier, email=claims.get('email'),
+                    customer=app.get('stripe_customer'))
+
+
+_auth = None  # a TokenVerifier once sign-in is configured
+
+
+class QuotaExceeded(Exception):
+    def __init__(self, status, requested):
+        self.status = status
+        self.requested = requested
+        left = status['remaining']
+        hours = max(1, round((status['resets_at'] - time.time()) / 3600))
+        super().__init__(
+            f'Daily limit reached: {left:,} of {status["limit"]:,} characters left today '
+            f'and this script is {requested:,}. It resets at midnight UTC '
+            f'(in about {hours} hour{"" if hours == 1 else "s"}).'
+        )
+
+
+class Identity:
+    """Who a request is for. Signed-in users are counted by account; guests by their
+    cookie id, or by IP when there is no cookie (scripts)."""
+
+    def __init__(self, ip, visitor=None, user=None, tier='guest', email=None, customer=None):
+        self.ip, self.visitor, self.user, self.tier, self.email = ip, visitor, user, tier, email
+        self.customer = customer  # Stripe customer id, once the account has subscribed
+
+
+class Quota:
+    """Characters generated per identity per UTC day, in SQLite.
+
+    `limits` maps a tier ('guest', 'free', 'paid') to its daily characters; 0 means no
+    limit. Guests also count against their IP at IP_DAILY_FACTOR times the guest limit, so
+    clearing cookies cannot buy unlimited use. Accounts have no IP backstop: many people
+    can share one office or carrier address.
+    """
+
+    def __init__(self, path, limits):
+        self.limits = dict(limits)
+        self._lock = threading.Lock()
+        self._db = sqlite3.connect(path, check_same_thread=False)
+        self._db.execute('CREATE TABLE IF NOT EXISTS usage ('
+                         'day TEXT, subject TEXT, chars INTEGER NOT NULL, '
+                         'PRIMARY KEY (day, subject))')
+        self._db.commit()
+
+    @property
+    def enabled(self):
+        return any(self.limits.values())
+
+    @staticmethod
+    def _today():
+        now = datetime.datetime.now(datetime.timezone.utc)
+        midnight = (now + datetime.timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        return now.date().isoformat(), midnight.timestamp()
+
+    def _subjects(self, who):
+        """(subject, daily limit) pairs this identity is counted against."""
+        limit = self.limits.get(who.tier, 0)
+        if who.user:
+            return [(f'u:{who.user}', limit)]
+        return [(f'v:{who.visitor}' if who.visitor else f'a:{who.ip}', limit),
+                (f'ip:{who.ip}', limit * IP_DAILY_FACTOR)]
+
+    def _used(self, day, subject):
+        row = self._db.execute('SELECT chars FROM usage WHERE day = ? AND subject = ?',
+                               (day, subject)).fetchone()
+        return row[0] if row else 0
+
+    def _status(self, day, resets_at, who, subjects):
+        limit = subjects[0][1]
+        remaining = max(0, min(lim - self._used(day, subj) for subj, lim in subjects))
+        return {'tier': who.tier, 'limit': limit, 'used': limit - remaining,
+                'remaining': remaining, 'resets_at': int(resets_at)}
+
+    def status(self, who):
+        """Today's allowance, {'tier', 'unlimited': True} for a tier with no limit."""
+        if not self.limits.get(who.tier):
+            return {'tier': who.tier, 'unlimited': True}
+        day, resets_at = self._today()
+        with self._lock:
+            return self._status(day, resets_at, who, self._subjects(who))
+
+    def charge(self, who, n):
+        """Take n characters or raise QuotaExceeded. Returns a refund callable."""
+        if not self.limits.get(who.tier):
+            return lambda: None
+        day, resets_at = self._today()
+        subjects = self._subjects(who)
+        keys = [subj for subj, _ in subjects]
+        with self._lock:
+            status = self._status(day, resets_at, who, subjects)
+            if n > status['remaining']:
+                raise QuotaExceeded(status, n)
+            self._add(day, keys, n)
+            self._db.execute('DELETE FROM usage WHERE day < ?', (day,))
+            self._db.commit()
+
+        def refund():
+            with self._lock:
+                for subject in keys:
+                    self._db.execute('UPDATE usage SET chars = MAX(0, chars - ?) '
+                                     'WHERE day = ? AND subject = ?', (n, day, subject))
+                self._db.commit()
+        return refund
+
+    def _add(self, day, keys, n):
+        for subject in keys:
+            self._db.execute(
+                'INSERT INTO usage (day, subject, chars) VALUES (?, ?, ?) '
+                'ON CONFLICT (day, subject) DO UPDATE SET chars = chars + excluded.chars',
+                (day, subject, n))
+
+
+def tier_limits():
+    """Daily characters per tier. Until sign-in is configured nobody can have an account,
+    so guests get the free allowance rather than a smaller one."""
+    guest = GUEST_DAILY_CHARS if _auth else FREE_DAILY_CHARS
+    return {'guest': guest, 'free': FREE_DAILY_CHARS, 'paid': PAID_DAILY_CHARS}
+
+
+def open_quota():
+    path = os.path.join(DATA_DIR, 'voxa.sqlite3')
+    try:
+        return Quota(path, tier_limits())
+    except sqlite3.Error as e:
+        log.warning('cannot open %s (%s); daily limits will reset on restart', path, e)
+        return Quota(':memory:', tier_limits())
+
+
+_quota = None  # opened in main(), so importing this module touches no files
+
+
 class Job:
     def __init__(self, seq, key, text, lang, voice, speed):
         self.id = uuid.uuid4().hex
@@ -275,25 +652,30 @@ class Job:
         self.created = time.time()
         self.finished = None
         self.done = threading.Event()
+        self.refund = None
+        self.queue = None
 
 
 class JobQueue:
     """One worker thread runs every generation, so model memory never stacks up."""
 
-    def __init__(self, generate):
+    def __init__(self, generate, workers=1, name='cpu'):
         self._generate = generate
+        self.workers, self.name = workers, name
         self._jobs = {}
         self._by_key = {}
         self._queue = queue.Queue()
         self._seq = itertools.count()
         self._lock = threading.Lock()
-        self._thread = None
 
     def start(self):
-        self._thread = threading.Thread(target=self._run, name='voxa-worker', daemon=True)
-        self._thread.start()
+        for i in range(self.workers):
+            threading.Thread(target=self._run, name=f'voxa-{self.name}-{i}', daemon=True).start()
 
-    def submit(self, text, lang, voice, speed):
+    def submit(self, text, lang, voice, speed, charge=None, who=None):
+        """Queue a generation. `charge(n)` is called only when new audio must be generated
+        (not for a cache hit or a duplicate of a job in flight) and returns a refund callable,
+        used if the job fails. It may raise QuotaExceeded."""
         key = cache_key(text, voice, speed, lang)
         with self._lock:
             self._purge()
@@ -303,7 +685,9 @@ class JobQueue:
             cached = _cache.get(key) is not None
             if not cached and self._pending() >= MAX_PENDING:
                 raise Busy()
+            refund = charge(len(text)) if charge and not cached else None
             job = Job(next(self._seq), key, text, lang, voice, speed)
+            job.refund, job.queue = refund, self
             self._jobs[job.id] = job
             if cached:
                 job.status, job.progress, job.from_cache = 'done', 1.0, True
@@ -354,6 +738,11 @@ class JobQueue:
                 job.status = 'error'
                 job.error = 'Speech generation failed on the server. Please try again.'
             finally:
+                if job.status == 'error' and job.refund:
+                    try:
+                        job.refund()  # a failed generation does not use up free characters
+                    except Exception:
+                        log.exception('refund for job %s failed', job.id)
                 job.finished = time.time()
                 job.done.set()
 
@@ -369,6 +758,40 @@ def generate(job):
     return join_wavs(list(synth(job.text, job.voice, job.speed, job.lang, on_progress)))
 
 
+def generate_remote(job):
+    """Generate on the GPU service: the same request body, a WAV back."""
+    body = json.dumps({'text': job.text, 'lang': job.lang, 'voice': job.voice,
+                       'speed': job.speed}).encode()
+    req = urllib.request.Request(f'{GPU_URL}/synthesize', data=body, headers={
+        'Content-Type': 'application/json', 'Authorization': f'Bearer {GPU_TOKEN}'})
+    with urllib.request.urlopen(req, timeout=GPU_TIMEOUT) as r:
+        audio = r.read()
+    if not audio.startswith(b'RIFF'):
+        raise RuntimeError('GPU service returned something other than a WAV')
+    return audio
+
+
+class JobRouter:
+    """Paid users' jobs to the GPU queue, everyone else's to the CPU queue."""
+
+    def __init__(self, cpu, gpu):
+        self.cpu, self.gpu = cpu, gpu
+
+    def start(self):
+        self.cpu.start()
+        self.gpu.start()
+
+    def submit(self, text, lang, voice, speed, charge=None, who=None):
+        queue = self.gpu if who is not None and who.tier == 'paid' else self.cpu
+        return queue.submit(text, lang, voice, speed, charge=charge, who=who)
+
+    def get(self, job_id):
+        return self.cpu.get(job_id) or self.gpu.get(job_id)
+
+    def ahead_of(self, job):
+        return (job.queue or self.cpu).ahead_of(job)
+
+
 _jobs = JobQueue(generate)
 
 
@@ -380,7 +803,7 @@ def job_json(job):
         'cache': 'hit' if job.from_cache else 'miss',
     }
     if job.status == 'queued':
-        out['ahead'] = _jobs.ahead_of(job)
+        out['ahead'] = (job.queue or _jobs).ahead_of(job)
     if job.status == 'done':
         out['audio_url'] = f'/api/audio/{job.key}'
     if job.error:
@@ -398,7 +821,20 @@ PAGE = r"""<!doctype html>
 *{box-sizing:border-box}
 body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#1b2333 0%,var(--bg) 60%);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
 .wrap{max-width:1020px;margin:0 auto;padding:30px 18px 70px}
-.brand{display:flex;align-items:center;gap:10px}
+.brand{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.account{margin-left:auto;display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:8px 10px;font-size:13px;color:var(--dim);min-width:0}
+.account button.small{white-space:nowrap}
+.account[hidden],.signin[hidden]{display:none}
+.account .who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:22ch}
+.account .tier{color:var(--good);font-weight:600}
+button.small{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:6px 13px;font:inherit;font-size:13px;cursor:pointer}
+button.small:hover{border-color:var(--accent)}
+.signin{margin:14px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px;max-width:420px}
+.signin input{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 11px;font:inherit}
+.signin .row{display:flex;gap:8px;flex-wrap:wrap}
+.signin .row button{flex:1 1 140px}
+.signin p{margin:0;font-size:13px;color:var(--dim)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .mark{color:var(--accent);font-size:20px}
 h1{font-size:26px;margin:0;letter-spacing:.4px;font-weight:680}
 .tagline{color:var(--dim);font-size:14px;margin:8px 0 24px;max-width:62ch}
@@ -407,11 +843,12 @@ h1{font-size:26px;margin:0;letter-spacing:.4px;font-weight:680}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
 label{display:block;font-size:11.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);margin:16px 0 7px}
 label:first-child{margin-top:0}
+#litebox label,#pacebox label{margin-top:16px}
 textarea{width:100%;min-height:210px;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:13px;font:inherit;resize:vertical}
 select{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 11px;font:inherit}
 input[type=range]{width:100%;accent-color:var(--accent)}
 .meta{display:flex;justify-content:space-between;color:var(--dim);font-size:12px;margin-top:7px;font-variant-numeric:tabular-nums}
-.meta .over{color:var(--bad)}
+.meta .over,.hint.over{color:var(--bad)}
 .hint{color:var(--dim);font-size:12px;margin:6px 0 0;min-height:18px}
 .val{color:var(--good);font-variant-numeric:tabular-nums;font-size:13px}
 button.primary{width:100%;margin-top:18px;background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:680;cursor:pointer}
@@ -436,13 +873,32 @@ audio[hidden]{display:none}
 .chip:hover{border-color:var(--accent);color:var(--ink)}
 </style></head>
 <body><div class="wrap">
-<div class="brand"><span class="mark">◉</span><h1>Voxa</h1></div>
-<p class="tagline">Text to speech. Nine languages, real voices. Generated on a server, so it sounds the same on every device.</p>
+<div class="brand"><span class="mark">◉</span><h1>Voxa</h1>
+  <div class="account" id="account" hidden>
+    <span class="who" id="who"></span><span class="tier" id="tier"></span>
+    <button class="small" id="signin-open">Sign in</button>
+    <button class="small" id="upgrade" hidden>Upgrade</button>
+    <button class="small" id="manage" hidden>Manage plan</button>
+    <button class="small" id="signout" hidden>Sign out</button>
+  </div>
+</div>
+<form class="signin" id="signin" hidden>
+  <label for="email">Sign in for 4,000 free characters a day</label>
+  <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+  <div class="row">
+    <button class="small" id="signin-email" type="submit">Email me a sign-in link</button>
+    <button class="small" id="signin-google" type="button">Continue with Google</button>
+  </div>
+  <p id="signin-msg" role="status"></p>
+</form>
+<p class="tagline">Text to speech. Nine languages, real voices. Generated on a server, so it sounds the same on every device.
+<a href="/book" style="color:var(--accent)">Turn a PDF into an audiobook →</a></p>
 <div class="grid">
   <section class="card">
     <label for="text">Your script</label>
     <textarea id="text" maxlength="4000" placeholder="Type or paste what you want spoken…"></textarea>
     <div class="meta"><span id="count">0 / 4000 characters</span><span id="est"></span></div>
+    <p class="hint" id="quota"></p>
     <div class="chips">
       <button class="chip" data-lang="a">English</button>
       <button class="chip" data-lang="f">Français</button>
@@ -460,9 +916,16 @@ audio[hidden]{display:none}
     <label for="voice">Voice</label>
     <select id="voice"></select>
     <p class="hint" id="voicenote"></p>
-    <label for="speed">Pacing <span class="val" id="speedv">1.00×</span></label>
-    <input type="range" id="speed" min="0.6" max="1.4" step="0.05" value="1">
+    <div id="litebox" hidden>
+      <label for="expr">Expressiveness</label>
+      <select id="expr"></select>
+    </div>
+    <div id="pacebox">
+      <label for="speed">Pacing <span class="val" id="speedv">1.00×</span></label>
+      <input type="range" id="speed" min="0.6" max="1.4" step="0.05" value="1">
+    </div>
     <button id="go" class="primary">Generate speech</button>
+    <button id="newtake" class="ghost" hidden>New take</button>
     <button id="cancel" class="ghost" hidden>Cancel</button>
     <div class="bar" id="bar" hidden><i></i></div>
     <p class="status" id="status" role="status"></p>
@@ -471,31 +934,52 @@ audio[hidden]{display:none}
     <a id="playerlink" class="download" hidden>Open in player</a>
   </section>
 </div>
-<div class="card note"><strong>About the model.</strong> Kokoro-82M, 82 million parameters, Apache 2.0.
-One set of weights serves every language — only the pronunciation rules change — so all nine
-languages share the same memory. Repeated phrases are cached and come back instantly.</div>
+<div class="card note"><strong>About the voices.</strong> Studio voices run Kokoro-82M (Apache 2.0) on our
+server: one set of weights serves all nine languages, and repeated phrases are cached and come
+back instantly. On-device voices run Phonon 31m by Gradium (Apache 2.0) in your browser, so
+they cost nothing and work offline once loaded. Voice names are Voxa's own. <a href="/credits" style="color:var(--accent)">Credits</a></div>
 </div>
 <script>
 const $=s=>document.querySelector(s);
 const MAX=4000;
-let LANG={}, VOICES={};
+let LANG={}, VOICES={}, CAT={}, LITE=null, LITE_BY_ID={}, PHONON_VERSION='';
+const isLite=id=>!!LITE_BY_ID[id];
 const langSel=$('#lang'), voiceSel=$('#voice');
 Promise.all([
   fetch('/api/languages').then(r=>r.json()),
   fetch('/api/voices').then(r=>r.json())
 ]).then(([l,v])=>{
-  LANG=l.languages||{}; VOICES=v.voices||{};
+  LANG=l.languages||{}; VOICES=v.voices||{}; CAT=v.catalogue||{}; LITE=v.lite; PHONON_VERSION=v.phonon_version||'';
+  // Lite voices need module workers and WebAssembly SIMD; older browsers just don't see them.
+  if(LITE&&typeof WebAssembly==='object'&&'Worker' in window){
+    Object.values(LITE.voices).flat().forEach(x=>LITE_BY_ID[x.id]=x);
+    $('#expr').innerHTML=LITE.expressiveness.map(e=>`<option value="${e.temperature}"${e.default?' selected':''}>${e.name}</option>`).join('');
+  }
   langSel.innerHTML=Object.entries(LANG).map(([k,lab])=>`<option value="${k}">${lab}</option>`).join('');
   refreshVoices();
 }).catch(()=>{ langSel.innerHTML='<option value="a">English (US)</option>'; });
 
 function refreshVoices(){
-  const k=langSel.value, list=VOICES[k]||[];
-  voiceSel.innerHTML=list.length?list.map(v=>`<option value="${v}">${v}</option>`).join(''):'<option value="">default</option>';
-  const n=list.length;
-  $('#langnote').textContent = n ? `${n} voice${n===1?'':'s'} for ${LANG[k]}${n===1?' — the model only ships one for this language':''}.` : '';
+  const k=langSel.value, list=CAT[k]||(VOICES[k]||[]).map(id=>({id,name:id}));
+  const lite=Object.keys(LITE_BY_ID).length&&LITE.voices[k]||[];
+  const opts=l=>l.map(v=>`<option value="${v.id}">${v.name}${v.signature?' ✦':''}</option>`).join('');
+  voiceSel.innerHTML=!list.length?'<option value="">default</option>':lite.length
+    ? `<optgroup label="Studio voices">${opts(list)}</optgroup><optgroup label="On this device · free, no daily limit">${opts(lite)}</optgroup>`
+    : opts(list);
+  const n=list.length, m=lite.length;
+  $('#langnote').textContent = !n ? '' : m
+    ? `${n} Studio voices and ${m} on-device voices for ${LANG[k]}.`
+    : `${n} voice${n===1?'':'s'} for ${LANG[k]}${n===1?' — the model only ships one for this language':''}.`;
+  describeVoice();
+}
+function describeVoice(){
+  const id=voiceSel.value, v=LITE_BY_ID[id]||(CAT[langSel.value]||[]).find(x=>x.id===id);
+  $('#voicenote').textContent=v?v.description:'';
+  // Phonon has expressiveness and takes but no pacing control; Kokoro the other way round.
+  $('#litebox').hidden=!isLite(id); $('#pacebox').hidden=isLite(id); $('#newtake').hidden=true;
 }
 langSel.addEventListener('change',refreshVoices);
+voiceSel.addEventListener('change',describeVoice);
 $('#speed').addEventListener('input',e=>$('#speedv').textContent=(+e.target.value).toFixed(2)+'×');
 function upd(){const t=$('#text').value;const c=$('#count');c.textContent=`${t.length} / ${MAX} characters`;c.className=t.length>MAX?'over':'';$('#est').textContent=t.length?`≈ ${Math.ceil(t.length/14)}s of audio`:'';}
 $('#text').addEventListener('input',upd);upd();
@@ -519,8 +1003,102 @@ function friendly(e){
   if(e instanceof TypeError) return 'Lost the connection to the server. Check your connection and try again.';
   return e.message;
 }
+// Accounts (Supabase). The sign-in library loads only when the server says sign-in is on,
+// so guests on a server without accounts load nothing extra.
+const SUPABASE_JS='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js';
+let SB=null, CONFIG={auth:null,limits:{}};
+async function token(){
+  if(!SB) return null;
+  try{ const {data}=await SB.auth.getSession(); return data.session?data.session.access_token:null; }
+  catch(e){ return null; }
+}
+// fetch() with the signed-in account's token. A 401 means the session expired: refresh it
+// once and retry; if that fails, sign out locally so the page falls back to guest.
+async function api(url, opts={}){
+  const send=async t=>fetch(url,{...opts,headers:{...(opts.headers||{}),...(t?{Authorization:'Bearer '+t}:{})}});
+  const t=await token();
+  let r=await send(t);
+  if(r.status===401&&SB){
+    const {data}=await SB.auth.refreshSession().catch(()=>({data:{}}));
+    if(data&&data.session){ r=await send(data.session.access_token); }
+    if(r.status===401){ await SB.auth.signOut({scope:'local'}).catch(()=>{}); r=await send(null); }
+  }
+  return r;
+}
+function loadScript(src){
+  // crossOrigin: the page is cross-origin isolated, so other-origin scripts load with CORS.
+  return new Promise((ok,fail)=>{const el=document.createElement('script');el.crossOrigin='anonymous';el.src=src;el.onload=ok;el.onerror=fail;document.head.appendChild(el);});
+}
+let SIGNED_IN=false;
+// The paid plan: Upgrade for signed-in free accounts, Manage plan for subscribers.
+function showPlan(){
+  const b=CONFIG.billing, tier=QUOTA&&QUOTA.tier;
+  $('#upgrade').hidden=!(b&&SIGNED_IN&&tier==='free');
+  $('#upgrade').textContent=b&&b.price_label?`Upgrade · ${b.price_label}`:'Upgrade';
+  $('#manage').hidden=!(b&&SIGNED_IN&&tier==='paid');
+}
+async function goBilling(path, btn){
+  btn.disabled=true;
+  try{
+    const r=await api(path,{method:'POST'}), j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.url) throw new Error(j.error||'The payment page is not available right now.');
+    location.href=j.url;
+  }catch(e){ const st=$('#status'); st.className='status err'; st.textContent='Error: '+e.message; btn.disabled=false; }
+}
+$('#upgrade').addEventListener('click',e=>goBilling('/api/billing/checkout',e.currentTarget));
+$('#manage').addEventListener('click',e=>goBilling('/api/billing/portal',e.currentTarget));
+// Back from Stripe Checkout. The plan arrives by webhook, sometimes a few seconds after the
+// visitor does, and only reaches the sign-in token on refresh, so refresh until it shows.
+async function welcomeBack(){
+  if(!new URLSearchParams(location.search).has('upgraded')||!SB) return;
+  history.replaceState(null,'',location.pathname);
+  const st=$('#status'); st.className='status busy'; st.textContent='Confirming your payment…';
+  for(let i=0;i<8;i++){
+    await SB.auth.refreshSession().catch(()=>{});
+    const q=await loadQuota();
+    if(q&&q.tier==='paid'){ st.className='status'; st.textContent='You are on the paid plan: no daily limit. Thank you!'; return; }
+    await sleep(2500);
+  }
+  st.className='status'; st.textContent='Payment received. Your plan can take a minute to switch on; reload the page shortly.';
+}
+
+function showAccount(session){
+  const signedIn=!!session;
+  SIGNED_IN=signedIn;
+  $('#account').hidden=false;
+  $('#who').textContent=signedIn?(session.user.email||'Signed in'):'';
+  $('#signin-open').hidden=signedIn; $('#signout').hidden=!signedIn;
+  if(signedIn) $('#signin').hidden=true;
+  loadQuota();
+}
+async function initAuth(){
+  try{ CONFIG=await fetch('/api/config',{cache:'no-store'}).then(r=>r.json()); }catch(e){ return; }
+  if(!CONFIG.auth) return;
+  try{ await loadScript(SUPABASE_JS); }
+  catch(e){ console.warn('sign-in library failed to load'); return; }
+  SB=window.supabase.createClient(CONFIG.auth.url, CONFIG.auth.anon_key);
+  SB.auth.onAuthStateChange((_event, session)=>showAccount(session));
+  const {data}=await SB.auth.getSession(); showAccount(data.session);
+  welcomeBack();
+}
+$('#signin-open').addEventListener('click',()=>{const f=$('#signin');f.hidden=!f.hidden;if(!f.hidden)$('#email').focus();});
+$('#signout').addEventListener('click',async()=>{ if(SB) await SB.auth.signOut(); });
+$('#signin').addEventListener('submit',async ev=>{
+  ev.preventDefault();
+  const email=$('#email').value.trim(), msg=$('#signin-msg');
+  if(!SB||!email) return;
+  msg.textContent='Sending…';
+  const {error}=await SB.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname}});
+  msg.textContent=error?('Could not send the link: '+error.message):`Check ${email} for a sign-in link. Open it on this device.`;
+});
+$('#signin-google').addEventListener('click',async()=>{
+  if(!SB) return;
+  const {error}=await SB.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}});
+  if(error) $('#signin-msg').textContent='Google sign-in is not available: '+error.message;
+});
+
 async function getJSON(url, opts){
-  const r=await fetch(url, opts);
+  const r=await api(url, opts);
   const j=await r.json().catch(()=>({}));
   if(!r.ok){const err=new Error(j.error||('Server error ('+r.status+')'));err.status=r.status;throw err;}
   return j;
@@ -545,21 +1123,125 @@ async function waitFor(job, signal, onTick){
   return job;
 }
 
+// Free tier: a daily character allowance, kept on the server. null means no limit.
+let QUOTA=null;
+function showQuota(q){
+  if(q!==undefined) QUOTA=q;
+  const el=$('#quota');
+  $('#tier').textContent=QUOTA&&QUOTA.tier==='paid'?'Paid':'';
+  showPlan();
+  if(!QUOTA){el.textContent='';return;}
+  if(QUOTA.unlimited){el.className='hint';el.textContent='No daily limit on your plan.';return;}
+  const left=QUOTA.remaining.toLocaleString(), lim=QUOTA.limit.toLocaleString();
+  const free=(CONFIG.limits.free||0).toLocaleString();
+  const upsell=QUOTA.tier==='guest'&&SB?` Sign in for ${free} a day.`
+    :QUOTA.tier==='free'&&CONFIG.billing&&SIGNED_IN?' Upgrade for no daily limit.':'';
+  el.className=QUOTA.remaining?'hint':'hint over';
+  el.textContent=QUOTA.remaining
+    ? `${left} of ${lim} free characters left today.${upsell||' Replaying something you already made is free.'}`
+    : `You've used today's ${lim} free characters. They reset at midnight UTC.${upsell}`;
+}
+// Requests can overlap (sign-in, a token refresh, a finished job); only the newest one's
+// answer may be shown, or an older token's allowance could overwrite the current one.
+let QUOTA_SEQ=0;
+function loadQuota(){
+  const n=++QUOTA_SEQ;
+  return api('/api/quota',{cache:'no-store'}).then(r=>r.json())
+    .then(j=>{ if(n===QUOTA_SEQ) showQuota(j.quota); return j.quota; }).catch(()=>null);
+}
+loadQuota();
+initAuth();
+
 let ctrl=null;
 $('#cancel').addEventListener('click',()=>{if(ctrl)ctrl.abort();});
-$('#go').addEventListener('click',async()=>{
+// Show finished audio: player, download, and the share sheet on iOS. Downloads come from the
+// blob the browser ALREADY has. iOS Safari ignores the HTML `download` attribute on blob URLs,
+// so use the Web Share API there: that is what surfaces "Save to Files".
+function showAudio(blob, fileUrl){
+  const url=URL.createObjectURL(blob);
+  const p=$('#player'); p.src=url; p.hidden=false; p.play().catch(()=>{});
+  const a=$('#download');
+  a.href=url; a.download='voxa.wav'; a.hidden=false; a.onclick=null;
+  const pl=$('#playerlink');
+  if(fileUrl){ pl.href=fileUrl; pl.download='voxa.wav'; pl.hidden=false; } else { pl.hidden=true; }
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (isIOS && navigator.canShare) {
+    a.textContent = '⬇ Save or share audio';
+    a.onclick = async (ev) => {
+      try {
+        const file = new File([blob], 'voxa.wav', { type: 'audio/wav' });
+        if (navigator.canShare({ files: [file] })) {
+          ev.preventDefault();
+          await navigator.share({ files: [file], title: 'Voxa audio' });
+        }
+      } catch (e) { /* user cancelled — fall through to the plain link */ }
+    };
+  }
+}
+
+// Voxa Lite: Phonon generates on this device, so it is free and unlimited and never touches
+// the server. The package (~4 MB) and the model (~65 MB) load on first use, then come from
+// the browser's cache.
+let LITE_TTS=null, LITE_LOADING=null, LITE_SEED=4242424242424242;
+const LITE_VOICES_LOADED=new Set(), LITE_CACHE=new Map();
+async function liteEngine(st){
+  if(LITE_TTS) return LITE_TTS;
+  if(!LITE_LOADING){
+    LITE_LOADING=(async()=>{
+      const {PhononTTS}=await import(`/static/phonon-${PHONON_VERSION}/index.js`);
+      const seen={};
+      return PhononTTS.load({lang:'en', model:LITE.model, onProgress:({file,loaded,cached})=>{
+        seen[file]=loaded||0;
+        const mb=Object.values(seen).reduce((a,b)=>a+b,0)/1e6;
+        st.textContent=cached?'Loading the on-device voice…':`Downloading the on-device voice (once)… ${mb.toFixed(0)} MB of about 65`;
+      }});
+    })().catch(e=>{LITE_LOADING=null;throw e;});
+  }
+  LITE_TTS=await LITE_LOADING;
+  return LITE_TTS;
+}
+async function generateLite(text, voiceId, st, signal){
+  const v=LITE_BY_ID[voiceId], temperature=+$('#expr').value;
+  const key=[text,voiceId,temperature,LITE_SEED].join('|');
+  if(LITE_CACHE.has(key)) return {blob:LITE_CACHE.get(key), cached:true};
+  st.textContent='Starting the on-device voice…';
+  let tts;
+  try{ tts=await liteEngine(st); }
+  catch(e){ throw new Error("This device can't run on-device voices ("+e.message+'). Choose a Studio voice instead.'); }
+  if(!LITE_VOICES_LOADED.has(voiceId)){ await tts.addVoice(voiceId, v.url); LITE_VOICES_LOADED.add(voiceId); }
+  st.textContent='Generating on this device…';
+  const blob=await tts.synthWav(text,{voice:voiceId, temperature, seed:LITE_SEED, signal});
+  if(LITE_CACHE.size>20) LITE_CACHE.delete(LITE_CACHE.keys().next().value);
+  LITE_CACHE.set(key, blob);
+  return {blob, cached:false};
+}
+
+async function generate(newTake){
   const text=$('#text').value.trim(); const st=$('#status');
   if(!text){st.className='status';st.textContent='Type something first.';return;}
   if(text.length>MAX){st.className='status err';st.textContent=`That script is ${text.length} characters; the limit is ${MAX}.`;return;}
-  const btn=$('#go'), bar=$('#bar'), fill=$('#bar i');
-  btn.disabled=true; $('#cancel').hidden=false; $('#player').hidden=true; $('#download').hidden=true; $('#playerlink').hidden=true;
+  const btn=$('#go'), bar=$('#bar'), fill=$('#bar i'), lite=isLite(voiceSel.value);
+  // A new take reads the same line differently: Phonon's output depends on its seed.
+  if(newTake) LITE_SEED=Math.floor(Math.random()*2**48);
+  btn.disabled=true; $('#newtake').disabled=true; $('#cancel').hidden=false; $('#player').hidden=true; $('#download').hidden=true; $('#playerlink').hidden=true;
   ctrl=new AbortController();
   const t0=performance.now();
-  st.className='status busy'; st.textContent='Sending…'; bar.hidden=false; fill.style.width='0';
+  st.className='status busy'; st.textContent='Sending…'; bar.hidden=lite; fill.style.width='0';
   try{
+    if(lite){
+      const {blob,cached}=await generateLite(text, voiceSel.value, st, ctrl.signal);
+      showAudio(blob, null);
+      st.className='status';
+      st.textContent=`Made on this device in ${((performance.now()-t0)/1000).toFixed(1)}s${cached?' · from cache':''} · free, no daily limit`;
+      $('#newtake').hidden=false;
+      return;
+    }
     let job=await getJSON('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
       signal:ctrl.signal,
-      body:JSON.stringify({text,lang:langSel.value,voice:voiceSel.value||null,speed:+$('#speed').value})});
+      body:JSON.stringify({text,lang:langSel.value,voice:voiceSel.value||null,speed:+$('#speed').value})})
+      .catch(e=>{ if(e.status===429) loadQuota(); throw e; });
+    if(job.quota!==undefined) showQuota(job.quota);
     job=await waitFor(job, ctrl.signal, j=>{
       if(j.status==='queued'){st.textContent=j.ahead?`Waiting — ${j.ahead} request${j.ahead===1?'':'s'} ahead of yours…`:'Starting…';}
       else{const pct=Math.round(j.progress*100);st.textContent=`Generating… ${pct}%`;fill.style.width=Math.max(pct,3)+'%';}
@@ -567,38 +1249,16 @@ $('#go').addEventListener('click',async()=>{
     fill.style.width='100%'; st.textContent='Downloading audio…';
     const r=await fetch(job.audio_url,{signal:ctrl.signal});
     if(!r.ok) throw new Error(r.status===404?'The server restarted and lost this audio. Please generate again.':'Server error ('+r.status+')');
-    const blob=await r.blob();
-    const url=URL.createObjectURL(blob);
-    const p=$('#player'); p.src=url; p.hidden=false; p.play().catch(()=>{});
-
-    // Download from the blob the browser ALREADY has. iOS Safari ignores the HTML `download`
-    // attribute on blob URLs, so use the Web Share API there — that is what surfaces
-    // "Save to Files".
-    const a=$('#download');
-    a.href=url; a.download='voxa.wav'; a.hidden=false;
-    const pl=$('#playerlink');
-    pl.href=job.audio_url; pl.download='voxa.wav'; pl.hidden=false;
-
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    if (isIOS && navigator.canShare) {
-      a.textContent = '⬇ Save or share audio';
-      a.onclick = async (ev) => {
-        try {
-          const file = new File([blob], 'voxa.wav', { type: 'audio/wav' });
-          if (navigator.canShare({ files: [file] })) {
-            ev.preventDefault();
-            await navigator.share({ files: [file], title: 'Voxa audio' });
-          }
-        } catch (e) { /* user cancelled — fall through to the plain link */ }
-      };
-    }
+    showAudio(await r.blob(), job.audio_url);
     st.className='status';
     st.textContent=`Done in ${((performance.now()-t0)/1000).toFixed(1)}s`+(job.cache==='hit'?' · from cache':'');
   }catch(e){
+    if(!lite) loadQuota();  // a failed generation is refunded
     st.className=e.name==='AbortError'?'status':'status err'; st.textContent=(e.name==='AbortError'?'':'Error: ')+friendly(e);
-  }finally{btn.disabled=false;$('#cancel').hidden=true;bar.hidden=true;ctrl=null;}
-});
+  }finally{btn.disabled=false;$('#newtake').disabled=false;$('#cancel').hidden=true;bar.hidden=true;ctrl=null;}
+}
+$('#go').addEventListener('click',()=>generate(false));
+$('#newtake').addEventListener('click',()=>generate(true));
 </script></body></html>
 """
 
@@ -637,6 +1297,61 @@ class Handler(BaseHTTPRequestHandler):
             'Content-Disposition': f'attachment; filename="voxa-{job.key[:8]}.wav"',
         })
 
+    def _send_static(self, rel):
+        """A file under static/, by extension allow-list, never outside the directory."""
+        root = os.path.realpath(STATIC_DIR)
+        full = os.path.realpath(os.path.join(root, rel))
+        ctype = STATIC_TYPES.get(os.path.splitext(full)[1])
+        if not full.startswith(root + os.sep) or not ctype or not os.path.isfile(full):
+            return self._send(404, {'error': 'not found'})
+        with open(full, 'rb') as f:
+            body = f.read()
+        # Paths carry the package version, so a file never changes under its URL. Workers
+        # take their isolation from their own script's headers, so these carry it too.
+        return self._send(200, body, ctype, {
+            'Cache-Control': 'public, max-age=31536000, immutable',
+            'Cross-Origin-Resource-Policy': 'same-origin', **ISOLATION})
+
+    def _send_auth_error(self, e):
+        log.info('rejected sign-in token: %s', e)
+        self.close_connection = True  # a rejected POST body is never read
+        self._send(401, {'error': 'Your sign-in has expired. Please sign in again.'},
+                   extra={'WWW-Authenticate': 'Bearer error="invalid_token"'})
+
+    def _client_ip(self):
+        # Fly's proxy sets Fly-Client-IP to the real client address on every request.
+        return (self.headers.get('Fly-Client-IP') or self.client_address[0]).strip()
+
+    def _visitor(self):
+        """The anonymous id from our cookie, or None (scripts, cookies blocked)."""
+        try:
+            jar = http.cookies.SimpleCookie(self.headers.get('Cookie') or '')
+        except http.cookies.CookieError:
+            return None
+        morsel = jar.get(COOKIE)
+        value = morsel.value if morsel else ''
+        return value if len(value) == 32 and all(c in '0123456789abcdef' for c in value) else None
+
+    def _new_visitor_cookie(self):
+        secure = '; Secure' if self.headers.get('X-Forwarded-Proto') == 'https' else ''
+        return (f'{COOKIE}={uuid.uuid4().hex}; Max-Age=31536000; Path=/; '
+                f'HttpOnly; SameSite=Lax{secure}')
+
+    def _identity(self):
+        """The signed-in user from the Authorization header, else a guest. A token that is
+        present but invalid or expired is an AuthError, not a silent fall back to guest."""
+        ip = self._client_ip()
+        header = self.headers.get('Authorization') or ''
+        if _auth and header.startswith('Bearer '):
+            return identity_from_claims(_auth.verify(header[7:].strip()), ip)
+        return Identity(ip, visitor=self._visitor())
+
+    def _submit(self):
+        who = self._identity()
+        charge = (lambda n: _quota.charge(who, n)) if _quota else None
+        job = _jobs.submit(*self._read_request(), charge=charge, who=who)
+        return job, who
+
     def _read_request(self):
         """Parse and validate the JSON body. Returns (text, lang, voice, speed)."""
         try:
@@ -656,6 +1371,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             self._get()
+        except AuthError as e:
+            self._send_auth_error(e)
         except Exception:
             log.exception('GET %s failed', self.path)
             self._send(500, {'error': 'internal server error'})
@@ -668,6 +1385,11 @@ class Handler(BaseHTTPRequestHandler):
         except Busy:
             self._send(503, {'error': 'The server is busy. Please try again in a minute.'},
                        extra={'Retry-After': '30'})
+        except AuthError as e:
+            self._send_auth_error(e)
+        except QuotaExceeded as e:
+            self._send(429, {'error': str(e), 'quota': e.status},
+                       extra={'Retry-After': str(max(1, int(e.status['resets_at'] - time.time())))})
         except Exception:
             log.exception('POST %s failed', self.path)
             self._send(500, {'error': 'internal server error'})
@@ -675,7 +1397,31 @@ class Handler(BaseHTTPRequestHandler):
     def _get(self):
         p = urlparse(self.path).path
         if p in ('/', '/index.html'):
-            return self._send(200, PAGE, 'text/html; charset=utf-8')
+            # Isolated so on-device voices get WebAssembly threads.
+            extra = {**ISOLATION, 'Cache-Control': 'no-cache'}
+            if not self._visitor():
+                extra['Set-Cookie'] = self._new_visitor_cookie()
+            return self._send(200, PAGE, 'text/html; charset=utf-8', extra)
+        if p.startswith('/static/'):
+            return self._send_static(p[len('/static/'):])
+        if p in WEB_PAGES:
+            name = WEB_PAGES[p]
+            with open(os.path.join(WEB_DIR, name), encoding='utf-8') as f:
+                page = f.read()
+            for key, value in web_values().items():
+                page = page.replace('{{' + key + '}}', value)
+            ctype = 'text/javascript; charset=utf-8' if name.endswith('.js') else 'text/html; charset=utf-8'
+            return self._send(200, page, ctype, {**ISOLATION, 'Cache-Control': 'no-cache'})
+        if p == '/api/quota':
+            who = self._identity()
+            status = _quota.status(who) if _quota else None
+            account = {'email': who.email, 'tier': who.tier} if who.user else None
+            return self._send(200, {'quota': status, 'account': account},
+                              extra={'Cache-Control': 'no-store'})
+        if p == '/api/config':
+            auth = {'url': SUPABASE_URL, 'anon_key': SUPABASE_ANON_KEY} if _auth else None
+            paying = {'price_label': billing.PRICE_LABEL} if _auth and billing.enabled(SUPABASE_URL) else None
+            return self._send(200, {'auth': auth, 'limits': tier_limits(), 'billing': paying})
         if p.startswith('/api/jobs/'):
             job = _jobs.get(p.rsplit('/', 1)[-1])
             if job is None:
@@ -703,25 +1449,76 @@ class Handler(BaseHTTPRequestHandler):
         if p == '/api/languages':
             return self._send(200, {'languages': LANG_LABELS})
         if p == '/api/voices':
-            return self._send(200, {'voices': VOICES, 'languages': LANG_LABELS})
+            catalogue = {lang: [{k: VOICE_BY_ID[vid][k]
+                                 for k in ('id', 'name', 'description', 'gender', 'signature')}
+                                for vid in ids]
+                         for lang, ids in VOICES.items()}
+            return self._send(200, {'voices': VOICES, 'catalogue': catalogue, 'lite': LITE,
+                                    'phonon_version': PHONON_VERSION,
+                                    'languages': LANG_LABELS})
         return self._send(404, {'error': 'not found'})
 
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
         self.send_header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
         self.send_header('Content-Length', '0')
         self.end_headers()
 
+    def _billing(self, p):
+        """Upgrade, manage the plan, and Stripe's webhook."""
+        if not (_auth and billing.enabled(SUPABASE_URL)):
+            return self._send(404, {'error': 'payments are not set up'})
+        if p == '/api/billing/webhook':
+            n = int(self.headers.get('Content-Length') or 0)
+            if n > 256 * 1024:
+                self.close_connection = True
+                return self._send(413, {'error': 'too large'})
+            payload = self.rfile.read(n)
+            try:
+                event = billing.verify(payload, self.headers.get('Stripe-Signature'))
+            except (billing.BadSignature, ValueError) as e:
+                log.warning('rejected Stripe webhook: %s', e)
+                return self._send(400, {'error': 'bad signature'})
+            try:
+                result = billing.handle_event(event, SUPABASE_URL)
+            except Exception:
+                # A non-2xx makes Stripe retry the event later, which is what we want here.
+                log.exception('Stripe event %s failed', event.get('id'))
+                return self._send(500, {'error': 'could not apply the event'})
+            log.info('Stripe %s %s: %s', event.get('type'), event.get('id'), result)
+            return self._send(200, {'received': True})
+        who = self._identity()
+        if not who.user:
+            return self._send(401, {'error': 'Sign in first.'})
+        origin = PUBLIC_URL or f"{self.headers.get('X-Forwarded-Proto', 'http')}://{self.headers.get('Host', 'localhost')}"
+        try:
+            if p == '/api/billing/checkout':
+                if who.tier == 'paid':
+                    return self._send(409, {'error': 'This account already has the paid plan.'})
+                return self._send(200, {'url': billing.checkout_url(who, origin + '/')})
+            if p == '/api/billing/portal':
+                if not who.customer:
+                    return self._send(409, {'error': 'There is no subscription on this account yet.'})
+                return self._send(200, {'url': billing.portal_url(who, origin + '/')})
+        except billing.BillingError as e:
+            return self._send(502, {'error': str(e)})
+        return self._send(404, {'error': 'not found'})
+
     def _post(self):
         p = urlparse(self.path).path
+        if p.startswith('/api/billing/'):
+            return self._billing(p)
         if p == '/api/jobs':
-            job = _jobs.submit(*self._read_request())
-            return self._send(200 if job.status == 'done' else 202, job_json(job))
+            job, who = self._submit()
+            out = job_json(job)
+            if _quota:
+                out['quota'] = _quota.status(who)
+            return self._send(200 if job.status == 'done' else 202, out)
         if p == '/api/tts':
             # Synchronous form for scripts and API callers: same queue, waits for the result.
-            job = _jobs.submit(*self._read_request())
+            job, _ = self._submit()
             if not job.done.wait(SYNC_TIMEOUT):
                 return self._send(504, {
                     'error': 'still generating; poll the job instead',
@@ -734,6 +1531,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    global _auth, _quota, _jobs
+    if SUPABASE_URL and SUPABASE_ANON_KEY:
+        _auth = TokenVerifier(SUPABASE_URL, SUPABASE_JWT_SECRET)
+        log.info('sign-in enabled via %s', SUPABASE_URL)
+    _quota = open_quota()
+    log.info('daily characters per tier (0 = no limit): %s', _quota.limits)
+    if GPU_URL and GPU_TOKEN:
+        _jobs = JobRouter(_jobs, JobQueue(generate_remote, workers=GPU_WORKERS, name='gpu'))
+        log.info('paid jobs go to the GPU service at %s', GPU_URL)
     _jobs.start()
     try:
         get_pipeline('a')  # warm English

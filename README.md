@@ -61,10 +61,37 @@ Request fields:
 
 - `text` — required string, at most 4,000 characters.
 - `lang` — optional, default `a`. Unknown codes are a 400.
-- `voice` — optional, defaults to the language's first voice. Must belong to that language
-  (see `/api/voices`); anything else is a 400.
+- `voice` — optional, defaults to the language's first voice. A Voxa voice id from
+  `/api/voices` (e.g. `harper`), which must belong to that language; anything else is a 400.
+  Kokoro's own ids (e.g. `af_heart`) are still accepted and map to the matching Voxa voice.
+
+Voices are defined in `voices.json`: a Voxa name, gender, accent, Kokoro's published quality
+grade, and the Kokoro voice behind it, or a weighted blend of same-language Kokoro voices
+(the "signature" voices, marked ✦ on the page). Rename or add voices there; the server checks
+the file at startup (unique ids, one language per blend, weights adding up to 1).
 - `speed` — optional number, default 1.0, must be 0.5–2.0. Audio length and memory scale
   with 1/speed: `0.01` once took 4.6 GB and OOM-killed the machine.
+
+## Daily limits and accounts
+
+Each day (UTC) a visitor may generate a number of characters; replaying cached audio is
+free and failed generations are refunded. Limits are set by environment variables, where
+`0` means no limit:
+
+| Variable | Default | Who |
+|---|---|---|
+| `VOXA_GUEST_DAILY_CHARS` | 1000 | not signed in (counted by cookie, with a 5× per-IP backstop) |
+| `VOXA_FREE_DAILY_CHARS` | 4000 | free accounts; also guests while sign-in is off |
+| `VOXA_PAID_DAILY_CHARS` | 0 | paid accounts |
+
+Sign-in uses Supabase. Setting `SUPABASE_URL` and `SUPABASE_ANON_KEY` turns it on: requests
+with `Authorization: Bearer <access token>` are counted against that account, and an
+invalid or expired token is a 401 (never a silent fall back to guest). Tokens signed with
+the project's asymmetric keys (ES256/RS256) are checked against its JWKS; set
+`SUPABASE_JWT_SECRET` as well for projects still on the legacy HS256 secret. An account is
+paid when its `app_metadata.tier` is `"paid"`; `user_metadata` is ignored because users can
+edit it. `GET /api/config` tells the page whether sign-in is on, and `GET /api/quota`
+returns today's allowance and the signed-in account.
 
 Bad input is always a JSON 400, never a dropped connection. When 16 jobs are already waiting
 the server answers 503 with `Retry-After`.

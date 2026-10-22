@@ -23,7 +23,7 @@ WORKDIR /app
 # is a separate download, and fugashi prefers it over unidic-lite and then fails to start.
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake \
     && pip install --index-url https://download.pytorch.org/whl/cpu torch \
-    && pip install "kokoro>=0.9.4" soundfile numpy "misaki[zh]>=0.9.4" \
+    && pip install "kokoro>=0.9.4" soundfile numpy "misaki[zh]>=0.9.4" cryptography \
         fugashi jaconv mojimoji pyopenjtalk unidic-lite \
     && apt-get purge -y build-essential cmake && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
@@ -39,10 +39,16 @@ m = KModel(repo_id='hexgrad/Kokoro-82M').eval(); \
  for l, v in [('a','af_heart'),('b','bf_emma'),('e','ef_dora'),('f','ff_siwis'),('h','hf_alpha'), \
               ('i','if_sara'),('j','jf_alpha'),('p','pf_dora'),('z','zf_xiaobei')]]"
 
+# Browser packages (Phonon for Voxa Lite, pdf.js for audiobooks), version- and hash-pinned,
+# served by the app itself.
+COPY scripts/fetch_vendor.py /tmp/fetch_vendor.py
+RUN python /tmp/fetch_vendor.py /app/static && rm /tmp/fetch_vendor.py
+
 # Everything is local now; fail fast rather than reach the network at runtime.
 ENV HF_HUB_OFFLINE=1
 
-COPY server.py /app/server.py
+COPY server.py billing.py voices.json /app/
+COPY web /app/web
 
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s \

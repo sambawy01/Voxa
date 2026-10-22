@@ -4,3 +4,5 @@ dist/
 *.local
 .venv/
 __pycache__/
+voxa.sqlite3*
+static/

@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Voxa Lite speed test</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='none' stroke='%237aa2ff' stroke-width='2'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%237aa2ff'/%3E%3C/svg%3E">
+<style>
+:root{--bg:#0f1115;--panel:#171b22;--panel2:#1e2430;--line:#2b3341;--ink:#e9edf4;--dim:#9aa5b5;--accent:#7aa2ff;--good:#6fe3b4;--warn:#f3bd6a;--bad:#ff8a8a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:28px max(16px,env(safe-area-inset-right)) 60px max(16px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:16px}
+h1{font-size:24px;margin:0}
+p{margin:0;color:var(--dim)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+label{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);display:flex;flex-direction:column;gap:6px}
+select{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:9px;font:inherit;text-transform:none;letter-spacing:0}
+.check{flex-direction:row;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--ink)}
+button{background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:12px 16px;font:inherit;font-weight:650;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line);font-weight:500}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row button{flex:1 1 140px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.stat{background:var(--panel2);border-radius:10px;padding:10px 12px}
+.stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.stat span{font-size:12px;color:var(--dim)}
+canvas{width:100%;height:180px;background:var(--panel2);border-radius:10px}
+#status{font-size:14px;color:var(--accent);min-height:20px}
+.verdict{font-weight:650;font-size:16px}
+.verdict.good{color:var(--good)}.verdict.warn{color:var(--warn)}.verdict.bad{color:var(--bad)}
+pre{margin:0;background:var(--panel2);border-radius:10px;padding:12px;font-size:12px;overflow:auto;max-height:240px;white-space:pre-wrap;word-break:break-word}
+.env{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
+</style></head>
+<body><div class="wrap">
+<h1>Voxa Lite speed test</h1>
+<p>Generates English speech on this device for several minutes and records how fast it stays. Results tell us whether phones can make whole audiobooks themselves.</p>
+
+<section class="card">
+  <div class="controls">
+    <label>Run for<select id="minutes"><option value="1">1 minute</option><option value="5" selected>5 minutes</option><option value="10">10 minutes</option></select></label>
+    <label>Run on<select id="device"><option value="cpu" selected>CPU</option><option value="auto">GPU if available</option></select></label>
+  </div>
+  <label class="check"><input type="checkbox" id="play"> Play the audio while it generates</label>
+  <label class="check"><input type="checkbox" id="awake" checked> Keep the screen awake</label>
+  <div class="row"><button id="start">Start test</button><button id="stop" class="ghost" disabled>Stop</button></div>
+  <p id="status" role="status"></p>
+  <p class="env" id="env"></p>
+</section>
+
+<section class="card">
+  <div class="stats">
+    <div class="stat"><b id="s-now">–</b><span>speed now, × real time</span></div>
+    <div class="stat"><b id="s-first">–</b><span>first minute</span></div>
+    <div class="stat"><b id="s-last">–</b><span>last minute</span></div>
+    <div class="stat"><b id="s-audio">–</b><span>audio made</span></div>
+  </div>
+  <canvas id="chart" width="700" height="180" aria-label="Speed over time"></canvas>
+  <p class="verdict" id="verdict"></p>
+</section>
+
+<section class="card">
+  <p>To test a locked screen: untick "Keep the screen awake", start, lock the phone for a minute, then unlock. The log shows whether generation paused.</p>
+  <div class="row"><button id="copy" class="ghost" disabled>Copy results</button></div>
+  <pre id="results">Results appear here when the test ends.</pre>
+</section>
+</div>
+
+<script type="module">
+import { PhononTTS } from '/static/phonon-{{PHONON_VERSION}}/index.js';
+
+// Original prose, so the test reads like a book: long sentences, dialogue, numbers.
+const PARAS = [
+  'The ferry left the harbour at a quarter past seven, and by the time the town had shrunk to a row of lights, most of the passengers had gone below to escape the wind.',
+  'Mara stayed on deck. She had made this crossing twenty-three times, and she still counted the minutes until the lighthouse on the far shore came into view.',
+  '"You will catch your death out here," said the man beside her, though he made no move to go inside himself. He held a paper cup of coffee in both hands, as if it were the last warm thing in the world.',
+  'She laughed. "My grandmother crossed this water in an open boat in nineteen forty-six. A little wind never hurt anyone in my family."',
+  'The man considered this for a long moment. Then he told her about his own grandfather, who had kept the lighthouse for thirty-one years and had never once, in all that time, learned to swim.',
+  'Below them the engines changed their note, a deeper and slower sound, and the deck tilted gently as the ferry turned into the channel. Somewhere a bell rang twice.',
+  'By nine o\'clock the lighthouse was close enough to read the date painted over its door: eighteen eighty-two. Mara pointed it out, and the man nodded as though he had known all along.',
+  'They docked in silence. On the quay a child was waving at nobody in particular, and the gulls rose all at once from the harbour wall, complaining about the late hour.',
+];
+
+const $ = s => document.querySelector(s);
+let tts = null, running = false, rows = [], events = [], wake = null, info = {};
+
+function fmt(x, d = 1) { return Number.isFinite(x) ? x.toFixed(d) : '–'; }
+function avgSpeed(list) {
+  const audio = list.reduce((a, r) => a + r.audio, 0), took = list.reduce((a, r) => a + r.took, 0);
+  return took ? audio / took : NaN;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (running) events.push({ at: +(performance.now() / 1000).toFixed(1), hidden: document.hidden });
+});
+
+function draw() {
+  const c = $('#chart'), g = c.getContext('2d'), W = c.width, H = c.height, pad = 24;
+  const css = getComputedStyle(document.documentElement);
+  g.clearRect(0, 0, W, H);
+  if (!rows.length) return;
+  const tMax = Math.max(60, rows[rows.length - 1].end);
+  const sMax = Math.max(2, ...rows.map(r => r.speed)) * 1.15;
+  const x = t => pad + (W - 2 * pad) * t / tMax, y = v => H - pad - (H - 2 * pad) * v / sMax;
+  g.strokeStyle = css.getPropertyValue('--line'); g.setLineDash([4, 4]); g.beginPath();
+  g.moveTo(pad, y(1)); g.lineTo(W - pad, y(1)); g.stroke(); g.setLineDash([]);
+  g.fillStyle = css.getPropertyValue('--dim'); g.font = '12px sans-serif';
+  g.fillText('1× real time', pad + 4, y(1) - 4);
+  g.fillText(`${fmt(sMax, 0)}×`, 2, pad);
+  g.strokeStyle = css.getPropertyValue('--accent'); g.lineWidth = 2; g.beginPath();
+  rows.forEach((r, i) => (i ? g.lineTo : g.moveTo).call(g, x(r.end), y(r.speed)));
+  g.stroke();
+}
+
+function render() {
+  const last = rows[rows.length - 1];
+  const end = last ? last.end : 0;
+  $('#s-now').textContent = last ? fmt(last.speed) + '×' : '–';
+  $('#s-first').textContent = fmt(avgSpeed(rows.filter(r => r.end <= 60))) + '×';
+  $('#s-last').textContent = fmt(avgSpeed(rows.filter(r => r.end > end - 60))) + '×';
+  const audio = rows.reduce((a, r) => a + r.audio, 0);
+  $('#s-audio').textContent = `${Math.floor(audio / 60)}:${String(Math.round(audio % 60)).padStart(2, '0')}`;
+  draw();
+}
+
+function summary(reason) {
+  const end = rows.length ? rows[rows.length - 1].end : 0;
+  const first = avgSpeed(rows.filter(r => r.end <= 60));
+  const lastMin = avgSpeed(rows.filter(r => r.end > end - 60));
+  const audio = rows.reduce((a, r) => a + r.audio, 0);
+  // A gap is wall time between chunks that the work itself does not explain: the page was
+  // paused (screen locked, app in the background).
+  const gaps = rows.slice(1).map((r, i) => ({ at: rows[i].end, seconds: +(r.start - rows[i].end).toFixed(1) }))
+    .filter(g => g.seconds > 2);
+  const result = {
+    reason, seconds: +end.toFixed(1), chunks: rows.length, audio_seconds: +audio.toFixed(1),
+    speed_overall: +fmt(avgSpeed(rows), 2), speed_first_minute: +fmt(first, 2),
+    speed_last_minute: +fmt(lastMin, 2), slowdown_percent: +fmt(100 * (1 - lastMin / first), 0),
+    min_speed: +fmt(Math.min(...rows.map(r => r.speed)), 2), paused_gaps: gaps,
+    visibility_events: events, ...info,
+  };
+  const v = $('#verdict');
+  if (!rows.length) { v.textContent = ''; }
+  else if (lastMin >= 1.5) { v.className = 'verdict good'; v.textContent = `Fast enough for audiobooks: ${fmt(lastMin)}× real time after ${Math.round(end / 60)} min.`; }
+  else if (lastMin >= 1) { v.className = 'verdict warn'; v.textContent = `Keeps up with playback (${fmt(lastMin)}×) but a book would take about as long as listening to it.`; }
+  else { v.className = 'verdict bad'; v.textContent = `Slower than real time (${fmt(lastMin)}×): too slow for audiobooks on this device.`; }
+  $('#results').textContent = JSON.stringify(result, null, 1);
+  $('#copy').disabled = false;
+}
+
+async function load() {
+  $('#status').textContent = 'Loading the model (about 65 MB the first time)…';
+  const t0 = performance.now();
+  const seen = {};
+  tts = await PhononTTS.load({
+    lang: 'en', device: $('#device').value,
+    onProgress: ({ file, loaded, total, cached }) => {
+      seen[file] = { loaded, total, cached };
+      const mb = Object.values(seen).reduce((a, f) => a + (f.loaded || 0), 0) / 1e6;
+      $('#status').textContent = `Loading the model… ${mb.toFixed(1)} MB`;
+    },
+  });
+  info = {
+    load_seconds: +((performance.now() - t0) / 1000).toFixed(1),
+    from_cache: Object.values(seen).every(f => f.cached),
+    isolated: self.crossOriginIsolated, threads: tts.threads, threads_reason: tts.threadsReason,
+    device: tts.device, device_reason: tts.deviceReason,
+    cores: navigator.hardwareConcurrency, user_agent: navigator.userAgent,
+  };
+  $('#env').textContent = `${info.isolated ? 'Isolated' : 'Not isolated'} · ${tts.threads} thread${tts.threads === 1 ? '' : 's'} on ${tts.device.toUpperCase()} · loaded in ${info.load_seconds}s`;
+}
+
+async function run() {
+  running = true; rows = []; events = [];
+  $('#start').disabled = true; $('#stop').disabled = false; $('#copy').disabled = true;
+  $('#verdict').textContent = ''; $('#results').textContent = 'Running…';
+  let ctx = null, at = 0;
+  if ($('#play').checked) { ctx = new AudioContext({ sampleRate: 24000 }); at = ctx.currentTime; }
+  try {
+    if ($('#awake').checked && navigator.wakeLock) wake = await navigator.wakeLock.request('screen').catch(() => null);
+    if (!tts) await load();
+    const limit = +$('#minutes').value * 60, t0 = performance.now() / 1000;
+    let i = 0;
+    while (running && performance.now() / 1000 - t0 < limit) {
+      const text = PARAS[i++ % PARAS.length];
+      const start = performance.now() / 1000;
+      const pcm = await tts.synth(text);
+      const end = performance.now() / 1000, audio = pcm.length / tts.sampleRate;
+      rows.push({ start: start - t0, end: end - t0, took: end - start, audio, speed: audio / (end - start), hidden: document.hidden });
+      if (ctx) {
+        const buf = ctx.createBuffer(1, pcm.length, tts.sampleRate); buf.getChannelData(0).set(pcm);
+        const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+        at = Math.max(at, ctx.currentTime); src.start(at); at += buf.duration;
+      }
+      $('#status').textContent = `Running… ${Math.round(end - t0)}s of ${limit}s`;
+      render();
+    }
+    $('#status').textContent = running ? 'Finished.' : 'Stopped.';
+    summary(running ? 'finished' : 'stopped');
+  } catch (e) {
+    $('#status').textContent = 'The test could not run: ' + e.message;
+    summary('error: ' + e.message);
+  } finally {
+    running = false; $('#start').disabled = false; $('#stop').disabled = true;
+    if (wake) { wake.release().catch(() => {}); wake = null; }
+    if (ctx) setTimeout(() => ctx.close(), Math.max(0, (at - ctx.currentTime) * 1000));
+  }
+}
+
+$('#start').addEventListener('click', run);
+$('#stop').addEventListener('click', () => { running = false; });
+$('#device').addEventListener('change', () => { if (tts) { tts.dispose(); tts = null; } });
+$('#copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#results').textContent); $('#copy').textContent = 'Copied'; }
+  catch (e) { getSelection().selectAllChildren($('#results')); $('#copy').textContent = 'Selected: copy it'; }
+});
+$('#env').textContent = self.crossOriginIsolated ? 'Cross-origin isolated: threads available.' : 'Not isolated: single thread.';
+</script>
+</body></html>

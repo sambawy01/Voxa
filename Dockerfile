@@ -23,7 +23,7 @@ WORKDIR /app
 # is a separate download, and fugashi prefers it over unidic-lite and then fails to start.
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake \
     && pip install --index-url https://download.pytorch.org/whl/cpu torch \
-    && pip install "kokoro>=0.9.4" soundfile numpy "misaki[zh]>=0.9.4" \
+    && pip install "kokoro>=0.9.4" soundfile numpy "misaki[zh]>=0.9.4" cryptography \
         fugashi jaconv mojimoji pyopenjtalk unidic-lite \
     && apt-get purge -y build-essential cmake && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*

@@ -20,9 +20,12 @@ which is longer than a phone browser or the edge proxy will hold a silent connec
 open — the request dropped and Safari reported "Load failed". The page now submits a
 job, polls its progress, then fetches the finished audio.
 """
+import base64
+import binascii
 import collections
 import datetime
 import hashlib
+import hmac
 import http.cookies
 import io
 import itertools
@@ -34,6 +37,7 @@ import queue
 import sqlite3
 import threading
 import time
+import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
@@ -53,9 +57,17 @@ MAX_PENDING = 16
 JOB_TTL = 30 * 60
 # How long the synchronous /api/tts endpoint waits for its job.
 SYNC_TIMEOUT = 300
-# Free tier: characters a visitor may generate per UTC day. 0 turns the limit off.
-# Cached replays are free; only new generation counts.
+# Daily characters per tier; 0 means no limit. Cached replays are free; only new
+# generation counts. Guests are visitors who are not signed in.
+GUEST_DAILY_CHARS = int(os.environ.get('VOXA_GUEST_DAILY_CHARS', '1000'))
 FREE_DAILY_CHARS = int(os.environ.get('VOXA_FREE_DAILY_CHARS', '4000'))
+PAID_DAILY_CHARS = int(os.environ.get('VOXA_PAID_DAILY_CHARS', '0'))
+# Sign-in (Supabase). SUPABASE_URL and the public anon key turn accounts on; the page uses
+# them to sign people in. Tokens signed with the project's asymmetric keys are checked
+# against its published JWKS; SUPABASE_JWT_SECRET covers projects on the older shared secret.
+SUPABASE_URL = os.environ.get('SUPABASE_URL', '').rstrip('/')
+SUPABASE_ANON_KEY = os.environ.get('SUPABASE_ANON_KEY', '')
+SUPABASE_JWT_SECRET = os.environ.get('SUPABASE_JWT_SECRET', '')
 # Backstop per IP address, so clearing cookies cannot buy unlimited use. Generous because
 # phones on one mobile carrier often share a single address.
 IP_DAILY_FACTOR = 5
@@ -313,6 +325,123 @@ class AudioCache:
 _cache = AudioCache(MAX_CACHE_BYTES)
 
 
+class AuthError(Exception):
+    """A sign-in token we cannot accept."""
+
+
+def _b64url(text):
+    return base64.urlsafe_b64decode(text + '=' * (-len(text) % 4))
+
+
+def _verify_asymmetric(jwk, alg, signed, signature):
+    """Check an ES256 or RS256 signature against one key from the project's JWKS."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, utils
+
+    def num(field):
+        return int.from_bytes(_b64url(jwk[field]), 'big')
+
+    try:
+        if alg == 'ES256' and jwk.get('kty') == 'EC' and jwk.get('crv') == 'P-256':
+            if len(signature) != 64:
+                return False
+            key = ec.EllipticCurvePublicNumbers(num('x'), num('y'), ec.SECP256R1()).public_key()
+            der = utils.encode_dss_signature(int.from_bytes(signature[:32], 'big'),
+                                             int.from_bytes(signature[32:], 'big'))
+            key.verify(der, signed, ec.ECDSA(hashes.SHA256()))
+            return True
+        if alg == 'RS256' and jwk.get('kty') == 'RSA':
+            key = rsa.RSAPublicNumbers(num('e'), num('n')).public_key()
+            key.verify(signature, signed, padding.PKCS1v15(), hashes.SHA256())
+            return True
+    except (InvalidSignature, KeyError, ValueError):
+        pass
+    return False
+
+
+class TokenVerifier:
+    """Checks Supabase access tokens: signature, expiry, issuer, audience and role."""
+
+    LEEWAY = 30  # seconds of clock skew tolerated on expiry
+
+    def __init__(self, url, hs256_secret='', fetch_jwks=None, clock=time.time):
+        self.issuer = f'{url}/auth/v1'
+        self.jwks_url = f'{url}/auth/v1/.well-known/jwks.json'
+        self.secret = hs256_secret.encode() if hs256_secret else None
+        self._fetch = fetch_jwks or self._fetch_jwks
+        self._clock = clock
+        self._keys = {}
+        self._fetched_at = None
+        self._lock = threading.Lock()
+
+    def _fetch_jwks(self):
+        with urllib.request.urlopen(self.jwks_url, timeout=5) as r:
+            return json.load(r)
+
+    def _key(self, kid):
+        """The signing key with this id. An unknown id means the project rotated its keys,
+        so the JWKS is fetched again, at most once a minute."""
+        with self._lock:
+            now = self._clock()
+            stale = self._fetched_at is None or now - self._fetched_at > 60
+            if kid not in self._keys and stale:
+                self._fetched_at = now
+                try:
+                    jwks = self._fetch()
+                    self._keys = {k['kid']: k for k in jwks.get('keys', []) if k.get('kid')}
+                except Exception as e:
+                    log.warning('cannot fetch signing keys from %s: %s', self.jwks_url, e)
+            return self._keys.get(kid)
+
+    def verify(self, token):
+        """Return the token's claims, or raise AuthError."""
+        try:
+            head, body, sig = token.split('.')
+            header = json.loads(_b64url(head))
+            claims = json.loads(_b64url(body))
+            signature = _b64url(sig)
+        except (ValueError, binascii.Error, UnicodeDecodeError):
+            raise AuthError('malformed token')
+        if not isinstance(header, dict) or not isinstance(claims, dict):
+            raise AuthError('malformed token')
+        signed = f'{head}.{body}'.encode()
+        alg = header.get('alg')
+        if alg == 'HS256' and self.secret:
+            valid = hmac.compare_digest(
+                hmac.new(self.secret, signed, hashlib.sha256).digest(), signature)
+        elif alg in ('ES256', 'RS256'):
+            jwk = self._key(header.get('kid'))
+            valid = jwk is not None and _verify_asymmetric(jwk, alg, signed, signature)
+        else:
+            valid = False
+        if not valid:
+            raise AuthError('bad signature')
+        exp = claims.get('exp')
+        if not isinstance(exp, (int, float)) or exp < self._clock() - self.LEEWAY:
+            raise AuthError('expired')
+        if claims.get('iss') != self.issuer:
+            raise AuthError('wrong issuer')
+        aud = claims.get('aud')
+        if 'authenticated' not in (aud if isinstance(aud, list) else [aud]):
+            raise AuthError('wrong audience')
+        # The project's anon key is itself a valid token with role "anon"; it is not a user.
+        if claims.get('role') != 'authenticated' or not claims.get('sub'):
+            raise AuthError('not a signed-in user')
+        return claims
+
+
+def identity_from_claims(claims, ip):
+    # The tier comes from app_metadata, which only the server side (service role, Stripe
+    # webhook) can write. user_metadata is editable by the user, so it is never trusted.
+    app = claims.get('app_metadata') if isinstance(claims.get('app_metadata'), dict) else {}
+    tier = 'paid' if app.get('tier') == 'paid' else 'free'
+    return Identity(ip, user=claims['sub'], tier=tier, email=claims.get('email'))
+
+
+_auth = None  # a TokenVerifier once sign-in is configured
+
+
 class QuotaExceeded(Exception):
     def __init__(self, status, requested):
         self.status = status
@@ -320,22 +449,31 @@ class QuotaExceeded(Exception):
         left = status['remaining']
         hours = max(1, round((status['resets_at'] - time.time()) / 3600))
         super().__init__(
-            f'Free daily limit reached: {left:,} of {status["limit"]:,} characters left today '
+            f'Daily limit reached: {left:,} of {status["limit"]:,} characters left today '
             f'and this script is {requested:,}. It resets at midnight UTC '
             f'(in about {hours} hour{"" if hours == 1 else "s"}).'
         )
 
 
-class Quota:
-    """Characters generated per visitor per UTC day, in SQLite.
+class Identity:
+    """Who a request is for. Signed-in users are counted by account; guests by their
+    cookie id, or by IP when there is no cookie (scripts)."""
 
-    A visitor is their cookie id, or their IP when there is no cookie (scripts). Every
-    request also counts against its IP at IP_DAILY_FACTOR times the limit.
+    def __init__(self, ip, visitor=None, user=None, tier='guest', email=None):
+        self.ip, self.visitor, self.user, self.tier, self.email = ip, visitor, user, tier, email
+
+
+class Quota:
+    """Characters generated per identity per UTC day, in SQLite.
+
+    `limits` maps a tier ('guest', 'free', 'paid') to its daily characters; 0 means no
+    limit. Guests also count against their IP at IP_DAILY_FACTOR times the guest limit, so
+    clearing cookies cannot buy unlimited use. Accounts have no IP backstop: many people
+    can share one office or carrier address.
     """
 
-    def __init__(self, path, limit):
-        self.limit = limit
-        self.ip_limit = limit * IP_DAILY_FACTOR
+    def __init__(self, path, limits):
+        self.limits = dict(limits)
         self._lock = threading.Lock()
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.execute('CREATE TABLE IF NOT EXISTS usage ('
@@ -345,7 +483,7 @@ class Quota:
 
     @property
     def enabled(self):
-        return self.limit > 0
+        return any(self.limits.values())
 
     @staticmethod
     def _today():
@@ -354,36 +492,42 @@ class Quota:
             hour=0, minute=0, second=0, microsecond=0)
         return now.date().isoformat(), midnight.timestamp()
 
-    @staticmethod
-    def _subjects(visitor, ip):
-        return (f'v:{visitor}' if visitor else f'a:{ip}'), f'ip:{ip}'
+    def _subjects(self, who):
+        """(subject, daily limit) pairs this identity is counted against."""
+        limit = self.limits.get(who.tier, 0)
+        if who.user:
+            return [(f'u:{who.user}', limit)]
+        return [(f'v:{who.visitor}' if who.visitor else f'a:{who.ip}', limit),
+                (f'ip:{who.ip}', limit * IP_DAILY_FACTOR)]
 
     def _used(self, day, subject):
         row = self._db.execute('SELECT chars FROM usage WHERE day = ? AND subject = ?',
                                (day, subject)).fetchone()
         return row[0] if row else 0
 
-    def _status(self, day, resets_at, visitor_key, ip_key):
-        remaining = max(0, min(self.limit - self._used(day, visitor_key),
-                               self.ip_limit - self._used(day, ip_key)))
-        return {'limit': self.limit, 'used': self.limit - remaining,
+    def _status(self, day, resets_at, who, subjects):
+        limit = subjects[0][1]
+        remaining = max(0, min(lim - self._used(day, subj) for subj, lim in subjects))
+        return {'tier': who.tier, 'limit': limit, 'used': limit - remaining,
                 'remaining': remaining, 'resets_at': int(resets_at)}
 
-    def status(self, visitor, ip):
-        if not self.enabled:
-            return None
+    def status(self, who):
+        """Today's allowance, {'tier', 'unlimited': True} for a tier with no limit."""
+        if not self.limits.get(who.tier):
+            return {'tier': who.tier, 'unlimited': True}
         day, resets_at = self._today()
         with self._lock:
-            return self._status(day, resets_at, *self._subjects(visitor, ip))
+            return self._status(day, resets_at, who, self._subjects(who))
 
-    def charge(self, visitor, ip, n):
+    def charge(self, who, n):
         """Take n characters or raise QuotaExceeded. Returns a refund callable."""
-        if not self.enabled:
+        if not self.limits.get(who.tier):
             return lambda: None
         day, resets_at = self._today()
-        keys = self._subjects(visitor, ip)
+        subjects = self._subjects(who)
+        keys = [subj for subj, _ in subjects]
         with self._lock:
-            status = self._status(day, resets_at, *keys)
+            status = self._status(day, resets_at, who, subjects)
             if n > status['remaining']:
                 raise QuotaExceeded(status, n)
             self._add(day, keys, n)
@@ -406,13 +550,20 @@ class Quota:
                 (day, subject, n))
 
 
+def tier_limits():
+    """Daily characters per tier. Until sign-in is configured nobody can have an account,
+    so guests get the free allowance rather than a smaller one."""
+    guest = GUEST_DAILY_CHARS if _auth else FREE_DAILY_CHARS
+    return {'guest': guest, 'free': FREE_DAILY_CHARS, 'paid': PAID_DAILY_CHARS}
+
+
 def open_quota():
     path = os.path.join(DATA_DIR, 'voxa.sqlite3')
     try:
-        return Quota(path, FREE_DAILY_CHARS)
+        return Quota(path, tier_limits())
     except sqlite3.Error as e:
         log.warning('cannot open %s (%s); daily limits will reset on restart', path, e)
-        return Quota(':memory:', FREE_DAILY_CHARS)
+        return Quota(':memory:', tier_limits())
 
 
 _quota = None  # opened in main(), so importing this module touches no files
@@ -829,6 +980,12 @@ class Handler(BaseHTTPRequestHandler):
             'Content-Disposition': f'attachment; filename="voxa-{job.key[:8]}.wav"',
         })
 
+    def _send_auth_error(self, e):
+        log.info('rejected sign-in token: %s', e)
+        self.close_connection = True  # a rejected POST body is never read
+        self._send(401, {'error': 'Your sign-in has expired. Please sign in again.'},
+                   extra={'WWW-Authenticate': 'Bearer error="invalid_token"'})
+
     def _client_ip(self):
         # Fly's proxy sets Fly-Client-IP to the real client address on every request.
         return (self.headers.get('Fly-Client-IP') or self.client_address[0]).strip()
@@ -848,11 +1005,20 @@ class Handler(BaseHTTPRequestHandler):
         return (f'{COOKIE}={uuid.uuid4().hex}; Max-Age=31536000; Path=/; '
                 f'HttpOnly; SameSite=Lax{secure}')
 
+    def _identity(self):
+        """The signed-in user from the Authorization header, else a guest. A token that is
+        present but invalid or expired is an AuthError, not a silent fall back to guest."""
+        ip = self._client_ip()
+        header = self.headers.get('Authorization') or ''
+        if _auth and header.startswith('Bearer '):
+            return identity_from_claims(_auth.verify(header[7:].strip()), ip)
+        return Identity(ip, visitor=self._visitor())
+
     def _submit(self):
-        visitor, ip = self._visitor(), self._client_ip()
-        charge = (lambda n: _quota.charge(visitor, ip, n)) if _quota else None
+        who = self._identity()
+        charge = (lambda n: _quota.charge(who, n)) if _quota else None
         job = _jobs.submit(*self._read_request(), charge=charge)
-        return job, visitor, ip
+        return job, who
 
     def _read_request(self):
         """Parse and validate the JSON body. Returns (text, lang, voice, speed)."""
@@ -873,6 +1039,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             self._get()
+        except AuthError as e:
+            self._send_auth_error(e)
         except Exception:
             log.exception('GET %s failed', self.path)
             self._send(500, {'error': 'internal server error'})
@@ -885,6 +1053,8 @@ class Handler(BaseHTTPRequestHandler):
         except Busy:
             self._send(503, {'error': 'The server is busy. Please try again in a minute.'},
                        extra={'Retry-After': '30'})
+        except AuthError as e:
+            self._send_auth_error(e)
         except QuotaExceeded as e:
             self._send(429, {'error': str(e), 'quota': e.status},
                        extra={'Retry-After': str(max(1, int(e.status['resets_at'] - time.time())))})
@@ -898,8 +1068,14 @@ class Handler(BaseHTTPRequestHandler):
             extra = {} if self._visitor() else {'Set-Cookie': self._new_visitor_cookie()}
             return self._send(200, PAGE, 'text/html; charset=utf-8', extra)
         if p == '/api/quota':
-            status = _quota.status(self._visitor(), self._client_ip()) if _quota else None
-            return self._send(200, {'quota': status}, extra={'Cache-Control': 'no-store'})
+            who = self._identity()
+            status = _quota.status(who) if _quota else None
+            account = {'email': who.email, 'tier': who.tier} if who.user else None
+            return self._send(200, {'quota': status, 'account': account},
+                              extra={'Cache-Control': 'no-store'})
+        if p == '/api/config':
+            auth = {'url': SUPABASE_URL, 'anon_key': SUPABASE_ANON_KEY} if _auth else None
+            return self._send(200, {'auth': auth, 'limits': tier_limits()})
         if p.startswith('/api/jobs/'):
             job = _jobs.get(p.rsplit('/', 1)[-1])
             if job is None:
@@ -938,7 +1114,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
         self.send_header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
         self.send_header('Content-Length', '0')
         self.end_headers()
@@ -946,14 +1122,14 @@ class Handler(BaseHTTPRequestHandler):
     def _post(self):
         p = urlparse(self.path).path
         if p == '/api/jobs':
-            job, visitor, ip = self._submit()
+            job, who = self._submit()
             out = job_json(job)
             if _quota:
-                out['quota'] = _quota.status(visitor, ip)
+                out['quota'] = _quota.status(who)
             return self._send(200 if job.status == 'done' else 202, out)
         if p == '/api/tts':
             # Synchronous form for scripts and API callers: same queue, waits for the result.
-            job, _, _ = self._submit()
+            job, _ = self._submit()
             if not job.done.wait(SYNC_TIMEOUT):
                 return self._send(504, {
                     'error': 'still generating; poll the job instead',
@@ -966,10 +1142,12 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global _quota
+    global _auth, _quota
+    if SUPABASE_URL and SUPABASE_ANON_KEY:
+        _auth = TokenVerifier(SUPABASE_URL, SUPABASE_JWT_SECRET)
+        log.info('sign-in enabled via %s', SUPABASE_URL)
     _quota = open_quota()
-    if _quota.enabled:
-        log.info('free tier: %d characters per visitor per day', _quota.limit)
+    log.info('daily characters per tier (0 = no limit): %s', _quota.limits)
     _jobs.start()
     try:
         get_pipeline('a')  # warm English

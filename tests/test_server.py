@@ -2,6 +2,9 @@
 
     python -m unittest discover -s tests
 """
+import base64
+import hashlib
+import hmac
 import io
 import json
 import os
@@ -148,49 +151,66 @@ class AudioCacheTest(unittest.TestCase):
 
 class QuotaTest(unittest.TestCase):
     def setUp(self):
-        self.q = server.Quota(':memory:', 100)
+        self.q = server.Quota(':memory:', {'guest': 100, 'free': 400, 'paid': 0})
+
+    @staticmethod
+    def guest(visitor='v1', ip='ip1'):
+        return server.Identity(ip, visitor=visitor)
 
     def test_charge_until_exhausted(self):
-        self.q.charge('v1', 'ip1', 60)
-        self.assertEqual(self.q.status('v1', 'ip1')['remaining'], 40)
+        self.q.charge(self.guest(), 60)
+        self.assertEqual(self.q.status(self.guest())['remaining'], 40)
         with self.assertRaises(server.QuotaExceeded) as cm:
-            self.q.charge('v1', 'ip1', 41)
+            self.q.charge(self.guest(), 41)
         self.assertIn('40 of 100', str(cm.exception))
-        self.q.charge('v1', 'ip1', 40)
-        self.assertEqual(self.q.status('v1', 'ip1')['remaining'], 0)
+        self.q.charge(self.guest(), 40)
+        self.assertEqual(self.q.status(self.guest())['remaining'], 0)
 
     def test_refund(self):
-        refund = self.q.charge('v1', 'ip1', 70)
+        refund = self.q.charge(self.guest(), 70)
         refund()
-        self.assertEqual(self.q.status('v1', 'ip1')['remaining'], 100)
+        self.assertEqual(self.q.status(self.guest())['remaining'], 100)
         refund()  # never goes below zero used
-        self.assertEqual(self.q.status('v1', 'ip1')['used'], 0)
+        self.assertEqual(self.q.status(self.guest())['used'], 0)
 
-    def test_visitors_are_separate_but_share_an_ip_backstop(self):
+    def test_guests_are_separate_but_share_an_ip_backstop(self):
         for i in range(server.IP_DAILY_FACTOR):
-            self.q.charge(f'v{i}', 'shared', 100)
+            self.q.charge(self.guest(f'v{i}', 'shared'), 100)
         with self.assertRaises(server.QuotaExceeded):
-            self.q.charge('another', 'shared', 1)
-        self.q.charge('another', 'elsewhere', 100)
+            self.q.charge(self.guest('another', 'shared'), 1)
+        self.q.charge(self.guest('another', 'elsewhere'), 100)
 
     def test_no_cookie_counts_by_ip(self):
-        self.q.charge(None, 'ip1', 100)
+        self.q.charge(server.Identity('ip1'), 100)
         with self.assertRaises(server.QuotaExceeded):
-            self.q.charge(None, 'ip1', 1)
-        self.q.charge('has-cookie', 'ip1', 1)  # a browser on that IP still has its own
+            self.q.charge(server.Identity('ip1'), 1)
+        self.q.charge(self.guest('has-cookie', 'ip1'), 1)  # a browser on that IP has its own
+
+    def test_accounts_get_their_tier_and_no_ip_backstop(self):
+        for i in range(10):  # ten free accounts behind one office address
+            user = server.Identity('office', user=f'u{i}', tier='free')
+            self.q.charge(user, 400)
+            self.assertEqual(self.q.status(user)['remaining'], 0)
+        paid = server.Identity('office', user='rich', tier='paid')
+        self.q.charge(paid, 10 ** 6)()
+        self.assertEqual(self.q.status(paid), {'tier': 'paid', 'unlimited': True})
 
     def test_resets_each_day(self):
         days = iter([('2026-10-22', 0), ('2026-10-22', 0), ('2026-10-23', 0)])
         self.q._today = lambda: next(days)
-        self.q.charge('v1', 'ip1', 100)
+        self.q.charge(self.guest(), 100)
         with self.assertRaises(server.QuotaExceeded):
-            self.q.charge('v1', 'ip1', 1)
-        self.q.charge('v1', 'ip1', 100)
+            self.q.charge(self.guest(), 1)
+        self.q.charge(self.guest(), 100)
 
-    def test_zero_limit_disables(self):
-        q = server.Quota(':memory:', 0)
-        q.charge('v', 'ip', 10 ** 9)()
-        self.assertIsNone(q.status('v', 'ip'))
+    def test_zero_limits_disable(self):
+        q = server.Quota(':memory:', {'guest': 0, 'free': 0, 'paid': 0})
+        self.assertFalse(q.enabled)
+        q.charge(self.guest(), 10 ** 9)()
+
+    def test_guests_get_the_free_allowance_until_sign_in_exists(self):
+        self.assertIsNone(server._auth)
+        self.assertEqual(server.tier_limits()['guest'], server.FREE_DAILY_CHARS)
 
 
 class JoinWavsTest(unittest.TestCase):
@@ -267,7 +287,8 @@ class HTTPTest(ServerTestCase):
 
     def test_job_flow_then_cache_hit(self):
         code, _, body = self.req('/api/jobs', {'text': 'job flow', 'speed': 0.9})
-        self.assertEqual(code, 202)
+        self.assertIn(code, (200, 202))  # 200 if the stub finishes before the reply
+        self.assertEqual(json.loads(body)['cache'], 'miss')
         job = self.poll(json.loads(body)['id'])
         self.assertEqual(job['status'], 'done')
         code, headers, audio = self.req(job['audio_url'])
@@ -362,7 +383,7 @@ class QuotaHTTPTest(ServerTestCase):
 
     def setUp(self):
         super().setUp()
-        server._quota = server.Quota(':memory:', 50)
+        server._quota = server.Quota(':memory:', {'guest': 50, 'free': 50, 'paid': 0})
 
     def tearDown(self):
         server._quota = None
@@ -377,7 +398,9 @@ class QuotaHTTPTest(ServerTestCase):
     def test_quota_charged_reported_and_enforced(self):
         cookie = 'voxa_id=' + 'a' * 32
         code, _, body = self.req('/api/jobs', {'text': 'x' * 30}, cookie=cookie)
-        self.assertEqual(code, 202)
+        # 200 when the stub finishes before the reply is written; either is correct.
+        self.assertIn(code, (200, 202))
+        self.assertEqual(json.loads(body)['cache'], 'miss')
         self.assertEqual(json.loads(body)['quota']['remaining'], 20)
         self.poll(json.loads(body)['id'])
 
@@ -422,3 +445,190 @@ class QuotaHTTPTest(ServerTestCase):
         # Counted against the IP instead, so a cookie-less request is now out of allowance.
         code, _, _ = self.req('/api/tts', {'text': 'f'})
         self.assertEqual(code, 429)
+
+
+# --- Sign-in tokens -------------------------------------------------------------------
+
+URL = 'https://example.supabase.co'
+
+
+def b64(data):
+    return base64.urlsafe_b64encode(data).rstrip(b'=').decode()
+
+
+class Keys:
+    """Signing keys made fresh for the tests, in the shapes Supabase uses."""
+
+    def __init__(self):
+        from cryptography.hazmat.primitives.asymmetric import ec, rsa
+        self.ec = ec.generate_private_key(ec.SECP256R1())
+        self.rsa = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        en, rn = self.ec.public_key().public_numbers(), self.rsa.public_key().public_numbers()
+        self.jwks = {'keys': [
+            {'kid': 'ec1', 'kty': 'EC', 'crv': 'P-256', 'alg': 'ES256',
+             'x': b64(en.x.to_bytes(32, 'big')), 'y': b64(en.y.to_bytes(32, 'big'))},
+            {'kid': 'rsa1', 'kty': 'RSA', 'alg': 'RS256',
+             'n': b64(rn.n.to_bytes(256, 'big')), 'e': b64(rn.e.to_bytes(3, 'big'))},
+        ]}
+
+    def token(self, alg='ES256', kid=None, secret=b'shh', **overrides):
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, padding, utils
+        claims = {'sub': 'user-1', 'email': 'a@example.com', 'role': 'authenticated',
+                  'aud': 'authenticated', 'iss': f'{URL}/auth/v1', 'exp': time.time() + 3600}
+        claims.update(overrides)
+        claims = {k: v for k, v in claims.items() if v is not None}
+        header = {'alg': alg, 'typ': 'JWT'}
+        if alg != 'HS256':
+            header['kid'] = kid or {'ES256': 'ec1', 'RS256': 'rsa1'}[alg]
+        signed = f"{b64(json.dumps(header).encode())}.{b64(json.dumps(claims).encode())}"
+        if alg == 'HS256':
+            sig = hmac.new(secret, signed.encode(), hashlib.sha256).digest()
+        elif alg == 'ES256':
+            r, s = utils.decode_dss_signature(
+                self.ec.sign(signed.encode(), ec.ECDSA(hashes.SHA256())))
+            sig = r.to_bytes(32, 'big') + s.to_bytes(32, 'big')
+        else:
+            sig = self.rsa.sign(signed.encode(), padding.PKCS1v15(), hashes.SHA256())
+        return f'{signed}.{b64(sig)}'
+
+
+class TokenVerifierTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.keys = Keys()
+
+    def setUp(self):
+        self.fetches = 0
+
+        def fetch():
+            self.fetches += 1
+            return self.keys.jwks
+        self.v = server.TokenVerifier(URL, 'shh', fetch_jwks=fetch)
+
+    def test_accepts_es256_rs256_and_hs256(self):
+        for alg in ('ES256', 'RS256', 'HS256'):
+            with self.subTest(alg):
+                self.assertEqual(self.v.verify(self.keys.token(alg))['sub'], 'user-1')
+
+    def test_rejects_bad_tokens(self):
+        good = self.keys.token()
+        head, body, sig = good.split('.')
+        forged = json.loads(base64.urlsafe_b64decode(body + '=='))
+        forged['app_metadata'] = {'tier': 'paid'}
+        cases = {
+            'tampered claims': f"{head}.{b64(json.dumps(forged).encode())}.{sig}",
+            'expired': self.keys.token(exp=time.time() - 120),
+            'no expiry': self.keys.token(exp=None),
+            'other project': self.keys.token(iss='https://evil.supabase.co/auth/v1'),
+            'wrong audience': self.keys.token(aud='someone-else'),
+            'anon key, not a user': self.keys.token(role='anon'),
+            'no subject': self.keys.token(sub=None),
+            'wrong HS256 secret': self.keys.token('HS256', secret=b'guess'),
+            'unknown key id': self.keys.token(kid='nope'),
+            'alg none': b64(b'{"alg":"none"}') + f'.{body}.',
+            'garbage': 'not-a-token',
+        }
+        for name, token in cases.items():
+            with self.subTest(name), self.assertRaises(server.AuthError):
+                self.v.verify(token)
+
+    def test_hs256_is_refused_without_a_secret(self):
+        v = server.TokenVerifier(URL, '', fetch_jwks=lambda: self.keys.jwks)
+        with self.assertRaises(server.AuthError):
+            v.verify(self.keys.token('HS256'))
+
+    def test_keys_are_cached_and_refetched_at_most_once_a_minute(self):
+        clock = [1000.0]
+        v = server.TokenVerifier(URL, fetch_jwks=self.count_fetch, clock=lambda: clock[0])
+        v.verify(self.keys.token(exp=2000))
+        v.verify(self.keys.token(exp=2000))
+        self.assertEqual(self.fetches, 1)
+        for _ in range(3):  # an unknown key id does not trigger a fetch storm
+            with self.assertRaises(server.AuthError):
+                v.verify(self.keys.token(kid='rotated', exp=2000))
+        self.assertEqual(self.fetches, 1)
+        clock[0] += 61
+        with self.assertRaises(server.AuthError):
+            v.verify(self.keys.token(kid='rotated', exp=2000))
+        self.assertEqual(self.fetches, 2)
+
+    def count_fetch(self):
+        self.fetches += 1
+        return self.keys.jwks
+
+    def test_tier_comes_only_from_app_metadata(self):
+        free = self.v.verify(self.keys.token(user_metadata={'tier': 'paid'}))
+        self.assertEqual(server.identity_from_claims(free, 'ip').tier, 'free')
+        paid = self.v.verify(self.keys.token(app_metadata={'tier': 'paid'}))
+        who = server.identity_from_claims(paid, 'ip')
+        self.assertEqual((who.tier, who.user, who.email), ('paid', 'user-1', 'a@example.com'))
+
+
+class AccountsHTTPTest(ServerTestCase):
+    """Sign-in turned on: guests 50 a day, free accounts 100, paid unlimited."""
+
+    def setUp(self):
+        super().setUp()
+        self.keys = getattr(AccountsHTTPTest, '_keys', None) or Keys()
+        AccountsHTTPTest._keys = self.keys
+        server._auth = server.TokenVerifier(URL, fetch_jwks=lambda: self.keys.jwks)
+        server._quota = server.Quota(':memory:', {'guest': 50, 'free': 100, 'paid': 0})
+
+    def tearDown(self):
+        server._auth = None
+        server._quota = None
+
+    def bearer(self, path, body=None, token=None):
+        data = json.dumps(body).encode() if body is not None else None
+        r = urllib.request.Request(self.base + path, data=data, headers={
+            'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'})
+        try:
+            with urllib.request.urlopen(r, timeout=10) as resp:
+                return resp.status, dict(resp.headers), resp.read()
+        except urllib.error.HTTPError as e:
+            return e.code, dict(e.headers), e.read()
+
+    def test_free_account_gets_its_allowance_and_account_info(self):
+        token = self.keys.token(sub='alice', email='alice@example.com')
+        code, _, body = self.bearer('/api/jobs', {'text': 'a' * 80}, token)
+        self.assertIn(code, (200, 202))
+        self.assertEqual(json.loads(body)['quota']['remaining'], 20)
+        _, _, body = self.bearer('/api/quota', token=token)
+        body = json.loads(body)
+        self.assertEqual(body['account'], {'email': 'alice@example.com', 'tier': 'free'})
+        self.assertEqual(body['quota']['limit'], 100)
+
+    def test_guest_gets_the_smaller_allowance(self):
+        _, _, body = self.req('/api/quota')
+        body = json.loads(body)
+        self.assertIsNone(body['account'])
+        self.assertEqual((body['quota']['tier'], body['quota']['limit']), ('guest', 50))
+        code, _, _ = self.req('/api/tts', {'text': 'g' * 51})
+        self.assertEqual(code, 429)
+
+    def test_paid_account_is_unlimited(self):
+        token = self.keys.token(sub='bob', app_metadata={'tier': 'paid'})
+        code, _, body = self.bearer('/api/tts', {'text': 'p' * 400}, token)
+        self.assertEqual(code, 200)
+        _, _, body = self.bearer('/api/quota', token=token)
+        self.assertEqual(json.loads(body)['quota'], {'tier': 'paid', 'unlimited': True})
+
+    def test_bad_or_expired_token_is_401_not_guest(self):
+        for token in (self.keys.token(exp=time.time() - 600), 'junk'):
+            for path, body in (('/api/jobs', {'text': 'x'}), ('/api/quota', None)):
+                with self.subTest(path=path, token=token[:10]):
+                    code, headers, resp = self.bearer(path, body, token)
+                    self.assertEqual(code, 401)
+                    self.assertIn('sign in again', json.loads(resp)['error'])
+                    self.assertIn('WWW-Authenticate', headers)
+
+    def test_config_tells_the_page_how_to_sign_in(self):
+        server.SUPABASE_URL, server.SUPABASE_ANON_KEY = URL, 'public-anon-key'
+        try:
+            _, _, body = self.req('/api/config')
+        finally:
+            server.SUPABASE_URL, server.SUPABASE_ANON_KEY = '', ''
+        body = json.loads(body)
+        self.assertEqual(body['auth'], {'url': URL, 'anon_key': 'public-anon-key'})
+        self.assertEqual(body['limits']['guest'], server.GUEST_DAILY_CHARS)

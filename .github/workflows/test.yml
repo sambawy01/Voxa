@@ -12,6 +12,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install test dependencies
+        run: pip install cryptography
       - name: Compile
         run: python -m py_compile server.py scripts/smoke.py
       - name: Unit tests (generation stubbed; no torch needed)

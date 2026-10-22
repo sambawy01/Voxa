@@ -680,3 +680,42 @@ class LiteFilesTest(ServerTestCase):
         self.assertEqual(headers['Cross-Origin-Embedder-Policy'], 'require-corp')
         self.assertIn(f'/static/phonon-{server.PHONON_VERSION}/index.js'.encode(), body)
         self.assertNotIn(b'{{PHONON_VERSION}}', body)
+
+
+class LiteCatalogueTest(ServerTestCase):
+    def test_lite_voices_are_offered_pinned_and_never_synthesised_by_the_server(self):
+        _, headers, body = self.req('/api/voices')
+        lite = json.loads(body)['lite']
+        self.assertEqual([len(lite['voices'][k]) for k in ('a', 'b')], [4, 4])
+        for v in lite['voices']['a'] + lite['voices']['b']:
+            self.assertRegex(v['url'], r'^https://huggingface\.co/gradium/phonon-voices/resolve/[0-9a-f]{40}/voices/')
+            self.assertTrue(v['description'].endswith('On this device'))
+            with self.subTest(v['id']):  # the server refuses Lite voices for Studio jobs
+                code, _, _ = self.req('/api/tts', {'text': 'x', 'lang': 'a', 'voice': v['id']})
+                self.assertEqual(code, 400)
+        self.assertIn('@', lite['model'])  # model pinned to a commit
+        self.assertEqual([e['temperature'] for e in lite['expressiveness']], [0.15, 0.3, 0.5])
+
+    def test_main_page_is_isolated_for_threads(self):
+        _, headers, _ = self.req('/')
+        self.assertEqual(headers['Cross-Origin-Embedder-Policy'], 'require-corp')
+        self.assertEqual(headers['Cross-Origin-Opener-Policy'], 'same-origin')
+
+    def test_bad_lite_sections_are_rejected(self):
+        import tempfile
+        base = {'model': 'hf://x@y', 'voices_repo': 'r', 'revision': 'z',
+                'expressiveness': [{'id': 'n', 'name': 'N', 'temperature': 0.3, 'default': True}]}
+        voice = {'id': 'wren', 'name': 'Wren', 'lang': 'a', 'gender': 'female',
+                 'accent': 'American', 'age': 'Adult', 'file': 'voices/abc.safetensors'}
+        cases = {
+            'differ from Studio': ([dict(voice, id='harper')], base),
+            'English only': ([dict(voice, lang='f')], base),
+            'unexpected file path': ([dict(voice, file='../../etc/passwd')], base),
+            'default': ([voice], dict(base, expressiveness=[{'id': 'n', 'name': 'N', 'temperature': 0.3}])),
+        }
+        for message, (voices, section) in cases.items():
+            with self.subTest(message), tempfile.NamedTemporaryFile('w', suffix='.json') as f:
+                json.dump({'voices': [], 'lite': dict(section, voices=voices)}, f)
+                f.flush()
+                with self.assertRaisesRegex(ValueError, message):
+                    server.load_lite(f.name, studio_ids={'harper'})

@@ -34,6 +34,7 @@ import logging
 import math
 import os
 import queue
+import re
 import sqlite3
 import threading
 import time
@@ -134,6 +135,35 @@ def load_catalogue(path=CATALOGUE_PATH):
     return voices
 
 
+def load_lite(path=CATALOGUE_PATH, studio_ids=()):
+    """The Voxa Lite section of voices.json: Phonon voices the browser runs itself."""
+    with open(path, encoding='utf-8') as f:
+        lite = json.load(f).get('lite')
+    if not lite:
+        return None
+    ids = [v['id'] for v in lite['voices']]
+    if len(set(ids)) != len(ids) or set(ids) & set(studio_ids):
+        raise ValueError('Lite voice ids must be unique and differ from Studio voice ids')
+    for v in lite['voices']:
+        if v['lang'] not in ('a', 'b'):
+            raise ValueError(f'Lite voice {v["id"]!r}: Phonon 31m speaks English only')
+        if not re.fullmatch(r'voices/[A-Za-z0-9_-]+\.safetensors', v['file']):
+            raise ValueError(f'Lite voice {v["id"]!r} has an unexpected file path')
+        v['description'] = ' · '.join([v['gender'].capitalize(), v['accent'], v['age'],
+                                       'On this device'])
+    if not any(e.get('default') for e in lite['expressiveness']):
+        raise ValueError('one expressiveness preset must be the default')
+    base = f'https://huggingface.co/{lite["voices_repo"]}/resolve/{lite["revision"]}/'
+    return {
+        'model': lite['model'],
+        'expressiveness': lite['expressiveness'],
+        'voices': {lang: [{'id': v['id'], 'name': v['name'], 'description': v['description'],
+                           'url': base + v['file']}
+                          for v in lite['voices'] if v['lang'] == lang]
+                   for lang in ('a', 'b')},
+    }
+
+
 CATALOGUE = load_catalogue()
 VOICE_BY_ID = {v['id']: v for v in CATALOGUE}
 # Kokoro's own ids (e.g. af_heart) are still accepted from API callers written before the
@@ -141,6 +171,7 @@ VOICE_BY_ID = {v['id']: v for v in CATALOGUE}
 KOKORO_ALIASES = {v['source']: v['id'] for v in CATALOGUE if isinstance(v['source'], str)}
 # Voxa voice ids per language; the first is the language's default.
 VOICES = {lang: [v['id'] for v in CATALOGUE if v['lang'] == lang] for lang in LANG_LABELS}
+LITE = load_lite(studio_ids=VOICE_BY_ID)
 
 _shared_model = None
 _pipelines = {}
@@ -750,6 +781,7 @@ h1{font-size:26px;margin:0;letter-spacing:.4px;font-weight:680}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
 label{display:block;font-size:11.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);margin:16px 0 7px}
 label:first-child{margin-top:0}
+#litebox label,#pacebox label{margin-top:16px}
 textarea{width:100%;min-height:210px;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:13px;font:inherit;resize:vertical}
 select{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 11px;font:inherit}
 input[type=range]{width:100%;accent-color:var(--accent)}
@@ -819,9 +851,16 @@ audio[hidden]{display:none}
     <label for="voice">Voice</label>
     <select id="voice"></select>
     <p class="hint" id="voicenote"></p>
-    <label for="speed">Pacing <span class="val" id="speedv">1.00×</span></label>
-    <input type="range" id="speed" min="0.6" max="1.4" step="0.05" value="1">
+    <div id="litebox" hidden>
+      <label for="expr">Expressiveness</label>
+      <select id="expr"></select>
+    </div>
+    <div id="pacebox">
+      <label for="speed">Pacing <span class="val" id="speedv">1.00×</span></label>
+      <input type="range" id="speed" min="0.6" max="1.4" step="0.05" value="1">
+    </div>
     <button id="go" class="primary">Generate speech</button>
+    <button id="newtake" class="ghost" hidden>New take</button>
     <button id="cancel" class="ghost" hidden>Cancel</button>
     <div class="bar" id="bar" hidden><i></i></div>
     <p class="status" id="status" role="status"></p>
@@ -830,34 +869,49 @@ audio[hidden]{display:none}
     <a id="playerlink" class="download" hidden>Open in player</a>
   </section>
 </div>
-<div class="card note"><strong>About the model.</strong> Kokoro-82M, 82 million parameters, Apache 2.0.
-One set of weights serves every language — only the pronunciation rules change — so all nine
-languages share the same memory. Repeated phrases are cached and come back instantly.</div>
+<div class="card note"><strong>About the voices.</strong> Studio voices run Kokoro-82M (Apache 2.0) on our
+server: one set of weights serves all nine languages, and repeated phrases are cached and come
+back instantly. On-device voices run Phonon 31m by Gradium (Apache 2.0) in your browser, so
+they cost nothing and work offline once loaded. Voice names are Voxa's own.</div>
 </div>
 <script>
 const $=s=>document.querySelector(s);
 const MAX=4000;
-let LANG={}, VOICES={}, CAT={};
+let LANG={}, VOICES={}, CAT={}, LITE=null, LITE_BY_ID={}, PHONON_VERSION='';
+const isLite=id=>!!LITE_BY_ID[id];
 const langSel=$('#lang'), voiceSel=$('#voice');
 Promise.all([
   fetch('/api/languages').then(r=>r.json()),
   fetch('/api/voices').then(r=>r.json())
 ]).then(([l,v])=>{
-  LANG=l.languages||{}; VOICES=v.voices||{}; CAT=v.catalogue||{};
+  LANG=l.languages||{}; VOICES=v.voices||{}; CAT=v.catalogue||{}; LITE=v.lite; PHONON_VERSION=v.phonon_version||'';
+  // Lite voices need module workers and WebAssembly SIMD; older browsers just don't see them.
+  if(LITE&&typeof WebAssembly==='object'&&'Worker' in window){
+    Object.values(LITE.voices).flat().forEach(x=>LITE_BY_ID[x.id]=x);
+    $('#expr').innerHTML=LITE.expressiveness.map(e=>`<option value="${e.temperature}"${e.default?' selected':''}>${e.name}</option>`).join('');
+  }
   langSel.innerHTML=Object.entries(LANG).map(([k,lab])=>`<option value="${k}">${lab}</option>`).join('');
   refreshVoices();
 }).catch(()=>{ langSel.innerHTML='<option value="a">English (US)</option>'; });
 
 function refreshVoices(){
   const k=langSel.value, list=CAT[k]||(VOICES[k]||[]).map(id=>({id,name:id}));
-  voiceSel.innerHTML=list.length?list.map(v=>`<option value="${v.id}">${v.name}${v.signature?' ✦':''}</option>`).join(''):'<option value="">default</option>';
-  const n=list.length;
-  $('#langnote').textContent = n ? `${n} voice${n===1?'':'s'} for ${LANG[k]}${n===1?' — the model only ships one for this language':''}.` : '';
+  const lite=Object.keys(LITE_BY_ID).length&&LITE.voices[k]||[];
+  const opts=l=>l.map(v=>`<option value="${v.id}">${v.name}${v.signature?' ✦':''}</option>`).join('');
+  voiceSel.innerHTML=!list.length?'<option value="">default</option>':lite.length
+    ? `<optgroup label="Studio voices">${opts(list)}</optgroup><optgroup label="On this device · free, no daily limit">${opts(lite)}</optgroup>`
+    : opts(list);
+  const n=list.length, m=lite.length;
+  $('#langnote').textContent = !n ? '' : m
+    ? `${n} Studio voices and ${m} on-device voices for ${LANG[k]}.`
+    : `${n} voice${n===1?'':'s'} for ${LANG[k]}${n===1?' — the model only ships one for this language':''}.`;
   describeVoice();
 }
 function describeVoice(){
-  const v=(CAT[langSel.value]||[]).find(x=>x.id===voiceSel.value);
+  const id=voiceSel.value, v=LITE_BY_ID[id]||(CAT[langSel.value]||[]).find(x=>x.id===id);
   $('#voicenote').textContent=v?v.description:'';
+  // Phonon has expressiveness and takes but no pacing control; Kokoro the other way round.
+  $('#litebox').hidden=!isLite(id); $('#pacebox').hidden=isLite(id); $('#newtake').hidden=true;
 }
 langSel.addEventListener('change',refreshVoices);
 voiceSel.addEventListener('change',describeVoice);
@@ -907,7 +961,8 @@ async function api(url, opts={}){
   return r;
 }
 function loadScript(src){
-  return new Promise((ok,fail)=>{const el=document.createElement('script');el.src=src;el.onload=ok;el.onerror=fail;document.head.appendChild(el);});
+  // crossOrigin: the page is cross-origin isolated, so other-origin scripts load with CORS.
+  return new Promise((ok,fail)=>{const el=document.createElement('script');el.crossOrigin='anonymous';el.src=src;el.onload=ok;el.onerror=fail;document.head.appendChild(el);});
 }
 function showAccount(session){
   const signedIn=!!session;
@@ -990,16 +1045,89 @@ initAuth();
 
 let ctrl=null;
 $('#cancel').addEventListener('click',()=>{if(ctrl)ctrl.abort();});
-$('#go').addEventListener('click',async()=>{
+// Show finished audio: player, download, and the share sheet on iOS. Downloads come from the
+// blob the browser ALREADY has. iOS Safari ignores the HTML `download` attribute on blob URLs,
+// so use the Web Share API there: that is what surfaces "Save to Files".
+function showAudio(blob, fileUrl){
+  const url=URL.createObjectURL(blob);
+  const p=$('#player'); p.src=url; p.hidden=false; p.play().catch(()=>{});
+  const a=$('#download');
+  a.href=url; a.download='voxa.wav'; a.hidden=false; a.onclick=null;
+  const pl=$('#playerlink');
+  if(fileUrl){ pl.href=fileUrl; pl.download='voxa.wav'; pl.hidden=false; } else { pl.hidden=true; }
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (isIOS && navigator.canShare) {
+    a.textContent = '⬇ Save or share audio';
+    a.onclick = async (ev) => {
+      try {
+        const file = new File([blob], 'voxa.wav', { type: 'audio/wav' });
+        if (navigator.canShare({ files: [file] })) {
+          ev.preventDefault();
+          await navigator.share({ files: [file], title: 'Voxa audio' });
+        }
+      } catch (e) { /* user cancelled — fall through to the plain link */ }
+    };
+  }
+}
+
+// Voxa Lite: Phonon generates on this device, so it is free and unlimited and never touches
+// the server. The package (~4 MB) and the model (~65 MB) load on first use, then come from
+// the browser's cache.
+let LITE_TTS=null, LITE_LOADING=null, LITE_SEED=4242424242424242;
+const LITE_VOICES_LOADED=new Set(), LITE_CACHE=new Map();
+async function liteEngine(st){
+  if(LITE_TTS) return LITE_TTS;
+  if(!LITE_LOADING){
+    LITE_LOADING=(async()=>{
+      const {PhononTTS}=await import(`/static/phonon-${PHONON_VERSION}/index.js`);
+      const seen={};
+      return PhononTTS.load({lang:'en', model:LITE.model, onProgress:({file,loaded,cached})=>{
+        seen[file]=loaded||0;
+        const mb=Object.values(seen).reduce((a,b)=>a+b,0)/1e6;
+        st.textContent=cached?'Loading the on-device voice…':`Downloading the on-device voice (once)… ${mb.toFixed(0)} MB of about 65`;
+      }});
+    })().catch(e=>{LITE_LOADING=null;throw e;});
+  }
+  LITE_TTS=await LITE_LOADING;
+  return LITE_TTS;
+}
+async function generateLite(text, voiceId, st, signal){
+  const v=LITE_BY_ID[voiceId], temperature=+$('#expr').value;
+  const key=[text,voiceId,temperature,LITE_SEED].join('|');
+  if(LITE_CACHE.has(key)) return {blob:LITE_CACHE.get(key), cached:true};
+  st.textContent='Starting the on-device voice…';
+  let tts;
+  try{ tts=await liteEngine(st); }
+  catch(e){ throw new Error("This device can't run on-device voices ("+e.message+'). Choose a Studio voice instead.'); }
+  if(!LITE_VOICES_LOADED.has(voiceId)){ await tts.addVoice(voiceId, v.url); LITE_VOICES_LOADED.add(voiceId); }
+  st.textContent='Generating on this device…';
+  const blob=await tts.synthWav(text,{voice:voiceId, temperature, seed:LITE_SEED, signal});
+  if(LITE_CACHE.size>20) LITE_CACHE.delete(LITE_CACHE.keys().next().value);
+  LITE_CACHE.set(key, blob);
+  return {blob, cached:false};
+}
+
+async function generate(newTake){
   const text=$('#text').value.trim(); const st=$('#status');
   if(!text){st.className='status';st.textContent='Type something first.';return;}
   if(text.length>MAX){st.className='status err';st.textContent=`That script is ${text.length} characters; the limit is ${MAX}.`;return;}
-  const btn=$('#go'), bar=$('#bar'), fill=$('#bar i');
-  btn.disabled=true; $('#cancel').hidden=false; $('#player').hidden=true; $('#download').hidden=true; $('#playerlink').hidden=true;
+  const btn=$('#go'), bar=$('#bar'), fill=$('#bar i'), lite=isLite(voiceSel.value);
+  // A new take reads the same line differently: Phonon's output depends on its seed.
+  if(newTake) LITE_SEED=Math.floor(Math.random()*2**48);
+  btn.disabled=true; $('#newtake').disabled=true; $('#cancel').hidden=false; $('#player').hidden=true; $('#download').hidden=true; $('#playerlink').hidden=true;
   ctrl=new AbortController();
   const t0=performance.now();
-  st.className='status busy'; st.textContent='Sending…'; bar.hidden=false; fill.style.width='0';
+  st.className='status busy'; st.textContent='Sending…'; bar.hidden=lite; fill.style.width='0';
   try{
+    if(lite){
+      const {blob,cached}=await generateLite(text, voiceSel.value, st, ctrl.signal);
+      showAudio(blob, null);
+      st.className='status';
+      st.textContent=`Made on this device in ${((performance.now()-t0)/1000).toFixed(1)}s${cached?' · from cache':''} · free, no daily limit`;
+      $('#newtake').hidden=false;
+      return;
+    }
     let job=await getJSON('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
       signal:ctrl.signal,
       body:JSON.stringify({text,lang:langSel.value,voice:voiceSel.value||null,speed:+$('#speed').value})})
@@ -1012,39 +1140,16 @@ $('#go').addEventListener('click',async()=>{
     fill.style.width='100%'; st.textContent='Downloading audio…';
     const r=await fetch(job.audio_url,{signal:ctrl.signal});
     if(!r.ok) throw new Error(r.status===404?'The server restarted and lost this audio. Please generate again.':'Server error ('+r.status+')');
-    const blob=await r.blob();
-    const url=URL.createObjectURL(blob);
-    const p=$('#player'); p.src=url; p.hidden=false; p.play().catch(()=>{});
-
-    // Download from the blob the browser ALREADY has. iOS Safari ignores the HTML `download`
-    // attribute on blob URLs, so use the Web Share API there — that is what surfaces
-    // "Save to Files".
-    const a=$('#download');
-    a.href=url; a.download='voxa.wav'; a.hidden=false;
-    const pl=$('#playerlink');
-    pl.href=job.audio_url; pl.download='voxa.wav'; pl.hidden=false;
-
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    if (isIOS && navigator.canShare) {
-      a.textContent = '⬇ Save or share audio';
-      a.onclick = async (ev) => {
-        try {
-          const file = new File([blob], 'voxa.wav', { type: 'audio/wav' });
-          if (navigator.canShare({ files: [file] })) {
-            ev.preventDefault();
-            await navigator.share({ files: [file], title: 'Voxa audio' });
-          }
-        } catch (e) { /* user cancelled — fall through to the plain link */ }
-      };
-    }
+    showAudio(await r.blob(), job.audio_url);
     st.className='status';
     st.textContent=`Done in ${((performance.now()-t0)/1000).toFixed(1)}s`+(job.cache==='hit'?' · from cache':'');
   }catch(e){
-    loadQuota();  // a failed generation is refunded
+    if(!lite) loadQuota();  // a failed generation is refunded
     st.className=e.name==='AbortError'?'status':'status err'; st.textContent=(e.name==='AbortError'?'':'Error: ')+friendly(e);
-  }finally{btn.disabled=false;$('#cancel').hidden=true;bar.hidden=true;ctrl=null;}
-});
+  }finally{btn.disabled=false;$('#newtake').disabled=false;$('#cancel').hidden=true;bar.hidden=true;ctrl=null;}
+}
+$('#go').addEventListener('click',()=>generate(false));
+$('#newtake').addEventListener('click',()=>generate(true));
 </script></body></html>
 """
 
@@ -1183,7 +1288,10 @@ class Handler(BaseHTTPRequestHandler):
     def _get(self):
         p = urlparse(self.path).path
         if p in ('/', '/index.html'):
-            extra = {} if self._visitor() else {'Set-Cookie': self._new_visitor_cookie()}
+            # Isolated so on-device voices get WebAssembly threads.
+            extra = {**ISOLATION, 'Cache-Control': 'no-cache'}
+            if not self._visitor():
+                extra['Set-Cookie'] = self._new_visitor_cookie()
             return self._send(200, PAGE, 'text/html; charset=utf-8', extra)
         if p.startswith('/static/'):
             return self._send_static(p[len('/static/'):])
@@ -1232,7 +1340,8 @@ class Handler(BaseHTTPRequestHandler):
                                  for k in ('id', 'name', 'description', 'gender', 'signature')}
                                 for vid in ids]
                          for lang, ids in VOICES.items()}
-            return self._send(200, {'voices': VOICES, 'catalogue': catalogue,
+            return self._send(200, {'voices': VOICES, 'catalogue': catalogue, 'lite': LITE,
+                                    'phonon_version': PHONON_VERSION,
                                     'languages': LANG_LABELS})
         return self._send(404, {'error': 'not found'})
 

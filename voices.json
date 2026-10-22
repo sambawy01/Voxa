@@ -638,5 +638,111 @@
    "source": "zm_yunyang",
    "default": false
   }
- ]
+ ],
+ "_lite_comment": "Voxa Lite voices: Phonon 31m (English) runs in the browser, so the server never generates these. file is the voice in gradium/phonon-voices, pinned to revision. Names are drafts; the shortlist favours the catalogue's calm, even-toned voices for long listening.",
+ "lite": {
+  "model": "hf://gradium/phonon-31m-en@8c64b55ec301728e2d1695bfea87a08a267d0c2d",
+  "voices_repo": "gradium/phonon-voices",
+  "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+  "expressiveness": [
+   {
+    "id": "steady",
+    "name": "Steady",
+    "temperature": 0.15
+   },
+   {
+    "id": "natural",
+    "name": "Natural",
+    "temperature": 0.3,
+    "default": true
+   },
+   {
+    "id": "expressive",
+    "name": "Expressive",
+    "temperature": 0.5
+   }
+  ],
+  "voices": [
+   {
+    "id": "wren",
+    "name": "Wren",
+    "lang": "a",
+    "gender": "female",
+    "accent": "American",
+    "age": "Middle-aged",
+    "file": "voices/vjFyp2BcCyTlUmYb.safetensors",
+    "catalogue_name": "Everly"
+   },
+   {
+    "id": "june",
+    "name": "June",
+    "lang": "a",
+    "gender": "female",
+    "accent": "American",
+    "age": "Middle-aged",
+    "file": "voices/bXwrkHhURL1VFJdG.safetensors",
+    "catalogue_name": "Hadley"
+   },
+   {
+    "id": "calvin",
+    "name": "Calvin",
+    "lang": "a",
+    "gender": "male",
+    "accent": "American",
+    "age": "Middle-aged",
+    "file": "voices/0zLApsZfVLLNaEGl.safetensors",
+    "catalogue_name": "Trevor"
+   },
+   {
+    "id": "graham",
+    "name": "Graham",
+    "lang": "a",
+    "gender": "male",
+    "accent": "American",
+    "age": "Middle-aged",
+    "file": "voices/qIxlZ7Ei8KvWlyQH.safetensors",
+    "catalogue_name": "Preston"
+   },
+   {
+    "id": "rosalind",
+    "name": "Rosalind",
+    "lang": "b",
+    "gender": "female",
+    "accent": "British",
+    "age": "Middle-aged",
+    "file": "voices/gfP44RlHwr2kEwk7.safetensors",
+    "catalogue_name": "Bryony"
+   },
+   {
+    "id": "hattie",
+    "name": "Hattie",
+    "lang": "b",
+    "gender": "female",
+    "accent": "British",
+    "age": "Adult",
+    "file": "voices/6PWnV0Nq4wu7RVBT.safetensors",
+    "catalogue_name": "Maeve"
+   },
+   {
+    "id": "ambrose",
+    "name": "Ambrose",
+    "lang": "b",
+    "gender": "male",
+    "accent": "British",
+    "age": "Middle-aged",
+    "file": "voices/zUCxzrOrugTSis03.safetensors",
+    "catalogue_name": "Edwin"
+   },
+   {
+    "id": "laurence",
+    "name": "Laurence",
+    "lang": "b",
+    "gender": "male",
+    "accent": "British",
+    "age": "Middle-aged",
+    "file": "voices/YyKcxPG7iIgS3jsK.safetensors",
+    "catalogue_name": "Hugh"
+   }
+  ]
+ }
 }

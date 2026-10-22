@@ -28,6 +28,11 @@ PACKAGES = [
         'integrity': 'sha512-MbkAjpwka/dMHaCfQ75RY1FXX3IewBVu6NGZOcxerRFlaBiIkZmUoR0jotX5VUzYZEXAGzSFtknWs5xRKliXPA==',
         'keep': r'build/pdf(\.worker)?\.min\.mjs|cmaps/[^/]+\.bcmap|LICENSE',
     },
+    {   # Audiobooks: MP3 encoding in the browser. LGPL-3.0, served unmodified as its own file.
+        'name': 'lamejs', 'version': '1.2.1', 'dir': 'lamejs-1.2.1',
+        'integrity': 'sha512-s7bxvjvYthw6oPLCm5pFxvA84wUROODB8jEO2+CE1adhKgrIvVOlmMgY8zyugxGrvRaDHNJanOiS21/emty6dQ==',
+        'keep': r'lame\.min\.js|LICENSE',
+    },
 ]
 
 

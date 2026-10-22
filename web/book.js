@@ -299,3 +299,107 @@ export async function deleteBook(db, book) {
   await tx(db, 'chunks', 'readwrite', s => s.delete(IDBKeyRange.bound([book], [book, []])));
   await tx(db, 'books', 'readwrite', s => s.delete(book));
 }
+
+// --- Smaller files ------------------------------------------------------------------------
+// MP3 is encoded on the device with lamejs (LGPL-3.0, served unmodified). A whole book is one
+// MP3 whose ID3 tag carries chapter marks (CHAP/CTOC), which podcast and audiobook apps read.
+// .m4b needs AAC, which browsers cannot all encode, so it is left to the server.
+
+export const MP3_KBPS = 64;
+
+/** Encode 16-bit mono samples to MP3 with a lamejs instance. */
+export function encodeMp3(lame, pcm, rate = SAMPLE_RATE, kbps = MP3_KBPS, onProgress = () => {}) {
+  const enc = new lame.Mp3Encoder(1, rate, kbps), parts = [];
+  const BLOCK = 1152 * 20;
+  for (let i = 0; i < pcm.length; i += BLOCK) {
+    const out = enc.encodeBuffer(pcm.subarray(i, i + BLOCK));
+    if (out.length) parts.push(new Uint8Array(out.buffer, out.byteOffset, out.length));
+    if ((i / BLOCK) % 50 === 0) onProgress(i / pcm.length);
+  }
+  const tail = enc.flush();
+  if (tail.length) parts.push(new Uint8Array(tail.buffer, tail.byteOffset, tail.length));
+  return concatBytes(parts);
+}
+
+export function concatBytes(parts) {
+  const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+}
+
+const MP3_RATES = { 3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000] };
+const MP3_KBPS_L3 = { 3: [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+                      2: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160] };
+
+/** Duration of an MP3 Layer III stream in seconds, by walking its frame headers. */
+export function mp3Duration(bytes) {
+  let at = 0, seconds = 0;
+  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33)  // skip an ID3v2 tag
+    at = 10 + ((bytes[6] << 21) | (bytes[7] << 14) | (bytes[8] << 7) | bytes[9]);
+  while (at + 4 <= bytes.length) {
+    if (bytes[at] !== 0xff || (bytes[at + 1] & 0xe0) !== 0xe0) { at++; continue; }
+    const version = (bytes[at + 1] >> 3) & 3, layer = (bytes[at + 1] >> 1) & 3;
+    const kbps = (MP3_KBPS_L3[version] || MP3_KBPS_L3[2])[bytes[at + 2] >> 4];
+    const rate = (MP3_RATES[version] || [])[(bytes[at + 2] >> 2) & 3];
+    if (layer !== 1 || !kbps || !rate) { at++; continue; }
+    const samples = version === 3 ? 1152 : 576;
+    const length = Math.floor(samples / 8 * kbps * 1000 / rate) + ((bytes[at + 2] >> 1) & 1);
+    seconds += samples / rate;
+    at += length;
+  }
+  return seconds;
+}
+
+/** An ID3v2.3 tag with the book's title and a chapter mark per chapter. */
+export function id3Chapters(title, chapters) {
+  const enc = new TextEncoder();
+  const u32 = n => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+  // Text frames: encoding 1 (UTF-16 with BOM) so any language's titles survive.
+  const text = s => { const b = [0xff, 0xfe]; for (const ch of s) { const c = ch.codePointAt(0); if (c > 0xffff) { const v = c - 0x10000, hi = 0xd800 + (v >> 10), lo = 0xdc00 + (v & 0x3ff); b.push(hi & 255, hi >> 8, lo & 255, lo >> 8); } else b.push(c & 255, c >> 8); } return [1, ...b, 0, 0]; };
+  const frame = (id, body) => [...enc.encode(id), ...u32(body.length), 0, 0, ...body];
+  const frames = [...frame('TIT2', text(title))];
+  const ids = chapters.map((_, i) => `ch${i}`);
+  frames.push(...frame('CTOC', [...enc.encode('toc'), 0, 0x03, ids.length, ...ids.flatMap(id => [...enc.encode(id), 0])]));
+  chapters.forEach((c, i) => frames.push(...frame('CHAP', [
+    ...enc.encode(ids[i]), 0, ...u32(Math.round(c.start * 1000)), ...u32(Math.round(c.end * 1000)),
+    ...u32(0xffffffff), ...u32(0xffffffff), ...frame('TIT2', text(c.title))])));
+  const size = frames.length;
+  return new Uint8Array([...enc.encode('ID3'), 3, 0, 0, (size >> 21) & 127, (size >> 14) & 127, (size >> 7) & 127, size & 127, ...frames]);
+}
+
+/** One MP3 for the whole book: chapter MP3s back to back behind a chapter-marked ID3 tag. */
+export function bookMp3(title, chapters) {
+  let t = 0;
+  const marks = chapters.map(c => { const d = mp3Duration(c.mp3); const m = { title: c.title, start: t, end: t + d }; t += d; return m; });
+  return concatBytes([id3Chapters(title, marks), ...chapters.map(c => c.mp3)]);
+}
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+export function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 255] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** A zip of files, stored without compression (MP3 does not compress further). */
+export function zipStore(files) {
+  const enc = new TextEncoder(), local = [], central = [];
+  let offset = 0;
+  const le = (n, size) => Array.from({ length: size }, (_, i) => (n >>> (8 * i)) & 255);
+  for (const f of files) {
+    const name = enc.encode(f.name), crc = crc32(f.data), n = f.data.length;
+    // Version 20, flag 0x0800: names are UTF-8. Time/date fields fixed at 1980-01-01.
+    const head = [...le(20, 2), ...le(0x0800, 2), ...le(0, 2), ...le(0, 2), ...le(0x21, 2), ...le(crc, 4), ...le(n, 4), ...le(n, 4), ...le(name.length, 2), ...le(0, 2)];
+    local.push(new Uint8Array([...le(0x04034b50, 4), ...head, ...name]), f.data);
+    central.push(new Uint8Array([...le(0x02014b50, 4), ...le(20, 2), ...head, ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 4), ...le(offset, 4), ...name]));
+    offset += 30 + name.length + n;
+  }
+  const dir = concatBytes(central);
+  const end = new Uint8Array([...le(0x06054b50, 4), 0, 0, 0, 0, ...le(files.length, 2), ...le(files.length, 2), ...le(dir.length, 4), ...le(offset, 4), 0, 0]);
+  return concatBytes([...local, dir, end]);
+}

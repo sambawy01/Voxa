@@ -90,6 +90,7 @@ a.dl{color:var(--accent);font-size:14px;font-weight:600;text-decoration:none}
     <label>Language<select id="lang"></select></label>
     <label>Voice<select id="voice"></select></label>
     <label id="exprbox" hidden>Expressiveness<select id="expr"></select></label>
+    <label>File format<select id="format"><option value="mp3" selected>MP3 (smaller)</option><option value="wav">WAV (lossless)</option></select></label>
   </div>
   <p class="note" id="costnote"></p>
   <div class="row">
@@ -99,15 +100,21 @@ a.dl{color:var(--accent);font-size:14px;font-weight:600;text-decoration:none}
   <div class="bar" id="bar"><i></i></div>
   <p class="status" id="genstatus" role="status"></p>
   <ol class="outputs" id="outputs"></ol>
+  <div class="row" id="wholebook" hidden>
+    <button class="ghost" id="onefile" type="button">Whole book: one MP3 with chapter marks</button>
+    <button class="ghost" id="zipfile" type="button">Whole book: all chapters in a .zip</button>
+  </div>
+  <p class="note" id="wholenote"></p>
   <div class="row"><button class="small" id="forget" type="button" hidden>Delete saved audio for this book</button></div>
 </section>
+<p class="dim" style="font-size:12.5px">Your book stays on this device: it is read here with pdf.js (Apache-2.0) and saved in this browser. MP3 files are made here with lamejs (LGPL-3.0). Studio voices send each part's text to Voxa to be spoken.</p>
 </div>
 
 <script type="module">
 import * as pdfjs from '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.min.mjs';
 import { readPdf, paragraphsFromText, findChapters, estimateSeconds, formatDuration, planChunks, bookKey,
   openStore, saveChunk, loadChunk, savedChunkKeys, saveBook, listBooks, deleteBook, parseWav, encodeWav,
-  floatToInt16, joinPcm, SAMPLE_RATE } from '/book.js?v={{BOOK_VERSION}}';
+  floatToInt16, joinPcm, SAMPLE_RATE, bookMp3, zipStore } from '/book.js?v={{BOOK_VERSION}}';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.worker.min.mjs';
 const PDF_OPTIONS = { cMapUrl: '/static/pdfjs-{{PDFJS_VERSION}}/cmaps/', cMapPacked: true };
@@ -299,6 +306,8 @@ async function updatePlan() {
   $('#forget').hidden = !saved.size;
   $('#bar i').style.width = plan.length ? (100 * done / plan.length) + '%' : '0';
   renderOutputs(plan, saved);
+  $('#wholebook').hidden = !(plan.length && !left.length && Object.keys(OUT).length > 0);
+  $('#wholenote').textContent = '';
   for (const i of Object.keys(OUT)) if (OUT[i].done === OUT[i].total) await showChapter(+i, plan);
 }
 
@@ -322,26 +331,92 @@ function setState(i, busy) {
   o.state.textContent = o.done === o.total ? 'Ready' : busy ? `Making part ${o.done + 1} of ${o.total}…` : `${o.done} of ${o.total} parts`;
 }
 
-const fileName = (i, title) => `${String(i + 1).padStart(2, '0')} ${title}`.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) + '.wav';
+const safeName = s => s.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80);
+const fileName = (i, title, ext) => safeName(`${String(i + 1).padStart(2, '0')} ${title}`) + '.' + ext;
 
-async function showChapter(i, plan) {
-  const parts = [];
-  for (const c of plan.filter(p => p.chapter === i)) parts.push(await loadChunk(db, currentKey, i, c.index));
-  if (parts.some(p => !p)) return;
-  const blob = new Blob([encodeWav(joinPcm(parts), SAMPLE_RATE)], { type: 'audio/wav' });
-  const url = URL.createObjectURL(blob), name = fileName(i, BOOK.chapters[i].title);
-  const link = el('a', { className: 'dl', href: url, download: name, textContent: `⬇ Download (${(blob.size / 1e6).toFixed(1)} MB)` });
+function downloadLink(blob, name, label) {
+  const url = URL.createObjectURL(blob);
+  const link = el('a', { className: 'dl', href: url, download: name, textContent: `⬇ ${label} (${(blob.size / 1e6).toFixed(1)} MB)` });
   // iOS ignores `download` on blob links; its share sheet is what offers "Save to Files".
   if (/iPad|iPhone|iPod/.test(navigator.userAgent) && navigator.canShare) {
-    link.textContent = '⬇ Save or share';
+    link.textContent = `⬇ Save or share ${label.toLowerCase()} (${(blob.size / 1e6).toFixed(1)} MB)`;
     link.onclick = async ev => {
-      const file = new File([blob], name, { type: 'audio/wav' });
+      const file = new File([blob], name, { type: blob.type });
       if (navigator.canShare({ files: [file] })) { ev.preventDefault(); await navigator.share({ files: [file], title: name }).catch(() => {}); }
     };
   }
-  const o = OUT[i];
+  return { link, url };
+}
+
+// MP3s are encoded once per chapter in a worker and kept for this book and session.
+let mp3Worker = null, mp3Seq = 0;
+const mp3Jobs = new Map(), MP3_CACHE = new Map();
+function toMp3(pcm, onProgress) {
+  if (!mp3Worker) {
+    mp3Worker = new Worker('/mp3-worker.js', { type: 'module' });
+    mp3Worker.onmessage = e => {
+      const job = mp3Jobs.get(e.data.id);
+      if (!job) return;
+      if (e.data.progress != null) return job.onProgress(e.data.progress);
+      mp3Jobs.delete(e.data.id);
+      e.data.error ? job.fail(new Error(e.data.error)) : job.ok(e.data.mp3);
+    };
+  }
+  const id = ++mp3Seq;
+  return new Promise((ok, fail) => {
+    mp3Jobs.set(id, { ok, fail, onProgress });
+    mp3Worker.postMessage({ id, pcm }, [pcm.buffer]);
+  });
+}
+
+async function chapterPcm(i, plan) {
+  const parts = [];
+  for (const c of plan.filter(p => p.chapter === i)) parts.push(await loadChunk(db, currentKey, i, c.index));
+  return parts.some(p => !p) ? null : joinPcm(parts);
+}
+async function chapterMp3(i, plan, onProgress = () => {}) {
+  const key = currentKey + ':' + i;
+  if (!MP3_CACHE.has(key)) {
+    const pcm = await chapterPcm(i, plan);
+    if (!pcm) return null;
+    MP3_CACHE.set(key, await toMp3(pcm, onProgress));
+  }
+  return MP3_CACHE.get(key);
+}
+
+async function showChapter(i, plan) {
+  const o = OUT[i], mp3 = $('#format').value === 'mp3';
+  let blob;
+  if (mp3) {
+    o.state.textContent = 'Making the MP3…';
+    const bytes = await chapterMp3(i, plan, p => { o.state.textContent = `Making the MP3… ${Math.round(p * 100)}%`; }).catch(() => null);
+    if (!bytes) { o.state.textContent = 'Could not make the MP3; choose WAV'; return; }
+    blob = new Blob([bytes], { type: 'audio/mpeg' });
+  } else {
+    const pcm = await chapterPcm(i, plan);
+    if (!pcm) return;
+    blob = new Blob([encodeWav(pcm, SAMPLE_RATE)], { type: 'audio/wav' });
+  }
+  if (OUT[i] !== o) return;  // the list was redrawn meanwhile
+  setState(i);
+  const { link, url } = downloadLink(blob, fileName(i, BOOK.chapters[i].title, mp3 ? 'mp3' : 'wav'), 'Download');
   o.li.querySelector('audio')?.remove(); o.li.querySelector('a.dl')?.remove();
   o.li.append(el('audio', { controls: true, preload: 'none', src: url }), link);
+}
+
+async function wholeBook(kind) {
+  const plan = planChunks(BOOK.chapters), note = $('#wholenote');
+  const chapters = Object.keys(OUT).map(Number);
+  const done = [];
+  for (const [n, i] of chapters.entries()) {
+    note.textContent = `Preparing chapter ${n + 1} of ${chapters.length}…`;
+    done.push({ i, title: BOOK.chapters[i].title, mp3: await chapterMp3(i, plan) });
+  }
+  const blob = kind === 'one'
+    ? new Blob([bookMp3(BOOK.name, done)], { type: 'audio/mpeg' })
+    : new Blob([zipStore(done.map(c => ({ name: fileName(c.i, c.title, 'mp3'), data: c.mp3 })))], { type: 'application/zip' });
+  const { link } = downloadLink(blob, safeName(BOOK.name) + (kind === 'one' ? '.mp3' : '.zip'), kind === 'one' ? 'Whole book' : 'All chapters');
+  note.replaceChildren(link);
 }
 
 // On-device engine, loaded once (~65 MB the first time, then from the browser cache).
@@ -441,6 +516,9 @@ async function start() {
 }
 
 $('#start').onclick = () => start();
+$('#format').onchange = () => updatePlan();
+$('#onefile').onclick = () => wholeBook('one').catch(e => { $('#wholenote').textContent = 'Could not make the file: ' + e.message; });
+$('#zipfile').onclick = () => wholeBook('zip').catch(e => { $('#wholenote').textContent = 'Could not make the file: ' + e.message; });
 $('#pause').onclick = () => { running = false; if (controller) controller.abort(); };
 $('#forget').onclick = async () => { await deleteBook(db, currentKey); await updatePlan(); listSaved(); };
 

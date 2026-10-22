@@ -83,6 +83,7 @@ STATIC_DIR = os.path.join(HERE, 'static')
 WEB_DIR = os.path.join(HERE, 'web')
 PHONON_VERSION = '0.4.1'
 PDFJS_VERSION = '4.4.168'
+LAMEJS_VERSION = '1.2.1'
 STATIC_TYPES = {'.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
                 '.wasm': 'application/wasm', '.bcmap': 'application/octet-stream',
                 '.json': 'application/json', '.css': 'text/css; charset=utf-8'}
@@ -90,14 +91,15 @@ ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
              'Cross-Origin-Embedder-Policy': 'require-corp'}
 # Pages and scripts served from web/, all cross-origin isolated. {{NAME}} placeholders in them
 # are filled from web_values().
-WEB_PAGES = {'/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js'}
+WEB_PAGES = {'/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
+             '/mp3-worker.js': 'mp3-worker.js'}
 
 
 def web_values():
     with open(os.path.join(WEB_DIR, 'book.js'), 'rb') as f:
         book_version = hashlib.sha256(f.read()).hexdigest()[:12]
     return {'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,
-            'BOOK_VERSION': book_version}
+            'LAMEJS_VERSION': LAMEJS_VERSION, 'BOOK_VERSION': book_version}
 
 LANG_LABELS = {
     'a': 'English (US)',

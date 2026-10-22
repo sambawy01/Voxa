@@ -146,3 +146,58 @@ test('the book key changes with text, voice or included chapters', async () => {
   assert.notEqual(base, await bookKey([{ ...ch[0], text: 'Hello!' }], { voice: 'wren' }));
   assert.equal(base, await bookKey([...ch, { include: false, title: 'x', text: 'y' }], { voice: 'wren' }));
 });
+
+import fs from 'node:fs';
+import vm from 'node:vm';
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import { encodeMp3, mp3Duration, id3Chapters, bookMp3, zipStore, crc32 } from '../web/book.js';
+
+function lame() {
+  const file = new URL('../static/lamejs-1.2.1/lame.min.js', import.meta.url);
+  if (!fs.existsSync(file)) return null;  // run scripts/fetch_vendor.py first
+  const ctx = {}; vm.createContext(ctx); vm.runInContext(fs.readFileSync(file, 'utf8'), ctx);
+  return ctx.lamejs;
+}
+const tone = seconds => Int16Array.from({ length: 24000 * seconds }, (_, i) => Math.round(8000 * Math.sin(i / 9)));
+
+test('MP3 encoding gives frames whose length matches the audio', { skip: !lame() && 'lamejs not fetched' }, () => {
+  const mp3 = encodeMp3(lame(), tone(3));
+  assert.equal(mp3[0], 0xff);
+  assert.ok(Math.abs(mp3Duration(mp3) - 3) < 0.1, String(mp3Duration(mp3)));
+  assert.ok(mp3.length < 3 * 64000 / 8 * 1.05);  // 64 kbps
+});
+
+test('a whole-book MP3 carries chapter marks at the right times', { skip: !lame() && 'lamejs not fetched' }, () => {
+  const L = lame();
+  const book = bookMp3('Die Fähre', [{ title: 'One', mp3: encodeMp3(L, tone(2)) }, { title: 'Zwei', mp3: encodeMp3(L, tone(3)) }]);
+  const s = Buffer.from(book).toString('latin1');
+  assert.ok(s.startsWith('ID3\x03'));
+  assert.ok(s.includes('CTOC') && s.split('CHAP').length === 3);
+  assert.ok(Math.abs(mp3Duration(book) - 5) < 0.2);
+  // Second CHAP frame: 10-byte frame header, then "ch1\0", then the start time in ms.
+  const chap2 = s.indexOf('CHAP', s.indexOf('CHAP') + 4) + 10 + 4;
+  const startMs = Buffer.from(book.slice(chap2, chap2 + 4)).readUInt32BE();
+  assert.ok(Math.abs(startMs - 2000) < 100, String(startMs));
+});
+
+test('ID3 size is synchsafe and text is UTF-16', () => {
+  const tag = id3Chapters('日本語の本', [{ title: '第一章', start: 0, end: 1 }]);
+  const size = (tag[6] << 21) | (tag[7] << 14) | (tag[8] << 7) | tag[9];
+  assert.equal(size, tag.length - 10);
+  assert.ok([6, 7, 8, 9].every(i => tag[i] < 128));
+});
+
+test('zips open with a standard unzip tool and keep UTF-8 names', () => {
+  assert.equal(crc32(new TextEncoder().encode('123456789')), 0xcbf43926);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voxa-zip-'));
+  const zip = zipStore([{ name: '01 Chapter One.mp3', data: new Uint8Array([1, 2, 3]) },
+                        { name: '02 Kapitel Zwei – Fähre.mp3', data: new TextEncoder().encode('hello') }]);
+  fs.writeFileSync(path.join(dir, 'b.zip'), zip);
+  try {
+    execFileSync('python3', ['-c', 'import sys,zipfile;z=zipfile.ZipFile(sys.argv[1]);assert z.testzip() is None;print([(i.filename,i.file_size) for i in z.infolist()])', path.join(dir, 'b.zip')]);
+    const listing = execFileSync('python3', ['-c', 'import sys,zipfile;print("|".join(zipfile.ZipFile(sys.argv[1]).namelist()))', path.join(dir, 'b.zip')]).toString().trim();
+    assert.equal(listing, '01 Chapter One.mp3|02 Kapitel Zwei – Fähre.mp3');
+  } finally { fs.rmSync(dir, { recursive: true }); }
+});

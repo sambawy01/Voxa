@@ -24,8 +24,8 @@ primary_region = "fra"
     path = "/health"
 
 [[vm]]
-  # Kokoro-82M plus the CPU torch runtime needs headroom; 2 GB is comfortable and
-  # leaves room for one more language pipeline loaded lazily.
-  memory = "2gb"
+  # Both Kokoro (~1.26 GB resident) and Habibi Arabic (~1.35 GB) need to be live at once,
+  # plus two runtimes. 2 GB measurably could not hold even two Kokoro pipelines; 4 GB does.
+  memory = "4gb"
   cpu_kind = "shared"
   cpus = 2

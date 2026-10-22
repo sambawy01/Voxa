@@ -82,12 +82,22 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, 'static')
 WEB_DIR = os.path.join(HERE, 'web')
 PHONON_VERSION = '0.4.1'
-STATIC_TYPES = {'.js': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm',
+PDFJS_VERSION = '4.4.168'
+STATIC_TYPES = {'.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+                '.wasm': 'application/wasm', '.bcmap': 'application/octet-stream',
                 '.json': 'application/json', '.css': 'text/css; charset=utf-8'}
 ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
              'Cross-Origin-Embedder-Policy': 'require-corp'}
-# Extra pages served from web/, all cross-origin isolated.
-WEB_PAGES = {'/lite/benchmark': 'lite-benchmark.html'}
+# Pages and scripts served from web/, all cross-origin isolated. {{NAME}} placeholders in them
+# are filled from web_values().
+WEB_PAGES = {'/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js'}
+
+
+def web_values():
+    with open(os.path.join(WEB_DIR, 'book.js'), 'rb') as f:
+        book_version = hashlib.sha256(f.read()).hexdigest()[:12]
+    return {'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,
+            'BOOK_VERSION': book_version}
 
 LANG_LABELS = {
     'a': 'English (US)',
@@ -1296,10 +1306,13 @@ class Handler(BaseHTTPRequestHandler):
         if p.startswith('/static/'):
             return self._send_static(p[len('/static/'):])
         if p in WEB_PAGES:
-            with open(os.path.join(WEB_DIR, WEB_PAGES[p]), encoding='utf-8') as f:
-                page = f.read().replace('{{PHONON_VERSION}}', PHONON_VERSION)
-            return self._send(200, page, 'text/html; charset=utf-8',
-                              {**ISOLATION, 'Cache-Control': 'no-cache'})
+            name = WEB_PAGES[p]
+            with open(os.path.join(WEB_DIR, name), encoding='utf-8') as f:
+                page = f.read()
+            for key, value in web_values().items():
+                page = page.replace('{{' + key + '}}', value)
+            ctype = 'text/javascript; charset=utf-8' if name.endswith('.js') else 'text/html; charset=utf-8'
+            return self._send(200, page, ctype, {**ISOLATION, 'Cache-Control': 'no-cache'})
         if p == '/api/quota':
             who = self._identity()
             status = _quota.status(who) if _quota else None

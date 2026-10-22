@@ -719,3 +719,18 @@ class LiteCatalogueTest(ServerTestCase):
                 f.flush()
                 with self.assertRaisesRegex(ValueError, message):
                     server.load_lite(f.name, studio_ids={'harper'})
+
+
+class BookPagesTest(ServerTestCase):
+    def test_book_page_and_module_are_isolated_and_versioned(self):
+        code, headers, page = self.req('/book')
+        self.assertEqual(code, 200)
+        self.assertEqual(headers['Cross-Origin-Embedder-Policy'], 'require-corp')
+        self.assertIn(f'/static/pdfjs-{server.PDFJS_VERSION}/build/pdf.min.mjs'.encode(), page)
+        self.assertNotIn(b'{{', page)
+        version = server.web_values()['BOOK_VERSION']
+        self.assertIn(f'/book.js?v={version}'.encode(), page)
+        code, headers, js = self.req('/book.js')
+        self.assertEqual(code, 200)
+        self.assertTrue(headers['Content-Type'].startswith('text/javascript'))
+        self.assertIn(b'export function splitChunks', js)

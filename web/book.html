@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Voxa Audiobooks</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='none' stroke='%237aa2ff' stroke-width='2'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%237aa2ff'/%3E%3C/svg%3E">
+<style>
+:root{--bg:#0f1115;--panel:#171b22;--panel2:#1e2430;--line:#2b3341;--ink:#e9edf4;--dim:#9aa5b5;--accent:#7aa2ff;--good:#6fe3b4;--bad:#ff8a8a}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#1b2333 0%,var(--bg) 60%);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
+.wrap{max-width:820px;margin:0 auto;padding:28px max(16px,env(safe-area-inset-right)) 70px max(16px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:16px}
+.brand{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.brand a{color:var(--dim);text-decoration:none;font-size:14px}.brand a:hover{color:var(--ink)}
+h1{font-size:24px;margin:0}
+h2{font-size:16px;margin:0}
+p{margin:0}
+.dim{color:var(--dim);font-size:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:12px}
+.pick{display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+input[type=file]{font:inherit;color:var(--dim);max-width:100%}
+input[type=file]::file-selector-button{background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:10px 16px;font:inherit;font-weight:650;margin-right:12px;cursor:pointer}
+.status{font-size:14px;color:var(--accent);min-height:20px}
+.status.err{color:var(--bad)}
+.summary{font-size:15px}
+.summary b{font-variant-numeric:tabular-nums}
+.tools{display:flex;gap:8px;flex-wrap:wrap}
+button.small{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:6px 13px;font:inherit;font-size:13px;cursor:pointer}
+button.small:hover{border-color:var(--accent)}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+ol.chapters{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.chapter{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center}
+.chapter.off{opacity:.55}
+.chapter input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent)}
+.chapter input.title{width:100%;min-width:0;background:transparent;color:var(--ink);border:1px solid transparent;border-radius:8px;padding:5px 7px;font:inherit;font-weight:600}
+.chapter input.title:hover,.chapter input.title:focus{border-color:var(--line)}
+.chapter .meta{grid-column:2;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--dim);font-variant-numeric:tabular-nums;padding-left:8px}
+.chapter .meta button{background:none;border:0;color:var(--accent);font:inherit;font-size:12.5px;padding:0;cursor:pointer}
+.chapter textarea{grid-column:1/-1;width:100%;min-height:200px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;font-size:14px;resize:vertical}
+.chapter textarea[hidden]{display:none}
+</style></head>
+<body><div class="wrap">
+<div class="brand"><h1>Voxa audiobooks</h1><a href="/">← Back to Voxa</a></div>
+<p class="dim">Open a PDF or a text file. Voxa finds the chapters and removes page headers, footers and page numbers. Check the text before any audio is made.</p>
+
+<section class="card">
+  <div class="pick">
+    <label for="file"><h2>Your book</h2></label>
+    <input id="file" type="file" accept=".pdf,.txt,application/pdf,text/plain">
+    <p class="dim">PDFs need real text. Scanned pages (photos of a book) have no text to read.</p>
+  </div>
+  <p class="status" id="status" role="status"></p>
+</section>
+
+<section class="card" id="review" hidden>
+  <h2 id="booktitle">Chapters</h2>
+  <p class="summary" id="summary"></p>
+  <div class="tools">
+    <button class="small" id="all" type="button">Include all</button>
+    <button class="small" id="none" type="button">Include none</button>
+  </div>
+  <ol class="chapters" id="chapters"></ol>
+</section>
+</div>
+
+<script type="module">
+import * as pdfjs from '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.min.mjs';
+import { readPdf, paragraphsFromText, findChapters, estimateSeconds, formatDuration } from '/book.js?v={{BOOK_VERSION}}';
+
+pdfjs.GlobalWorkerOptions.workerSrc = '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.worker.min.mjs';
+const PDF_OPTIONS = { cMapUrl: '/static/pdfjs-{{PDFJS_VERSION}}/cmaps/', cMapPacked: true };
+
+const $ = s => document.querySelector(s);
+let BOOK = null;  // {name, chapters: [{title, include, text, page}]}
+
+function el(tag, props = {}, ...children) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...children);
+  return e;
+}
+
+function summarise() {
+  const on = BOOK.chapters.filter(c => c.include);
+  const chars = on.reduce((a, c) => a + c.text.length, 0);
+  $('#summary').replaceChildren(
+    el('b', { textContent: `${on.length} of ${BOOK.chapters.length}` }), ' chapters included · ',
+    el('b', { textContent: chars.toLocaleString() }), ' characters · about ',
+    el('b', { textContent: formatDuration(estimateSeconds(chars)) }), ' of audio');
+}
+
+function renderChapters() {
+  $('#chapters').replaceChildren(...BOOK.chapters.map((c, i) => {
+    const meta = el('div', { className: 'meta' });
+    const text = el('textarea', { hidden: true, value: c.text, ariaLabel: `Text of ${c.title}` });
+    const updateMeta = () => meta.replaceChildren(
+      c.page ? el('span', { textContent: `from page ${c.page}` }) : '',
+      el('span', { textContent: `${c.text.length.toLocaleString()} characters` }),
+      el('span', { textContent: formatDuration(estimateSeconds(c.text.length)) }),
+      el('button', { type: 'button', textContent: text.hidden ? 'Read and edit text' : 'Hide text',
+        onclick: () => { text.hidden = !text.hidden; updateMeta(); } }));
+    const box = el('input', { type: 'checkbox', checked: c.include, ariaLabel: `Include ${c.title}` });
+    const title = el('input', { className: 'title', value: c.title, ariaLabel: `Title of chapter ${i + 1}` });
+    const li = el('li', { className: 'chapter' + (c.include ? '' : ' off') }, box, title, meta, text);
+    box.onchange = () => { c.include = box.checked; li.classList.toggle('off', !c.include); summarise(); };
+    title.oninput = () => { c.title = title.value; };
+    text.oninput = () => { c.text = text.value; updateMeta(); summarise(); };
+    updateMeta();
+    return li;
+  }));
+  summarise();
+}
+
+async function open(file) {
+  const st = $('#status');
+  st.className = 'status'; st.textContent = `Reading ${file.name}…`;
+  $('#review').hidden = true;
+  try {
+    let chapters, note = '';
+    if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
+      const data = new Uint8Array(await file.arrayBuffer());
+      const book = await readPdf(pdfjs, data, (n, total) => { st.textContent = `Reading page ${n} of ${total}…`; }, PDF_OPTIONS);
+      chapters = book.chapters;
+      note = `${book.pages} pages · chapters from ${book.outline ? "the PDF's table of contents" : 'headings in the text'}`;
+    } else {
+      const paras = paragraphsFromText(await file.text()).map(text => ({ text, page: 0 }));
+      chapters = findChapters(paras);
+      note = 'chapters from headings in the text';
+    }
+    const words = chapters.reduce((a, c) => a + c.text.split(/\s+/).length, 0);
+    if (!chapters.length || words < 5) throw new Error('No text found. If this is a scanned book, it has pictures of pages rather than text.');
+    BOOK = { name: file.name.replace(/\.[^.]+$/, ''), chapters };
+    $('#booktitle').textContent = BOOK.name;
+    st.textContent = `Found ${chapters.length} chapter${chapters.length === 1 ? '' : 's'} · ${note}. Untick anything you don't want read aloud.`;
+    renderChapters();
+    $('#review').hidden = false;
+  } catch (e) {
+    st.className = 'status err';
+    st.textContent = e.name === 'PasswordException' ? 'This PDF is password-protected. Open it without a password and try again.'
+      : e.name === 'InvalidPDFException' ? 'This file is not a readable PDF.' : 'Could not read the file: ' + e.message;
+  }
+}
+
+$('#file').addEventListener('change', e => { if (e.target.files[0]) open(e.target.files[0]); });
+$('#all').onclick = () => { BOOK.chapters.forEach(c => c.include = true); renderChapters(); };
+$('#none').onclick = () => { BOOK.chapters.forEach(c => c.include = false); renderChapters(); };
+</script>
+</body></html>

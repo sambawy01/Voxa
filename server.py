@@ -47,6 +47,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 log = logging.getLogger('voxa')
 
 PORT = int(os.environ.get('PORT', '8080'))
+# Where Kokoro runs: 'cpu' here; the GPU service (gpu/service.py) sets 'cuda'.
+DEVICE = os.environ.get('VOXA_DEVICE', 'cpu')
+# Paid users' jobs go to the GPU service when it is configured (see docs/GPU.md). Calls are
+# remote, so several run at once on their own workers and never wait behind CPU jobs.
+GPU_URL = os.environ.get('VOXA_GPU_URL', '').rstrip('/')
+GPU_TOKEN = os.environ.get('VOXA_GPU_TOKEN', '')
+GPU_WORKERS = int(os.environ.get('VOXA_GPU_WORKERS', '4'))
+GPU_TIMEOUT = 600
 MAX_TEXT = 4000
 MAX_BODY = 64 * 1024
 # Audio length scales with 1/speed, and so does the model's working memory for a chunk.
@@ -204,7 +212,7 @@ def get_shared_model():
             from kokoro import KModel
 
             log.info('loading Kokoro KModel (shared across languages)')
-            _shared_model = KModel(repo_id='hexgrad/Kokoro-82M').to('cpu').eval()
+            _shared_model = KModel(repo_id='hexgrad/Kokoro-82M').to(DEVICE).eval()
             log.info('KModel ready')
         return _shared_model
 
@@ -639,25 +647,26 @@ class Job:
         self.finished = None
         self.done = threading.Event()
         self.refund = None
+        self.queue = None
 
 
 class JobQueue:
     """One worker thread runs every generation, so model memory never stacks up."""
 
-    def __init__(self, generate):
+    def __init__(self, generate, workers=1, name='cpu'):
         self._generate = generate
+        self.workers, self.name = workers, name
         self._jobs = {}
         self._by_key = {}
         self._queue = queue.Queue()
         self._seq = itertools.count()
         self._lock = threading.Lock()
-        self._thread = None
 
     def start(self):
-        self._thread = threading.Thread(target=self._run, name='voxa-worker', daemon=True)
-        self._thread.start()
+        for i in range(self.workers):
+            threading.Thread(target=self._run, name=f'voxa-{self.name}-{i}', daemon=True).start()
 
-    def submit(self, text, lang, voice, speed, charge=None):
+    def submit(self, text, lang, voice, speed, charge=None, who=None):
         """Queue a generation. `charge(n)` is called only when new audio must be generated
         (not for a cache hit or a duplicate of a job in flight) and returns a refund callable,
         used if the job fails. It may raise QuotaExceeded."""
@@ -672,7 +681,7 @@ class JobQueue:
                 raise Busy()
             refund = charge(len(text)) if charge and not cached else None
             job = Job(next(self._seq), key, text, lang, voice, speed)
-            job.refund = refund
+            job.refund, job.queue = refund, self
             self._jobs[job.id] = job
             if cached:
                 job.status, job.progress, job.from_cache = 'done', 1.0, True
@@ -743,6 +752,40 @@ def generate(job):
     return join_wavs(list(synth(job.text, job.voice, job.speed, job.lang, on_progress)))
 
 
+def generate_remote(job):
+    """Generate on the GPU service: the same request body, a WAV back."""
+    body = json.dumps({'text': job.text, 'lang': job.lang, 'voice': job.voice,
+                       'speed': job.speed}).encode()
+    req = urllib.request.Request(f'{GPU_URL}/synthesize', data=body, headers={
+        'Content-Type': 'application/json', 'Authorization': f'Bearer {GPU_TOKEN}'})
+    with urllib.request.urlopen(req, timeout=GPU_TIMEOUT) as r:
+        audio = r.read()
+    if not audio.startswith(b'RIFF'):
+        raise RuntimeError('GPU service returned something other than a WAV')
+    return audio
+
+
+class JobRouter:
+    """Paid users' jobs to the GPU queue, everyone else's to the CPU queue."""
+
+    def __init__(self, cpu, gpu):
+        self.cpu, self.gpu = cpu, gpu
+
+    def start(self):
+        self.cpu.start()
+        self.gpu.start()
+
+    def submit(self, text, lang, voice, speed, charge=None, who=None):
+        queue = self.gpu if who is not None and who.tier == 'paid' else self.cpu
+        return queue.submit(text, lang, voice, speed, charge=charge, who=who)
+
+    def get(self, job_id):
+        return self.cpu.get(job_id) or self.gpu.get(job_id)
+
+    def ahead_of(self, job):
+        return (job.queue or self.cpu).ahead_of(job)
+
+
 _jobs = JobQueue(generate)
 
 
@@ -754,7 +797,7 @@ def job_json(job):
         'cache': 'hit' if job.from_cache else 'miss',
     }
     if job.status == 'queued':
-        out['ahead'] = _jobs.ahead_of(job)
+        out['ahead'] = (job.queue or _jobs).ahead_of(job)
     if job.status == 'done':
         out['audio_url'] = f'/api/audio/{job.key}'
     if job.error:
@@ -1253,7 +1296,7 @@ class Handler(BaseHTTPRequestHandler):
     def _submit(self):
         who = self._identity()
         charge = (lambda n: _quota.charge(who, n)) if _quota else None
-        job = _jobs.submit(*self._read_request(), charge=charge)
+        job = _jobs.submit(*self._read_request(), charge=charge, who=who)
         return job, who
 
     def _read_request(self):
@@ -1392,12 +1435,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global _auth, _quota
+    global _auth, _quota, _jobs
     if SUPABASE_URL and SUPABASE_ANON_KEY:
         _auth = TokenVerifier(SUPABASE_URL, SUPABASE_JWT_SECRET)
         log.info('sign-in enabled via %s', SUPABASE_URL)
     _quota = open_quota()
     log.info('daily characters per tier (0 = no limit): %s', _quota.limits)
+    if GPU_URL and GPU_TOKEN:
+        _jobs = JobRouter(_jobs, JobQueue(generate_remote, workers=GPU_WORKERS, name='gpu'))
+        log.info('paid jobs go to the GPU service at %s', GPU_URL)
     _jobs.start()
     try:
         get_pipeline('a')  # warm English

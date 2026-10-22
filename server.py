@@ -278,12 +278,30 @@ $('#go').addEventListener('click',async()=>{
     const url=URL.createObjectURL(blob);
     const p=$('#player'); p.src=url; p.hidden=false; p.play().catch(()=>{});
 
-    // iOS Safari ignores the HTML `download` attribute on blob URLs, so offer a direct
-    // link to the server file as well — tapping that shows the share/"Save to Files" sheet.
-    const realUrl = r.headers.get('X-Voxa-File');
-    const a=$('#download'); a.href=url; a.download='voxa.wav'; a.hidden=false;
+    // Download from the blob the browser ALREADY has. A second server request can land on a
+    // different machine whose in-memory cache does not contain this audio, which 404'd in
+    // production. iOS Safari also ignores the HTML `download` attribute on blob URLs, so use
+    // the Web Share API there — that is what surfaces "Save to Files".
+    const a=$('#download');
+    a.href=url; a.download='voxa.wav'; a.hidden=false;
     const pl=$('#playerlink');
-    if(realUrl){ pl.href=realUrl; pl.download='voxa.wav'; pl.hidden=false; } else { pl.hidden=true; }
+    const realUrl = r.headers.get('X-Voxa-File');
+    if (realUrl) { pl.href=realUrl; pl.download='voxa.wav'; pl.hidden=false; } else { pl.hidden=true; }
+
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (isIOS && navigator.canShare) {
+      a.textContent = '⬇ Save or share audio';
+      a.onclick = async (ev) => {
+        try {
+          const file = new File([blob], 'voxa.wav', { type: 'audio/wav' });
+          if (navigator.canShare({ files: [file] })) {
+            ev.preventDefault();
+            await navigator.share({ files: [file], title: 'Voxa audio' });
+          }
+        } catch (e) { /* user cancelled — fall through to the plain link */ }
+      };
+    }
     const cls=r.headers.get('X-Voxa-Cache');
     st.className='status';
     st.textContent=`Done in ${((performance.now()-t0)/1000).toFixed(1)}s`+(cls==='hit'?' · from cache':'');

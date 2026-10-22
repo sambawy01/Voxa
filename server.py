@@ -21,7 +21,9 @@ open — the request dropped and Safari reported "Load failed". The page now sub
 job, polls its progress, then fetches the finished audio.
 """
 import collections
+import datetime
 import hashlib
+import http.cookies
 import io
 import itertools
 import json
@@ -29,6 +31,7 @@ import logging
 import math
 import os
 import queue
+import sqlite3
 import threading
 import time
 import uuid
@@ -50,6 +53,15 @@ MAX_PENDING = 16
 JOB_TTL = 30 * 60
 # How long the synchronous /api/tts endpoint waits for its job.
 SYNC_TIMEOUT = 300
+# Free tier: characters a visitor may generate per UTC day. 0 turns the limit off.
+# Cached replays are free; only new generation counts.
+FREE_DAILY_CHARS = int(os.environ.get('VOXA_FREE_DAILY_CHARS', '4000'))
+# Backstop per IP address, so clearing cookies cannot buy unlimited use. Generous because
+# phones on one mobile carrier often share a single address.
+IP_DAILY_FACTOR = 5
+# Where usage counts are stored. Mount a Fly volume at /data to keep them across restarts.
+DATA_DIR = os.environ.get('VOXA_DATA_DIR') or ('/data' if os.path.isdir('/data') else '.')
+COOKIE = 'voxa_id'
 
 LANG_LABELS = {
     'a': 'English (US)',
@@ -262,6 +274,111 @@ class AudioCache:
 _cache = AudioCache(MAX_CACHE_BYTES)
 
 
+class QuotaExceeded(Exception):
+    def __init__(self, status, requested):
+        self.status = status
+        self.requested = requested
+        left = status['remaining']
+        hours = max(1, round((status['resets_at'] - time.time()) / 3600))
+        super().__init__(
+            f'Free daily limit reached: {left:,} of {status["limit"]:,} characters left today '
+            f'and this script is {requested:,}. It resets at midnight UTC '
+            f'(in about {hours} hour{"" if hours == 1 else "s"}).'
+        )
+
+
+class Quota:
+    """Characters generated per visitor per UTC day, in SQLite.
+
+    A visitor is their cookie id, or their IP when there is no cookie (scripts). Every
+    request also counts against its IP at IP_DAILY_FACTOR times the limit.
+    """
+
+    def __init__(self, path, limit):
+        self.limit = limit
+        self.ip_limit = limit * IP_DAILY_FACTOR
+        self._lock = threading.Lock()
+        self._db = sqlite3.connect(path, check_same_thread=False)
+        self._db.execute('CREATE TABLE IF NOT EXISTS usage ('
+                         'day TEXT, subject TEXT, chars INTEGER NOT NULL, '
+                         'PRIMARY KEY (day, subject))')
+        self._db.commit()
+
+    @property
+    def enabled(self):
+        return self.limit > 0
+
+    @staticmethod
+    def _today():
+        now = datetime.datetime.now(datetime.timezone.utc)
+        midnight = (now + datetime.timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        return now.date().isoformat(), midnight.timestamp()
+
+    @staticmethod
+    def _subjects(visitor, ip):
+        return (f'v:{visitor}' if visitor else f'a:{ip}'), f'ip:{ip}'
+
+    def _used(self, day, subject):
+        row = self._db.execute('SELECT chars FROM usage WHERE day = ? AND subject = ?',
+                               (day, subject)).fetchone()
+        return row[0] if row else 0
+
+    def _status(self, day, resets_at, visitor_key, ip_key):
+        remaining = max(0, min(self.limit - self._used(day, visitor_key),
+                               self.ip_limit - self._used(day, ip_key)))
+        return {'limit': self.limit, 'used': self.limit - remaining,
+                'remaining': remaining, 'resets_at': int(resets_at)}
+
+    def status(self, visitor, ip):
+        if not self.enabled:
+            return None
+        day, resets_at = self._today()
+        with self._lock:
+            return self._status(day, resets_at, *self._subjects(visitor, ip))
+
+    def charge(self, visitor, ip, n):
+        """Take n characters or raise QuotaExceeded. Returns a refund callable."""
+        if not self.enabled:
+            return lambda: None
+        day, resets_at = self._today()
+        keys = self._subjects(visitor, ip)
+        with self._lock:
+            status = self._status(day, resets_at, *keys)
+            if n > status['remaining']:
+                raise QuotaExceeded(status, n)
+            self._add(day, keys, n)
+            self._db.execute('DELETE FROM usage WHERE day < ?', (day,))
+            self._db.commit()
+
+        def refund():
+            with self._lock:
+                for subject in keys:
+                    self._db.execute('UPDATE usage SET chars = MAX(0, chars - ?) '
+                                     'WHERE day = ? AND subject = ?', (n, day, subject))
+                self._db.commit()
+        return refund
+
+    def _add(self, day, keys, n):
+        for subject in keys:
+            self._db.execute(
+                'INSERT INTO usage (day, subject, chars) VALUES (?, ?, ?) '
+                'ON CONFLICT (day, subject) DO UPDATE SET chars = chars + excluded.chars',
+                (day, subject, n))
+
+
+def open_quota():
+    path = os.path.join(DATA_DIR, 'voxa.sqlite3')
+    try:
+        return Quota(path, FREE_DAILY_CHARS)
+    except sqlite3.Error as e:
+        log.warning('cannot open %s (%s); daily limits will reset on restart', path, e)
+        return Quota(':memory:', FREE_DAILY_CHARS)
+
+
+_quota = None  # opened in main(), so importing this module touches no files
+
+
 class Job:
     def __init__(self, seq, key, text, lang, voice, speed):
         self.id = uuid.uuid4().hex
@@ -275,6 +392,7 @@ class Job:
         self.created = time.time()
         self.finished = None
         self.done = threading.Event()
+        self.refund = None
 
 
 class JobQueue:
@@ -293,7 +411,10 @@ class JobQueue:
         self._thread = threading.Thread(target=self._run, name='voxa-worker', daemon=True)
         self._thread.start()
 
-    def submit(self, text, lang, voice, speed):
+    def submit(self, text, lang, voice, speed, charge=None):
+        """Queue a generation. `charge(n)` is called only when new audio must be generated
+        (not for a cache hit or a duplicate of a job in flight) and returns a refund callable,
+        used if the job fails. It may raise QuotaExceeded."""
         key = cache_key(text, voice, speed, lang)
         with self._lock:
             self._purge()
@@ -303,7 +424,9 @@ class JobQueue:
             cached = _cache.get(key) is not None
             if not cached and self._pending() >= MAX_PENDING:
                 raise Busy()
+            refund = charge(len(text)) if charge and not cached else None
             job = Job(next(self._seq), key, text, lang, voice, speed)
+            job.refund = refund
             self._jobs[job.id] = job
             if cached:
                 job.status, job.progress, job.from_cache = 'done', 1.0, True
@@ -354,6 +477,11 @@ class JobQueue:
                 job.status = 'error'
                 job.error = 'Speech generation failed on the server. Please try again.'
             finally:
+                if job.status == 'error' and job.refund:
+                    try:
+                        job.refund()  # a failed generation does not use up free characters
+                    except Exception:
+                        log.exception('refund for job %s failed', job.id)
                 job.finished = time.time()
                 job.done.set()
 
@@ -411,7 +539,7 @@ textarea{width:100%;min-height:210px;background:var(--panel2);color:var(--ink);b
 select{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 11px;font:inherit}
 input[type=range]{width:100%;accent-color:var(--accent)}
 .meta{display:flex;justify-content:space-between;color:var(--dim);font-size:12px;margin-top:7px;font-variant-numeric:tabular-nums}
-.meta .over{color:var(--bad)}
+.meta .over,.hint.over{color:var(--bad)}
 .hint{color:var(--dim);font-size:12px;margin:6px 0 0;min-height:18px}
 .val{color:var(--good);font-variant-numeric:tabular-nums;font-size:13px}
 button.primary{width:100%;margin-top:18px;background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:680;cursor:pointer}
@@ -443,6 +571,7 @@ audio[hidden]{display:none}
     <label for="text">Your script</label>
     <textarea id="text" maxlength="4000" placeholder="Type or paste what you want spoken…"></textarea>
     <div class="meta"><span id="count">0 / 4000 characters</span><span id="est"></span></div>
+    <p class="hint" id="quota"></p>
     <div class="chips">
       <button class="chip" data-lang="a">English</button>
       <button class="chip" data-lang="f">Français</button>
@@ -545,6 +674,21 @@ async function waitFor(job, signal, onTick){
   return job;
 }
 
+// Free tier: a daily character allowance, kept on the server. null means no limit.
+let QUOTA=null;
+function showQuota(q){
+  if(q!==undefined) QUOTA=q;
+  const el=$('#quota');
+  if(!QUOTA){el.textContent='';return;}
+  const left=QUOTA.remaining.toLocaleString(), lim=QUOTA.limit.toLocaleString();
+  el.className=QUOTA.remaining?'hint':'hint over';
+  el.textContent=QUOTA.remaining
+    ? `${left} of ${lim} free characters left today. Replaying something you already made is free.`
+    : `You've used today's ${lim} free characters. They reset at midnight UTC.`;
+}
+function loadQuota(){ fetch('/api/quota',{cache:'no-store'}).then(r=>r.json()).then(j=>showQuota(j.quota)).catch(()=>{}); }
+loadQuota();
+
 let ctrl=null;
 $('#cancel').addEventListener('click',()=>{if(ctrl)ctrl.abort();});
 $('#go').addEventListener('click',async()=>{
@@ -559,7 +703,9 @@ $('#go').addEventListener('click',async()=>{
   try{
     let job=await getJSON('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
       signal:ctrl.signal,
-      body:JSON.stringify({text,lang:langSel.value,voice:voiceSel.value||null,speed:+$('#speed').value})});
+      body:JSON.stringify({text,lang:langSel.value,voice:voiceSel.value||null,speed:+$('#speed').value})})
+      .catch(e=>{ if(e.status===429) loadQuota(); throw e; });
+    if(job.quota!==undefined) showQuota(job.quota);
     job=await waitFor(job, ctrl.signal, j=>{
       if(j.status==='queued'){st.textContent=j.ahead?`Waiting — ${j.ahead} request${j.ahead===1?'':'s'} ahead of yours…`:'Starting…';}
       else{const pct=Math.round(j.progress*100);st.textContent=`Generating… ${pct}%`;fill.style.width=Math.max(pct,3)+'%';}
@@ -596,6 +742,7 @@ $('#go').addEventListener('click',async()=>{
     st.className='status';
     st.textContent=`Done in ${((performance.now()-t0)/1000).toFixed(1)}s`+(job.cache==='hit'?' · from cache':'');
   }catch(e){
+    loadQuota();  // a failed generation is refunded
     st.className=e.name==='AbortError'?'status':'status err'; st.textContent=(e.name==='AbortError'?'':'Error: ')+friendly(e);
   }finally{btn.disabled=false;$('#cancel').hidden=true;bar.hidden=true;ctrl=null;}
 });
@@ -637,6 +784,31 @@ class Handler(BaseHTTPRequestHandler):
             'Content-Disposition': f'attachment; filename="voxa-{job.key[:8]}.wav"',
         })
 
+    def _client_ip(self):
+        # Fly's proxy sets Fly-Client-IP to the real client address on every request.
+        return (self.headers.get('Fly-Client-IP') or self.client_address[0]).strip()
+
+    def _visitor(self):
+        """The anonymous id from our cookie, or None (scripts, cookies blocked)."""
+        try:
+            jar = http.cookies.SimpleCookie(self.headers.get('Cookie') or '')
+        except http.cookies.CookieError:
+            return None
+        morsel = jar.get(COOKIE)
+        value = morsel.value if morsel else ''
+        return value if len(value) == 32 and all(c in '0123456789abcdef' for c in value) else None
+
+    def _new_visitor_cookie(self):
+        secure = '; Secure' if self.headers.get('X-Forwarded-Proto') == 'https' else ''
+        return (f'{COOKIE}={uuid.uuid4().hex}; Max-Age=31536000; Path=/; '
+                f'HttpOnly; SameSite=Lax{secure}')
+
+    def _submit(self):
+        visitor, ip = self._visitor(), self._client_ip()
+        charge = (lambda n: _quota.charge(visitor, ip, n)) if _quota else None
+        job = _jobs.submit(*self._read_request(), charge=charge)
+        return job, visitor, ip
+
     def _read_request(self):
         """Parse and validate the JSON body. Returns (text, lang, voice, speed)."""
         try:
@@ -668,6 +840,9 @@ class Handler(BaseHTTPRequestHandler):
         except Busy:
             self._send(503, {'error': 'The server is busy. Please try again in a minute.'},
                        extra={'Retry-After': '30'})
+        except QuotaExceeded as e:
+            self._send(429, {'error': str(e), 'quota': e.status},
+                       extra={'Retry-After': str(max(1, int(e.status['resets_at'] - time.time())))})
         except Exception:
             log.exception('POST %s failed', self.path)
             self._send(500, {'error': 'internal server error'})
@@ -675,7 +850,11 @@ class Handler(BaseHTTPRequestHandler):
     def _get(self):
         p = urlparse(self.path).path
         if p in ('/', '/index.html'):
-            return self._send(200, PAGE, 'text/html; charset=utf-8')
+            extra = {} if self._visitor() else {'Set-Cookie': self._new_visitor_cookie()}
+            return self._send(200, PAGE, 'text/html; charset=utf-8', extra)
+        if p == '/api/quota':
+            status = _quota.status(self._visitor(), self._client_ip()) if _quota else None
+            return self._send(200, {'quota': status}, extra={'Cache-Control': 'no-store'})
         if p.startswith('/api/jobs/'):
             job = _jobs.get(p.rsplit('/', 1)[-1])
             if job is None:
@@ -717,11 +896,14 @@ class Handler(BaseHTTPRequestHandler):
     def _post(self):
         p = urlparse(self.path).path
         if p == '/api/jobs':
-            job = _jobs.submit(*self._read_request())
-            return self._send(200 if job.status == 'done' else 202, job_json(job))
+            job, visitor, ip = self._submit()
+            out = job_json(job)
+            if _quota:
+                out['quota'] = _quota.status(visitor, ip)
+            return self._send(200 if job.status == 'done' else 202, out)
         if p == '/api/tts':
             # Synchronous form for scripts and API callers: same queue, waits for the result.
-            job = _jobs.submit(*self._read_request())
+            job, _, _ = self._submit()
             if not job.done.wait(SYNC_TIMEOUT):
                 return self._send(504, {
                     'error': 'still generating; poll the job instead',
@@ -734,6 +916,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    global _quota
+    _quota = open_quota()
+    if _quota.enabled:
+        log.info('free tier: %d characters per visitor per day', _quota.limit)
     _jobs.start()
     try:
         get_pipeline('a')  # warm English

@@ -107,6 +107,53 @@ class AudioCacheTest(unittest.TestCase):
         self.assertEqual(c.nbytes, 50)
 
 
+class QuotaTest(unittest.TestCase):
+    def setUp(self):
+        self.q = server.Quota(':memory:', 100)
+
+    def test_charge_until_exhausted(self):
+        self.q.charge('v1', 'ip1', 60)
+        self.assertEqual(self.q.status('v1', 'ip1')['remaining'], 40)
+        with self.assertRaises(server.QuotaExceeded) as cm:
+            self.q.charge('v1', 'ip1', 41)
+        self.assertIn('40 of 100', str(cm.exception))
+        self.q.charge('v1', 'ip1', 40)
+        self.assertEqual(self.q.status('v1', 'ip1')['remaining'], 0)
+
+    def test_refund(self):
+        refund = self.q.charge('v1', 'ip1', 70)
+        refund()
+        self.assertEqual(self.q.status('v1', 'ip1')['remaining'], 100)
+        refund()  # never goes below zero used
+        self.assertEqual(self.q.status('v1', 'ip1')['used'], 0)
+
+    def test_visitors_are_separate_but_share_an_ip_backstop(self):
+        for i in range(server.IP_DAILY_FACTOR):
+            self.q.charge(f'v{i}', 'shared', 100)
+        with self.assertRaises(server.QuotaExceeded):
+            self.q.charge('another', 'shared', 1)
+        self.q.charge('another', 'elsewhere', 100)
+
+    def test_no_cookie_counts_by_ip(self):
+        self.q.charge(None, 'ip1', 100)
+        with self.assertRaises(server.QuotaExceeded):
+            self.q.charge(None, 'ip1', 1)
+        self.q.charge('has-cookie', 'ip1', 1)  # a browser on that IP still has its own
+
+    def test_resets_each_day(self):
+        days = iter([('2026-10-22', 0), ('2026-10-22', 0), ('2026-10-23', 0)])
+        self.q._today = lambda: next(days)
+        self.q.charge('v1', 'ip1', 100)
+        with self.assertRaises(server.QuotaExceeded):
+            self.q.charge('v1', 'ip1', 1)
+        self.q.charge('v1', 'ip1', 100)
+
+    def test_zero_limit_disables(self):
+        q = server.Quota(':memory:', 0)
+        q.charge('v', 'ip', 10 ** 9)()
+        self.assertIsNone(q.status('v', 'ip'))
+
+
 class JoinWavsTest(unittest.TestCase):
     def test_joins_frames(self):
         joined = server.join_wavs([make_wav(0.1), make_wav(0.2)])
@@ -121,7 +168,9 @@ class JoinWavsTest(unittest.TestCase):
             server.join_wavs([make_wav(rate=24000), make_wav(rate=16000)])
 
 
-class HTTPTest(unittest.TestCase):
+class ServerTestCase(unittest.TestCase):
+    """A real HTTP server on a free port, with generation stubbed by FakeGenerator."""
+
     @classmethod
     def setUpClass(cls):
         cls.gen = FakeGenerator()
@@ -141,10 +190,12 @@ class HTTPTest(unittest.TestCase):
         self.gen.fail = False
         server._cache = server.AudioCache(server.MAX_CACHE_BYTES)
 
-    def req(self, path, body=None, raw=None):
+    def req(self, path, body=None, raw=None, cookie=None):
         data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
-        r = urllib.request.Request(self.base + path, data=data,
-                                   headers={'Content-Type': 'application/json'})
+        headers = {'Content-Type': 'application/json'}
+        if cookie:
+            headers['Cookie'] = cookie
+        r = urllib.request.Request(self.base + path, data=data, headers=headers)
         try:
             with urllib.request.urlopen(r, timeout=10) as resp:
                 return resp.status, dict(resp.headers), resp.read()
@@ -160,6 +211,8 @@ class HTTPTest(unittest.TestCase):
             time.sleep(0.05)
         self.fail('job never finished')
 
+
+class HTTPTest(ServerTestCase):
     def test_page_and_metadata(self):
         code, headers, body = self.req('/')
         self.assertEqual(code, 200)
@@ -259,3 +312,70 @@ class HTTPTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class QuotaHTTPTest(ServerTestCase):
+    """The free-tier limit, end to end, with a 50-character limit."""
+
+    def setUp(self):
+        super().setUp()
+        server._quota = server.Quota(':memory:', 50)
+
+    def tearDown(self):
+        server._quota = None
+
+    def test_quota_page_sets_a_visitor_cookie_once(self):
+        _, headers, _ = self.req('/')
+        cookie = headers['Set-Cookie'].split(';')[0]
+        self.assertRegex(cookie, r'^voxa_id=[0-9a-f]{32}$')
+        _, headers, _ = self.req('/', cookie=cookie)
+        self.assertNotIn('Set-Cookie', headers)
+
+    def test_quota_charged_reported_and_enforced(self):
+        cookie = 'voxa_id=' + 'a' * 32
+        code, _, body = self.req('/api/jobs', {'text': 'x' * 30}, cookie=cookie)
+        self.assertEqual(code, 202)
+        self.assertEqual(json.loads(body)['quota']['remaining'], 20)
+        self.poll(json.loads(body)['id'])
+
+        code, headers, body = self.req('/api/jobs', {'text': 'y' * 21}, cookie=cookie)
+        self.assertEqual(code, 429)
+        self.assertIn('Retry-After', headers)
+        self.assertIn('20 of 50', json.loads(body)['error'])
+
+        # Replaying audio that is already cached is free, even with too little left.
+        self.req('/api/jobs', {'text': 'z' * 20}, cookie=cookie)
+        code, _, body = self.req('/api/jobs', {'text': 'x' * 30}, cookie=cookie)
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body)['cache'], 'hit')
+
+        _, _, body = self.req('/api/quota', cookie=cookie)
+        self.assertEqual(json.loads(body)['quota']['remaining'], 0)
+        # A different visitor still has a full allowance.
+        _, _, body = self.req('/api/quota', cookie='voxa_id=' + 'b' * 32)
+        self.assertEqual(json.loads(body)['quota']['remaining'], 50)
+
+    def test_quota_refunded_when_generation_fails(self):
+        self.gen.fail = True
+        code, _, _ = self.req('/api/tts', {'text': 'q' * 40})
+        self.assertEqual(code, 500)
+        _, _, body = self.req('/api/quota')
+        self.assertEqual(json.loads(body)['quota']['remaining'], 50)
+
+    def test_quota_double_tap_is_charged_once(self):
+        self.gen.gate.clear()
+        cookie = 'voxa_id=' + 'c' * 32
+        _, _, a = self.req('/api/jobs', {'text': 'd' * 30}, cookie=cookie)
+        code, _, b = self.req('/api/jobs', {'text': 'd' * 30}, cookie=cookie)
+        self.assertEqual(code, 202)
+        self.assertEqual(json.loads(a)['id'], json.loads(b)['id'])
+        self.gen.gate.set()
+        self.poll(json.loads(a)['id'])
+        _, _, body = self.req('/api/quota', cookie=cookie)
+        self.assertEqual(json.loads(body)['quota']['remaining'], 20)
+
+    def test_quota_cookie_ignored_unless_well_formed(self):
+        self.req('/api/tts', {'text': 'e' * 50}, cookie='voxa_id=not-a-real-id')
+        # Counted against the IP instead, so a cookie-less request is now out of allowance.
+        code, _, _ = self.req('/api/tts', {'text': 'f'})
+        self.assertEqual(code, 429)

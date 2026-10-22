@@ -822,7 +822,8 @@ PAGE = r"""<!doctype html>
 body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#1b2333 0%,var(--bg) 60%);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
 .wrap{max-width:1020px;margin:0 auto;padding:30px 18px 70px}
 .brand{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.account{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--dim);min-width:0}
+.account{margin-left:auto;display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:8px 10px;font-size:13px;color:var(--dim);min-width:0}
+.account button.small{white-space:nowrap}
 .account[hidden],.signin[hidden]{display:none}
 .account .who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:22ch}
 .account .tier{color:var(--good);font-weight:600}
@@ -876,6 +877,8 @@ audio[hidden]{display:none}
   <div class="account" id="account" hidden>
     <span class="who" id="who"></span><span class="tier" id="tier"></span>
     <button class="small" id="signin-open">Sign in</button>
+    <button class="small" id="upgrade" hidden>Upgrade</button>
+    <button class="small" id="manage" hidden>Manage plan</button>
     <button class="small" id="signout" hidden>Sign out</button>
   </div>
 </div>
@@ -1026,8 +1029,42 @@ function loadScript(src){
   // crossOrigin: the page is cross-origin isolated, so other-origin scripts load with CORS.
   return new Promise((ok,fail)=>{const el=document.createElement('script');el.crossOrigin='anonymous';el.src=src;el.onload=ok;el.onerror=fail;document.head.appendChild(el);});
 }
+let SIGNED_IN=false;
+// The paid plan: Upgrade for signed-in free accounts, Manage plan for subscribers.
+function showPlan(){
+  const b=CONFIG.billing, tier=QUOTA&&QUOTA.tier;
+  $('#upgrade').hidden=!(b&&SIGNED_IN&&tier==='free');
+  $('#upgrade').textContent=b&&b.price_label?`Upgrade · ${b.price_label}`:'Upgrade';
+  $('#manage').hidden=!(b&&SIGNED_IN&&tier==='paid');
+}
+async function goBilling(path, btn){
+  btn.disabled=true;
+  try{
+    const r=await api(path,{method:'POST'}), j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.url) throw new Error(j.error||'The payment page is not available right now.');
+    location.href=j.url;
+  }catch(e){ const st=$('#status'); st.className='status err'; st.textContent='Error: '+e.message; btn.disabled=false; }
+}
+$('#upgrade').addEventListener('click',e=>goBilling('/api/billing/checkout',e.currentTarget));
+$('#manage').addEventListener('click',e=>goBilling('/api/billing/portal',e.currentTarget));
+// Back from Stripe Checkout. The plan arrives by webhook, sometimes a few seconds after the
+// visitor does, and only reaches the sign-in token on refresh, so refresh until it shows.
+async function welcomeBack(){
+  if(!new URLSearchParams(location.search).has('upgraded')||!SB) return;
+  history.replaceState(null,'',location.pathname);
+  const st=$('#status'); st.className='status busy'; st.textContent='Confirming your payment…';
+  for(let i=0;i<8;i++){
+    await SB.auth.refreshSession().catch(()=>{});
+    const q=await loadQuota();
+    if(q&&q.tier==='paid'){ st.className='status'; st.textContent='You are on the paid plan: no daily limit. Thank you!'; return; }
+    await sleep(2500);
+  }
+  st.className='status'; st.textContent='Payment received. Your plan can take a minute to switch on; reload the page shortly.';
+}
+
 function showAccount(session){
   const signedIn=!!session;
+  SIGNED_IN=signedIn;
   $('#account').hidden=false;
   $('#who').textContent=signedIn?(session.user.email||'Signed in'):'';
   $('#signin-open').hidden=signedIn; $('#signout').hidden=!signedIn;
@@ -1042,6 +1079,7 @@ async function initAuth(){
   SB=window.supabase.createClient(CONFIG.auth.url, CONFIG.auth.anon_key);
   SB.auth.onAuthStateChange((_event, session)=>showAccount(session));
   const {data}=await SB.auth.getSession(); showAccount(data.session);
+  welcomeBack();
 }
 $('#signin-open').addEventListener('click',()=>{const f=$('#signin');f.hidden=!f.hidden;if(!f.hidden)$('#email').focus();});
 $('#signout').addEventListener('click',async()=>{ if(SB) await SB.auth.signOut(); });
@@ -1091,17 +1129,26 @@ function showQuota(q){
   if(q!==undefined) QUOTA=q;
   const el=$('#quota');
   $('#tier').textContent=QUOTA&&QUOTA.tier==='paid'?'Paid':'';
+  showPlan();
   if(!QUOTA){el.textContent='';return;}
   if(QUOTA.unlimited){el.className='hint';el.textContent='No daily limit on your plan.';return;}
   const left=QUOTA.remaining.toLocaleString(), lim=QUOTA.limit.toLocaleString();
   const free=(CONFIG.limits.free||0).toLocaleString();
-  const upsell=QUOTA.tier==='guest'&&SB?` Sign in for ${free} a day.`:'';
+  const upsell=QUOTA.tier==='guest'&&SB?` Sign in for ${free} a day.`
+    :QUOTA.tier==='free'&&CONFIG.billing&&SIGNED_IN?' Upgrade for no daily limit.':'';
   el.className=QUOTA.remaining?'hint':'hint over';
   el.textContent=QUOTA.remaining
     ? `${left} of ${lim} free characters left today.${upsell||' Replaying something you already made is free.'}`
     : `You've used today's ${lim} free characters. They reset at midnight UTC.${upsell}`;
 }
-function loadQuota(){ api('/api/quota',{cache:'no-store'}).then(r=>r.json()).then(j=>showQuota(j.quota)).catch(()=>{}); }
+// Requests can overlap (sign-in, a token refresh, a finished job); only the newest one's
+// answer may be shown, or an older token's allowance could overwrite the current one.
+let QUOTA_SEQ=0;
+function loadQuota(){
+  const n=++QUOTA_SEQ;
+  return api('/api/quota',{cache:'no-store'}).then(r=>r.json())
+    .then(j=>{ if(n===QUOTA_SEQ) showQuota(j.quota); return j.quota; }).catch(()=>null);
+}
 loadQuota();
 initAuth();
 

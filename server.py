@@ -716,7 +716,19 @@ PAGE = r"""<!doctype html>
 *{box-sizing:border-box}
 body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#1b2333 0%,var(--bg) 60%);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
 .wrap{max-width:1020px;margin:0 auto;padding:30px 18px 70px}
-.brand{display:flex;align-items:center;gap:10px}
+.brand{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.account{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--dim);min-width:0}
+.account[hidden],.signin[hidden]{display:none}
+.account .who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:22ch}
+.account .tier{color:var(--good);font-weight:600}
+button.small{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:6px 13px;font:inherit;font-size:13px;cursor:pointer}
+button.small:hover{border-color:var(--accent)}
+.signin{margin:14px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px;max-width:420px}
+.signin input{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 11px;font:inherit}
+.signin .row{display:flex;gap:8px;flex-wrap:wrap}
+.signin .row button{flex:1 1 140px}
+.signin p{margin:0;font-size:13px;color:var(--dim)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .mark{color:var(--accent);font-size:20px}
 h1{font-size:26px;margin:0;letter-spacing:.4px;font-weight:680}
 .tagline{color:var(--dim);font-size:14px;margin:8px 0 24px;max-width:62ch}
@@ -754,7 +766,22 @@ audio[hidden]{display:none}
 .chip:hover{border-color:var(--accent);color:var(--ink)}
 </style></head>
 <body><div class="wrap">
-<div class="brand"><span class="mark">◉</span><h1>Voxa</h1></div>
+<div class="brand"><span class="mark">◉</span><h1>Voxa</h1>
+  <div class="account" id="account" hidden>
+    <span class="who" id="who"></span><span class="tier" id="tier"></span>
+    <button class="small" id="signin-open">Sign in</button>
+    <button class="small" id="signout" hidden>Sign out</button>
+  </div>
+</div>
+<form class="signin" id="signin" hidden>
+  <label for="email">Sign in for 4,000 free characters a day</label>
+  <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+  <div class="row">
+    <button class="small" id="signin-email" type="submit">Email me a sign-in link</button>
+    <button class="small" id="signin-google" type="button">Continue with Google</button>
+  </div>
+  <p id="signin-msg" role="status"></p>
+</form>
 <p class="tagline">Text to speech. Nine languages, real voices. Generated on a server, so it sounds the same on every device.</p>
 <div class="grid">
   <section class="card">
@@ -844,8 +871,66 @@ function friendly(e){
   if(e instanceof TypeError) return 'Lost the connection to the server. Check your connection and try again.';
   return e.message;
 }
+// Accounts (Supabase). The sign-in library loads only when the server says sign-in is on,
+// so guests on a server without accounts load nothing extra.
+const SUPABASE_JS='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js';
+let SB=null, CONFIG={auth:null,limits:{}};
+async function token(){
+  if(!SB) return null;
+  try{ const {data}=await SB.auth.getSession(); return data.session?data.session.access_token:null; }
+  catch(e){ return null; }
+}
+// fetch() with the signed-in account's token. A 401 means the session expired: refresh it
+// once and retry; if that fails, sign out locally so the page falls back to guest.
+async function api(url, opts={}){
+  const send=async t=>fetch(url,{...opts,headers:{...(opts.headers||{}),...(t?{Authorization:'Bearer '+t}:{})}});
+  const t=await token();
+  let r=await send(t);
+  if(r.status===401&&SB){
+    const {data}=await SB.auth.refreshSession().catch(()=>({data:{}}));
+    if(data&&data.session){ r=await send(data.session.access_token); }
+    if(r.status===401){ await SB.auth.signOut({scope:'local'}).catch(()=>{}); r=await send(null); }
+  }
+  return r;
+}
+function loadScript(src){
+  return new Promise((ok,fail)=>{const el=document.createElement('script');el.src=src;el.onload=ok;el.onerror=fail;document.head.appendChild(el);});
+}
+function showAccount(session){
+  const signedIn=!!session;
+  $('#account').hidden=false;
+  $('#who').textContent=signedIn?(session.user.email||'Signed in'):'';
+  $('#signin-open').hidden=signedIn; $('#signout').hidden=!signedIn;
+  if(signedIn) $('#signin').hidden=true;
+  loadQuota();
+}
+async function initAuth(){
+  try{ CONFIG=await fetch('/api/config',{cache:'no-store'}).then(r=>r.json()); }catch(e){ return; }
+  if(!CONFIG.auth) return;
+  try{ await loadScript(SUPABASE_JS); }
+  catch(e){ console.warn('sign-in library failed to load'); return; }
+  SB=window.supabase.createClient(CONFIG.auth.url, CONFIG.auth.anon_key);
+  SB.auth.onAuthStateChange((_event, session)=>showAccount(session));
+  const {data}=await SB.auth.getSession(); showAccount(data.session);
+}
+$('#signin-open').addEventListener('click',()=>{const f=$('#signin');f.hidden=!f.hidden;if(!f.hidden)$('#email').focus();});
+$('#signout').addEventListener('click',async()=>{ if(SB) await SB.auth.signOut(); });
+$('#signin').addEventListener('submit',async ev=>{
+  ev.preventDefault();
+  const email=$('#email').value.trim(), msg=$('#signin-msg');
+  if(!SB||!email) return;
+  msg.textContent='Sending…';
+  const {error}=await SB.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname}});
+  msg.textContent=error?('Could not send the link: '+error.message):`Check ${email} for a sign-in link. Open it on this device.`;
+});
+$('#signin-google').addEventListener('click',async()=>{
+  if(!SB) return;
+  const {error}=await SB.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}});
+  if(error) $('#signin-msg').textContent='Google sign-in is not available: '+error.message;
+});
+
 async function getJSON(url, opts){
-  const r=await fetch(url, opts);
+  const r=await api(url, opts);
   const j=await r.json().catch(()=>({}));
   if(!r.ok){const err=new Error(j.error||('Server error ('+r.status+')'));err.status=r.status;throw err;}
   return j;
@@ -875,15 +960,20 @@ let QUOTA=null;
 function showQuota(q){
   if(q!==undefined) QUOTA=q;
   const el=$('#quota');
+  $('#tier').textContent=QUOTA&&QUOTA.tier==='paid'?'Paid':'';
   if(!QUOTA){el.textContent='';return;}
+  if(QUOTA.unlimited){el.className='hint';el.textContent='No daily limit on your plan.';return;}
   const left=QUOTA.remaining.toLocaleString(), lim=QUOTA.limit.toLocaleString();
+  const free=(CONFIG.limits.free||0).toLocaleString();
+  const upsell=QUOTA.tier==='guest'&&SB?` Sign in for ${free} a day.`:'';
   el.className=QUOTA.remaining?'hint':'hint over';
   el.textContent=QUOTA.remaining
-    ? `${left} of ${lim} free characters left today. Replaying something you already made is free.`
-    : `You've used today's ${lim} free characters. They reset at midnight UTC.`;
+    ? `${left} of ${lim} free characters left today.${upsell||' Replaying something you already made is free.'}`
+    : `You've used today's ${lim} free characters. They reset at midnight UTC.${upsell}`;
 }
-function loadQuota(){ fetch('/api/quota',{cache:'no-store'}).then(r=>r.json()).then(j=>showQuota(j.quota)).catch(()=>{}); }
+function loadQuota(){ api('/api/quota',{cache:'no-store'}).then(r=>r.json()).then(j=>showQuota(j.quota)).catch(()=>{}); }
 loadQuota();
+initAuth();
 
 let ctrl=null;
 $('#cancel').addEventListener('click',()=>{if(ctrl)ctrl.abort();});

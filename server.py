@@ -1,15 +1,21 @@
 """Voxa — server-side text to speech on Kokoro-82M.
 
 Why a server: the browser build of Kokoro is English-only (its bundled phonemizer
-ships just `["en"]`), and it stalls on phones. The Python runtime handles all eight
-languages the model was trained on and generates in seconds instead of minutes.
+ships just ["en"]) and stalls on phones. The Python runtime handles every language
+the model was trained for.
 
-Design:
-  * model loads ONCE at boot and stays in memory (that is the whole point of a server)
-  * generated audio is cached by a hash of (text, voice, speed) so repeat phrases are
-    instant and cost nothing — the single biggest saving on a TTS product
-  * /api/tts returns audio bytes directly; no filesystem needed
-  * /api/voices and /api/languages let the UI stay honest about what exists
+Memory is the design constraint. Measured on this project:
+    import torch                ~230-404 MB
+    one KPipeline               ~1,257 MB   (the 82M model + voice cache + G2P)
+    a SECOND KPipeline          +651 MB     <-- this OOM-killed a 2 GB machine
+    a second pipeline sharing
+      the first one's KModel    +0 MB       <-- so we do exactly that
+
+So: load the weights ONCE, then hand the same KModel to a per-language KPipeline.
+Each extra language then costs only its phonemizer.
+
+Japanese additionally needs `pyopenjtalk`, which is not installed by default; it is
+reported as unsupported rather than silently failing.
 """
 import hashlib
 import io
@@ -24,9 +30,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 log = logging.getLogger('voxa')
 
 PORT = int(os.environ.get('PORT', '8080'))
+MAX_CACHE = 400
+MAX_TEXT = 4000
 
-# Kokoro lang codes: a=US English, b=UK English, e=Spanish, f=French,
-# h=Hindi, i=Italian, j=Japanese, p=Brazilian Portuguese, z=Mandarin
 LANG_LABELS = {
     'a': 'English (US)',
     'b': 'English (UK)',
@@ -39,30 +45,63 @@ LANG_LABELS = {
     'z': 'Chinese (Mandarin)',
 }
 
+# Languages whose G2P needs an extra package; reported honestly if unavailable.
+LANG_REQUIRES = {
+    'j': 'pyopenjtalk',
+}
+
+_shared_model = None
 _pipelines = {}
 _cache = {}
-_cache_lock = threading.Lock()
+_model_lock = threading.Lock()
 _pipe_lock = threading.Lock()
 
-MAX_CACHE = 400
-MAX_TEXT = 4000
+MAX_CACHE_ITEMS = MAX_CACHE
+
+
+def get_shared_model():
+    """Load Kokoro's weights exactly once for the whole process."""
+    global _shared_model
+    with _model_lock:
+        if _shared_model is None:
+            from kokoro import KModel
+
+            log.info('loading Kokoro KModel (shared across languages)')
+            _shared_model = KModel(repo_id='hexgrad/Kokoro-82M').to('cpu').eval()
+            log.info('KModel ready')
+        return _shared_model
 
 
 def get_pipeline(lang_code):
-    """One KPipeline per language, created on first use and kept warm."""
+    """A per-language pipeline sharing the one model. Costs only its phonemizer."""
     if lang_code not in LANG_LABELS:
         raise ValueError(f'unsupported language code: {lang_code}')
+
+    req = LANG_REQUIRES.get(lang_code)
+    if req:
+        try:
+            __import__(req)
+        except ImportError:
+            raise RuntimeError(
+                f'{LANG_LABELS[lang_code]} needs the "{req}" package, which is not installed '
+                f'in this image. Add it to the Dockerfile to enable this language.'
+            )
+
     with _pipe_lock:
         if lang_code not in _pipelines:
             from kokoro import KPipeline
-            log.info('loading Kokoro pipeline for %s', lang_code)
-            _pipelines[lang_code] = KPipeline(lang_code=lang_code, repo_id='hexgrad/Kokoro-82M')
+
+            model = get_shared_model()
+            log.info('creating pipeline for %s (shared model)', lang_code)
+            _pipelines[lang_code] = KPipeline(
+                lang_code=lang_code, repo_id='hexgrad/Kokoro-82M', model=model
+            )
             log.info('pipeline %s ready', lang_code)
         return _pipelines[lang_code]
 
 
 def synth(text, voice, speed, lang_code):
-    """Yield (wav_bytes, sample_rate) chunks. Kokoro splits long text itself."""
+    """Yield one WAV (bytes) per sentence chunk."""
     import numpy as np
     import soundfile as sf
 
@@ -74,28 +113,13 @@ def synth(text, voice, speed, lang_code):
         yield buf.getvalue()
 
 
-def cache_key(text, voice, speed, lang_code):
-    h = hashlib.sha256()
-    h.update(text.encode('utf-8'))
-    h.update(b'|')
-    h.update(f'{voice}|{speed}|{lang_code}'.encode())
-    return h.hexdigest()
-
-
 def join_wavs(wavs):
-    """Concatenate several PCM-16 WAV byte strings into one WAV.
-
-    Kokoro yields one WAV per sentence. Joining them gives the caller a single file
-    that plays end to end; taking only the first would truncate multi-sentence text.
-    All chunks are 24 kHz mono PCM-16, so the frames append directly — no resampling.
-    """
+    """Concatenate PCM-16 WAVs into one, so multi-sentence text is not truncated."""
     if len(wavs) == 1:
         return wavs[0]
-    import struct
     import wave
 
-    frames = []
-    params = None
+    frames, params = [], None
     for blob in wavs:
         with wave.open(io.BytesIO(blob), 'rb') as w:
             p = w.getparams()
@@ -115,6 +139,14 @@ def join_wavs(wavs):
         for f in frames:
             w.writeframes(f)
     return out.getvalue()
+
+
+def cache_key(text, voice, speed, lang_code):
+    h = hashlib.sha256()
+    h.update(text.encode('utf-8'))
+    h.update(b'|')
+    h.update(f'{voice}|{speed}|{lang_code}'.encode())
+    return h.hexdigest()
 
 
 PAGE = r"""<!doctype html>
@@ -168,7 +200,7 @@ audio[hidden]{display:none}
       <button class="chip" data-lang="a">English</button>
       <button class="chip" data-lang="f">Français</button>
       <button class="chip" data-lang="e">Español</button>
-      <button class="chip" data-lang="j">日本語</button>
+      <button class="chip" data-lang="i">Italiano</button>
       <button class="chip" data-lang="clear">Clear</button>
     </div>
   </section>
@@ -189,27 +221,35 @@ audio[hidden]{display:none}
   </section>
 </div>
 <div class="card note"><strong>About the model.</strong> Kokoro-82M, 82 million parameters, Apache 2.0.
-Running server-side means all eight languages work properly — the browser build only ever shipped an
-English phonemizer. Repeated phrases are cached, so they come back instantly.</div>
+One set of weights serves every language — only the pronunciation rules change — so all nine
+languages share the same memory. Repeated phrases are cached and come back instantly.</div>
 </div>
 <script>
 const $=s=>document.querySelector(s);
-let LANG={'a':'English (US)','b':'English (UK)','e':'Spanish','f':'French','h':'Hindi','i':'Italian','j':'Japanese','p':'Portuguese (BR)','z':'Chinese (Mandarin)'};
-let VOICES={};
+let LANG={}, VOICES={};
 const langSel=$('#lang'), voiceSel=$('#voice');
-langSel.innerHTML=Object.entries(LANG).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+Promise.all([
+  fetch('/api/languages').then(r=>r.json()),
+  fetch('/api/voices').then(r=>r.json())
+]).then(([l,v])=>{
+  LANG=l.languages||{}; VOICES=v.voices||{};
+  langSel.innerHTML=Object.entries(LANG).map(([k,lab])=>`<option value="${k}">${lab}</option>`).join('');
+  refreshVoices();
+}).catch(()=>{ langSel.innerHTML='<option value="a">English (US)</option>'; });
+
 function refreshVoices(){
   const k=langSel.value, list=VOICES[k]||[];
-  voiceSel.innerHTML=list.map(v=>`<option value="${v}">${v}</option>`).join('');
-  $('#langnote').textContent=list.length?`${list.length} voices for ${LANG[k]}.`:`No voices reported — try generating.`;
-  $('#voicenote').textContent='';
+  voiceSel.innerHTML=list.length?list.map(v=>`<option value="${v}">${v}</option>`).join(''):'<option value="">default</option>';
+  $('#langnote').textContent=list.length?`${list.length} voices for ${LANG[k]}.`:'';
 }
-fetch('/api/voices').then(r=>r.json()).then(d=>{VOICES=d.voices||{};refreshVoices();}).catch(()=>refreshVoices());
 langSel.addEventListener('change',refreshVoices);
 $('#speed').addEventListener('input',e=>$('#speedv').textContent=(+e.target.value).toFixed(2)+'×');
 function upd(){const t=$('#text').value;$('#count').textContent=t.length+' characters';$('#est').textContent=t.length?`≈ ${Math.ceil(t.length/14)}s of audio`:'';}
 $('#text').addEventListener('input',upd);upd();
-const SAMPLES={a:'Voxa turns your words into speech. This audio was generated on a server, so it sounds the same on every device.',f:'Bonjour. Ceci est Voxa, une voix de synthèse qui fonctionne sur un serveur.',e:'Hola. Esto es Voxa, una voz sintética generada en un servidor.',j:'こんにちは。これはVoxaです。'};
+const SAMPLES={a:'Voxa turns your words into speech. This audio was generated on a server, so it sounds the same on every device.',
+f:'Bonjour. Ceci est Voxa, une voix de synthèse qui fonctionne sur un serveur.',
+e:'Hola. Esto es Voxa, una voz sintética generada en un servidor.',
+i:'Ciao. Questa è Voxa, una voce sintetica generata su un server.'};
 document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{
   const k=c.dataset.lang;
   if(k==='clear'){$('#text').value='';}else{$('#text').value=SAMPLES[k]||'';langSel.value=k;refreshVoices();}
@@ -227,7 +267,7 @@ $('#go').addEventListener('click',async()=>{
   try{
     const r=await fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},
       signal:ctrl.signal,
-      body:JSON.stringify({text,lang:langSel.value,voice:voiceSel.value,speed:+$('#speed').value})});
+      body:JSON.stringify({text,lang:langSel.value,voice:voiceSel.value||null,speed:+$('#speed').value})});
     if(!r.ok){const j=await r.json().catch(()=>({error:'HTTP '+r.status}));throw new Error(j.error||('HTTP '+r.status));}
     const blob=await r.blob();
     const url=URL.createObjectURL(blob);
@@ -269,18 +309,20 @@ class Handler(BaseHTTPRequestHandler):
         if p in ('/', '/index.html'):
             return self._send(200, PAGE, 'text/html; charset=utf-8')
         if p == '/health':
-            return self._send(200, {'ok': True, 'pipelines': list(_pipelines), 'cached': len(_cache)})
+            return self._send(200, {
+                'ok': True,
+                'model_loaded': _shared_model is not None,
+                'pipelines': list(_pipelines),
+                'cached': len(_cache),
+            })
         if p == '/api/languages':
             return self._send(200, {'languages': LANG_LABELS})
         if p == '/api/voices':
-            # ask a warm pipeline what voices it has; fall back to the known catalogue
             voices = {}
             try:
                 pipe = get_pipeline('a')
-                if hasattr(pipe, 'voices'):
-                    for name in pipe.voices:
-                        code = name[0]
-                        voices.setdefault(code, []).append(name)
+                for name in getattr(pipe, 'voices', []):
+                    voices.setdefault(name[0], []).append(name)
             except Exception as e:
                 log.warning('voices probe failed: %s', e)
             return self._send(200, {'voices': voices, 'languages': LANG_LABELS})
@@ -315,21 +357,17 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             key = cache_key(text, voice or '', speed, lang)
-            with _cache_lock:
+            with _pipe_lock:
                 hit = _cache.get(key)
             if hit is not None:
                 return self._send(200, hit, 'audio/wav', {'X-Voxa-Cache': 'hit'})
 
-            chunks = list(synth(text, voice, speed, lang))
-            if not chunks:
+            audio = join_wavs(list(synth(text, voice, speed, lang)))
+            if not audio:
                 return self._send(500, {'error': 'no audio produced'})
-            # Kokoro yields one WAV per sentence. Concatenate their PCM into a single
-            # WAV so a multi-sentence script comes back as one playable file — returning
-            # only the first chunk would silently truncate long text.
-            audio = join_wavs(chunks)
 
-            with _cache_lock:
-                if len(_cache) >= MAX_CACHE:
+            with _pipe_lock:
+                if len(_cache) >= MAX_CACHE_ITEMS:
                     _cache.pop(next(iter(_cache)))
                 _cache[key] = audio
             return self._send(200, audio, 'audio/wav', {'X-Voxa-Cache': 'miss'})
@@ -339,9 +377,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    # warm the English pipeline so the first real request is fast
     try:
-        get_pipeline('a')
+        get_pipeline('a')  # warm English
     except Exception as e:
         log.warning('warmup failed: %s', e)
     srv = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)

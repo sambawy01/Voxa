@@ -39,10 +39,15 @@ m = KModel(repo_id='hexgrad/Kokoro-82M').eval(); \
  for l, v in [('a','af_heart'),('b','bf_emma'),('e','ef_dora'),('f','ff_siwis'),('h','hf_alpha'), \
               ('i','if_sara'),('j','jf_alpha'),('p','pf_dora'),('z','zf_xiaobei')]]"
 
+# Voxa Lite's browser package, version- and hash-pinned, served by the app itself.
+COPY scripts/fetch_phonon.py /tmp/fetch_phonon.py
+RUN python /tmp/fetch_phonon.py /app/static && rm /tmp/fetch_phonon.py
+
 # Everything is local now; fail fast rather than reach the network at runtime.
 ENV HF_HUB_OFFLINE=1
 
 COPY server.py voices.json /app/
+COPY web /app/web
 
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s \

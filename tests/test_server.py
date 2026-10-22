@@ -632,3 +632,51 @@ class AccountsHTTPTest(ServerTestCase):
         body = json.loads(body)
         self.assertEqual(body['auth'], {'url': URL, 'anon_key': 'public-anon-key'})
         self.assertEqual(body['limits']['guest'], server.GUEST_DAILY_CHARS)
+
+
+class LiteFilesTest(ServerTestCase):
+    """Voxa Lite's browser package and pages: served same-origin and cross-origin isolated."""
+
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old = server.STATIC_DIR
+        server.STATIC_DIR = self.tmp.name
+        pkg = os.path.join(self.tmp.name, 'phonon-0.4.1', 'wasm')
+        os.makedirs(pkg)
+        for name, data in (('index.js', b'export {}'), ('wasm/x.wasm', b'\0asm'),
+                           ('README.md', b'not served')):
+            with open(os.path.join(self.tmp.name, 'phonon-0.4.1', name), 'wb') as f:
+                f.write(data)
+        with open(os.path.join(self.tmp.name, '..', 'secret.js'), 'wb') as f:
+            f.write(b'outside')
+
+    def tearDown(self):
+        server.STATIC_DIR = self.old
+        os.remove(os.path.join(self.tmp.name, '..', 'secret.js'))
+        self.tmp.cleanup()
+
+    def test_package_files_are_served_with_types_and_isolation(self):
+        for path, ctype in (('/static/phonon-0.4.1/index.js', 'text/javascript'),
+                            ('/static/phonon-0.4.1/wasm/x.wasm', 'application/wasm')):
+            with self.subTest(path):
+                code, headers, _ = self.req(path)
+                self.assertEqual(code, 200)
+                self.assertTrue(headers['Content-Type'].startswith(ctype))
+                self.assertEqual(headers['Cross-Origin-Embedder-Policy'], 'require-corp')
+                self.assertIn('immutable', headers['Cache-Control'])
+
+    def test_nothing_outside_the_allow_list(self):
+        for path in ('/static/phonon-0.4.1/README.md', '/static/../secret.js',
+                     '/static/%2e%2e/secret.js', '/static/phonon-0.4.1/missing.js'):
+            with self.subTest(path):
+                self.assertEqual(self.req(path)[0], 404)
+
+    def test_benchmark_page_is_isolated_and_pinned(self):
+        code, headers, body = self.req('/lite/benchmark')
+        self.assertEqual(code, 200)
+        self.assertEqual(headers['Cross-Origin-Opener-Policy'], 'same-origin')
+        self.assertEqual(headers['Cross-Origin-Embedder-Policy'], 'require-corp')
+        self.assertIn(f'/static/phonon-{server.PHONON_VERSION}/index.js'.encode(), body)
+        self.assertNotIn(b'{{PHONON_VERSION}}', body)

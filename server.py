@@ -74,6 +74,19 @@ IP_DAILY_FACTOR = 5
 # Where usage counts are stored. Mount a Fly volume at /data to keep them across restarts.
 DATA_DIR = os.environ.get('VOXA_DATA_DIR') or ('/data' if os.path.isdir('/data') else '.')
 COOKIE = 'voxa_id'
+# Voxa Lite: the phonon-tts browser package, fetched by scripts/fetch_phonon.py into static/
+# and served from here, since its worker must be same-origin. Pages that run it are served
+# cross-origin isolated, which is what gives WebAssembly its threads.
+HERE = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(HERE, 'static')
+WEB_DIR = os.path.join(HERE, 'web')
+PHONON_VERSION = '0.4.1'
+STATIC_TYPES = {'.js': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm',
+                '.json': 'application/json', '.css': 'text/css; charset=utf-8'}
+ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
+             'Cross-Origin-Embedder-Policy': 'require-corp'}
+# Extra pages served from web/, all cross-origin isolated.
+WEB_PAGES = {'/lite/benchmark': 'lite-benchmark.html'}
 
 LANG_LABELS = {
     'a': 'English (US)',
@@ -1070,6 +1083,21 @@ class Handler(BaseHTTPRequestHandler):
             'Content-Disposition': f'attachment; filename="voxa-{job.key[:8]}.wav"',
         })
 
+    def _send_static(self, rel):
+        """A file under static/, by extension allow-list, never outside the directory."""
+        root = os.path.realpath(STATIC_DIR)
+        full = os.path.realpath(os.path.join(root, rel))
+        ctype = STATIC_TYPES.get(os.path.splitext(full)[1])
+        if not full.startswith(root + os.sep) or not ctype or not os.path.isfile(full):
+            return self._send(404, {'error': 'not found'})
+        with open(full, 'rb') as f:
+            body = f.read()
+        # Paths carry the package version, so a file never changes under its URL. Workers
+        # take their isolation from their own script's headers, so these carry it too.
+        return self._send(200, body, ctype, {
+            'Cache-Control': 'public, max-age=31536000, immutable',
+            'Cross-Origin-Resource-Policy': 'same-origin', **ISOLATION})
+
     def _send_auth_error(self, e):
         log.info('rejected sign-in token: %s', e)
         self.close_connection = True  # a rejected POST body is never read
@@ -1157,6 +1185,13 @@ class Handler(BaseHTTPRequestHandler):
         if p in ('/', '/index.html'):
             extra = {} if self._visitor() else {'Set-Cookie': self._new_visitor_cookie()}
             return self._send(200, PAGE, 'text/html; charset=utf-8', extra)
+        if p.startswith('/static/'):
+            return self._send_static(p[len('/static/'):])
+        if p in WEB_PAGES:
+            with open(os.path.join(WEB_DIR, WEB_PAGES[p]), encoding='utf-8') as f:
+                page = f.read().replace('{{PHONON_VERSION}}', PHONON_VERSION)
+            return self._send(200, page, 'text/html; charset=utf-8',
+                              {**ISOLATION, 'Cache-Control': 'no-cache'})
         if p == '/api/quota':
             who = self._identity()
             status = _quota.status(who) if _quota else None

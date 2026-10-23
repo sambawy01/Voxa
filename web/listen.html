@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Voxa Reader · listen to anything</title>
+<meta name="description" content="Copy any text, then listen: Voxa reads emails, articles and messages aloud in natural AI voices.">
+{{HEAD}}<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Voxa">
+<style>
+.paste-row{display:flex;flex-direction:column;gap:12px;align-items:stretch}
+.paste-row button.primary{font-size:18px;padding:19px 22px}
+.paste-row button.primary svg{width:22px;height:22px}
+details summary{cursor:pointer;color:var(--accent);font-weight:650;font-size:14px}
+details[open] summary{margin-bottom:10px}
+#typed{min-height:150px}
+.now-title{font:750 17px var(--font-display);letter-spacing:-.01em;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.controls-row{display:flex;align-items:center;justify-content:center;gap:clamp(16px,6vw,34px);padding:6px 0}
+.bigplay{width:96px;height:96px;border-radius:50%;border:0;background:var(--grad);color:#fff;display:grid;place-items:center;cursor:pointer;
+  box-shadow:0 0 0 9px rgba(139,92,246,.16),0 14px 40px -8px rgba(99,102,241,.8);transition:transform .15s}
+.bigplay:active{transform:scale(.96)}
+.bigplay svg{width:40px;height:40px}
+.round{width:60px;height:60px;border-radius:50%;background:var(--surface-2);border:1px solid var(--line-2);color:var(--ink);display:grid;place-items:center;cursor:pointer}
+.round:hover{border-color:rgba(167,139,250,.6)}
+.round svg{width:24px;height:24px}
+.round:disabled{opacity:.4;cursor:default}
+.progress-line{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
+.playing-host .wave i{animation-play-state:running;opacity:1}
+.genline{display:flex;align-items:center;justify-content:center;gap:12px;min-height:34px}
+.settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.settings label{display:flex;flex-direction:column;gap:8px}
+.textview{display:flex;flex-direction:column;gap:4px;max-height:52vh;overflow:auto;margin:0 -6px;padding:0 6px}
+.textview p{padding:10px 12px;border-radius:12px;color:var(--ink-2);cursor:pointer;transition:background .2s,color .2s}
+.textview p:hover{background:var(--surface-2)}
+.textview p.now{background:rgba(139,92,246,.16);color:#fff;box-shadow:inset 3px 0 0 #a78bfa}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.howto details{border:1px solid var(--line);border-radius:16px;padding:14px 16px;background:var(--surface)}
+.howto details + details{margin-top:10px}
+.howto summary{display:flex;align-items:center;gap:10px;color:var(--ink);font-size:15.5px;font-weight:700;list-style:none}
+.howto summary::-webkit-details-marker{display:none}
+.howto summary::after{content:"+";margin-left:auto;color:var(--accent);font-size:20px;font-weight:500}
+.howto details[open] summary::after{content:"–"}
+.howto ol,.howto ul{margin:10px 0 0;padding-left:22px;display:flex;flex-direction:column;gap:8px;color:var(--ink-2)}
+.howto b{color:var(--ink)}
+.howto code{white-space:nowrap}
+.bookmarklet{display:inline-flex;align-items:center;gap:8px;margin-top:10px;padding:10px 16px;border-radius:12px;background:var(--grad);color:#fff;font-weight:750;text-decoration:none;box-shadow:var(--glow);cursor:grab}
+.bookmarklet:hover{color:#fff}
+.safety{font-size:13px;color:var(--dim);border-left:3px solid rgba(251,191,36,.6);padding:4px 0 4px 12px;background:linear-gradient(90deg,rgba(251,191,36,.07),transparent)}
+</style></head>
+<body data-page="reader">
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+</div></header>
+<main class="wrap narrow">
+<section class="hero">
+  <span class="eyebrow"><span class="dot"></span>Voxa Reader</span>
+  <h1 class="display sm">Listen to <span class="grad-text">anything.</span></h1>
+  <p class="lead">Copy an email, article or message, then tap <b>Paste &amp; listen</b>. Voxa reads it aloud in a natural voice and keeps going with the screen locked.</p>
+</section>
+
+<section class="card glow" id="start">
+  <div class="paste-row">
+    <button class="primary" id="paste" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2.5" width="8" height="4" rx="1"/><path d="M16 4.5h2a2 2 0 0 1 2 2V20a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2h2"/><path d="M10 14l2 2 4-4"/></svg>Paste &amp; listen</button>
+    <details id="typebox"><summary>Or type or paste the text yourself</summary>
+      <textarea id="typed" placeholder="Paste or type what you want to hear…" aria-label="Text to read"></textarea>
+      <div class="row" style="margin-top:10px"><button class="ghost" id="readtyped" type="button">Read this</button></div>
+    </details>
+  </div>
+  <p class="status" id="startstatus" role="status"></p>
+</section>
+
+<section class="card glow wave-host" id="player" hidden>
+  <p class="now-title" id="nowtitle"></p>
+  <div class="controls-row">
+    <button class="round" id="prev" type="button" aria-label="Previous part"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5.5v13L9.5 12z"/></svg></button>
+    <button class="bigplay" id="play" type="button" aria-label="Play"><svg id="playicon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg></button>
+    <button class="round" id="next" type="button" aria-label="Next part"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5.5v13L14.5 12z"/></svg></button>
+  </div>
+  <div class="bar"><i id="fill"></i></div>
+  <div class="progress-line"><span id="partof"></span><span id="timeleft"></span></div>
+  <div class="genline">
+    <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <p class="status" id="status" role="status"></p>
+  </div>
+  <div class="settings">
+    <label>Language<select id="lang"></select></label>
+    <label>Voice<select id="voice"></select></label>
+    <label>Speed<select id="speed"><option value="0.85">0.85×</option><option value="1" selected>1×</option><option value="1.15">1.15×</option><option value="1.3">1.3×</option><option value="1.5">1.5×</option></select></label>
+  </div>
+  <div class="hear"><button class="small" id="hear" type="button">▶ Hear this voice</button><span class="hearnote" id="hearnote" role="status"></span></div>
+  <p class="note" id="voicenote"></p>
+</section>
+
+<section class="card" id="textcard" hidden>
+  <div class="card-head"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg></span>
+    <div><h2>The text</h2><p class="sub">Tap a paragraph to listen from there</p></div></div>
+  <div class="textview" id="textview"></div>
+  <div class="row"><button class="small" id="newtext" type="button">New text</button></div>
+</section>
+
+<section class="card howto">
+  <div class="card-head"><span class="ico pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l1.9 5 5 1.9-5 1.9-1.9 5-1.9-5-5-1.9 5-1.9z"/><path d="M19 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg></span>
+    <div><h2>Read with Voxa from anywhere</h2><p class="sub">Set it up once, then send text to Voxa from any app</p></div></div>
+
+  <details open><summary>📱 iPhone &amp; iPad: Share menu and Siri</summary>
+    <ol>
+      <li>Open the <b>Shortcuts</b> app and tap <b>+</b> to make a new shortcut. Name it <b>Read with Voxa</b>.</li>
+      <li>Tap <b>ⓘ</b> (or the name at the top) and turn on <b>Show in Share Sheet</b>.</li>
+      <li>In the first block, set it to receive <b>Text</b> from the <b>Share Sheet</b>, and under <i>If there's no input</i> choose <b>Get Clipboard</b>.</li>
+      <li>Add the action <b>URL Encode</b> (it uses the Shortcut Input).</li>
+      <li>Add the action <b>Text</b> and type <code id="shortcuturl">https://voxavocals.com/listen#t=</code>, then insert the <b>URL Encoded Text</b> variable right after it.</li>
+      <li>Add the action <b>Open URLs</b>. Done.</li>
+    </ol>
+    <ul>
+      <li><b>From any app:</b> select text, tap <b>Share</b>, then <b>Read with Voxa</b>. Tap ▶ when Voxa opens.</li>
+      <li><b>Hands-free:</b> copy the text, then say <b>"Hey Siri, Read with Voxa"</b>. It reads what you copied.</li>
+    </ul>
+  </details>
+
+  <details><summary>🏠 Put Voxa Reader on your Home Screen</summary>
+    <ol>
+      <li>Open this page in Safari, tap <b>Share</b>, then <b>Add to Home Screen</b>.</li>
+      <li>Copy any text, open <b>Voxa</b> from your Home Screen, and tap <b>Paste &amp; listen</b>.</li>
+    </ol>
+  </details>
+
+  <details><summary>💻 Mac: right-click any text</summary>
+    <ol>
+      <li>Your iPhone shortcut syncs to the Mac through iCloud. In the Mac's <b>Shortcuts</b> app, open <b>Read with Voxa</b>, click <b>ⓘ</b>, and turn on <b>Use as Quick Action</b> and <b>Services Menu</b>.</li>
+      <li>In any app, select text, <b>right-click</b>, and choose <b>Services → Read with Voxa</b>.</li>
+    </ol>
+  </details>
+
+  <details><summary>🖥️ Any computer browser: one-click bookmark</summary>
+    <p class="note" style="margin-top:10px">Drag this button to your bookmarks bar. Select text on any web page (an email in Gmail or Outlook, an article), then click the bookmark.</p>
+    <a class="bookmarklet" id="bookmarklet" href="#">🔊 Read with Voxa</a>
+  </details>
+
+  <details><summary>🤖 Android: the Share menu</summary>
+    <ol>
+      <li>Open this page in Chrome, tap <b>⋮</b>, then <b>Install app</b> (or <b>Add to Home screen</b>).</li>
+      <li>Select text in any app, tap <b>Share</b>, and choose <b>Voxa</b>.</li>
+    </ol>
+  </details>
+  <p class="safety">Driving? Set this up before you go, and use Siri so your eyes and hands stay on the road.</p>
+</section>
+<p class="small-print">Studio voices send the text to Voxa to be spoken and use the daily allowance. On-device voices (English) read on this device for free. Links in the text are read as "link", and quoted replies in emails are skipped.</p>
+</main>
+{{FOOTER}}
+
+<script type="module">
+import { readerPlan, detectLang, incomingText, shortDuration } from '/listen.js?v={{LISTEN_VERSION}}';
+import { parseWav, encodeWav, floatToInt16, SAMPLE_RATE, CHARS_PER_SECOND } from '/book.js';
+import { attachPreview, stopPreview, PREVIEW_LINE } from '/preview.js?v={{PREVIEW_VERSION}}';
+
+const $ = s => document.querySelector(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const LITE_SEED = 4242424242424242;
+const AHEAD = 2;  // parts made in advance, so playback never waits between parts
+const SILENCE = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQIAAAAAAA==';
+const PLAY = '<path d="M8 5.5v13l11-6.5z"/>', PAUSE = '<path d="M6.5 5h4v14h-4zM13.5 5h4v14h-4z"/>';
+
+// Remembered per device: language, the voice per language, speed.
+let PREFS = { lang: 'a', voices: {}, speed: 1 };
+try { PREFS = { ...PREFS, ...JSON.parse(localStorage.getItem('voxa-reader') || '{}') }; } catch (e) {}
+const savePrefs = () => { try { localStorage.setItem('voxa-reader', JSON.stringify(PREFS)); } catch (e) {} };
+
+// --- Account: the same sign-in as the main page -----------------------------------------------
+let CONFIG = { auth: null }, SB = null, accountReady = null;
+async function token() {
+  if (!SB) return null;
+  try { const { data } = await SB.auth.getSession(); return data.session ? data.session.access_token : null; }
+  catch (e) { return null; }
+}
+async function api(url, opts = {}) {
+  const send = t => fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...(t ? { Authorization: 'Bearer ' + t } : {}) } });
+  let r = await send(await token());
+  if (r.status === 401 && SB) {
+    const { data } = await SB.auth.refreshSession().catch(() => ({ data: {} }));
+    r = await send(data && data.session ? data.session.access_token : null);
+  }
+  return r;
+}
+function setupAccount() {
+  return accountReady ||= (async () => {
+    CONFIG = await fetch('/api/config', { cache: 'no-store' }).then(r => r.json()).catch(() => CONFIG);
+    if (!CONFIG.auth) return;
+    await new Promise((ok, fail) => document.head.appendChild(Object.assign(document.createElement('script'),
+      { crossOrigin: 'anonymous', src: 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js', onload: ok, onerror: fail })))
+      .then(() => { SB = window.supabase.createClient(CONFIG.auth.url, CONFIG.auth.anon_key); })
+      .catch(() => {});
+  })();
+}
+
+// --- Voices -------------------------------------------------------------------------------------
+let VOICES = null;
+const liteOK = () => typeof WebAssembly === 'object' && 'Worker' in window;
+const liteFor = lang => (VOICES && VOICES.lite && liteOK() && VOICES.lite.voices[lang]) || [];
+const voicesFor = lang => [...(VOICES.catalogue[lang] || []), ...liteFor(lang).map(v => ({ ...v, lite: true }))];
+const voice = () => voicesFor($('#lang').value).find(v => v.id === $('#voice').value);
+
+async function setupVoices() {
+  if (VOICES) return;
+  const [l, v] = await Promise.all([fetch('/api/languages').then(r => r.json()), fetch('/api/voices').then(r => r.json())]);
+  VOICES = v;
+  $('#lang').replaceChildren(...Object.entries(l.languages).map(([k, lab]) => Object.assign(document.createElement('option'), { value: k, textContent: lab })));
+  $('#lang').value = PREFS.lang;
+  $('#speed').value = String(PREFS.speed);
+  fillVoices();
+}
+
+function fillVoices() {
+  const lang = $('#lang').value, all = voicesFor(lang);
+  const opt = v => Object.assign(document.createElement('option'), { value: v.id, textContent: `${v.name} · ${v.gender === 'male' ? 'man' : 'woman'}` });
+  const group = (label, list) => { const g = document.createElement('optgroup'); g.label = label; g.append(...list.map(opt)); return g; };
+  const studio = all.filter(v => !v.lite), lite = all.filter(v => v.lite);
+  // Studio first: it starts fastest and keeps reading with the screen locked, which matters in a car.
+  $('#voice').replaceChildren(group('Studio voices', studio), ...(lite.length ? [group('On this device · free, no daily limit', lite)] : []));
+  const saved = PREFS.voices[lang];
+  $('#voice').value = all.some(v => v.id === saved) ? saved : (studio[0] || all[0]).id;
+  voiceNote();
+}
+
+function voiceNote() {
+  const v = voice();
+  $('#voicenote').textContent = !v ? '' : v.lite
+    ? 'On-device voices are free with no daily limit. They may pause while the screen is locked; for the car, pick a Studio voice.'
+    : 'Studio voices keep reading with the screen locked. They use your daily allowance.';
+}
+
+function settings() {
+  const v = voice(), lang = $('#lang').value;
+  return v.lite ? { engine: 'lite', lang, voice: v.id, url: v.url, temperature: 0.3, seed: LITE_SEED }
+    : { engine: 'studio', lang, voice: v.id, speed: 1 };
+}
+
+// --- Making each part's audio -----------------------------------------------------------------------
+class QuotaReached extends Error {}
+let LITE_TTS = null;
+const LITE_ADDED = new Set();
+async function liteEngine(st) {
+  if (LITE_TTS) return LITE_TTS;
+  const { PhononTTS } = await import(`/static/phonon-${VOICES.phonon_version}/index.js`);
+  const seen = {};
+  LITE_TTS = await PhononTTS.load({ lang: 'en', model: VOICES.lite.model, onProgress: ({ file, loaded, cached }) => {
+    seen[file] = loaded || 0;
+    st.textContent = cached ? 'Loading the on-device voice…' : `Downloading the on-device voice (once)… ${(Object.values(seen).reduce((a, b) => a + b, 0) / 1e6).toFixed(0)} MB of about 65`;
+  } });
+  return LITE_TTS;
+}
+
+async function makePart(text, s) {
+  if (s.engine === 'lite') {
+    const tts = await liteEngine($('#status'));
+    if (!LITE_ADDED.has(s.voice)) { await tts.addVoice(s.voice, s.url); LITE_ADDED.add(s.voice); }
+    const pcm = floatToInt16(await tts.synth(text, { voice: s.voice, temperature: s.temperature, seed: s.seed }));
+    return URL.createObjectURL(new Blob([encodeWav(pcm, SAMPLE_RATE)], { type: 'audio/wav' }));
+  }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      let r = await api('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, lang: s.lang, voice: s.voice, speed: s.speed }) });
+      let job = await r.json().catch(() => ({}));
+      if (r.status === 429) throw new QuotaReached(job.error || 'Daily limit reached.');
+      if (!r.ok) throw new Error(job.error || `Server error (${r.status})`);
+      while (job.status === 'queued' || job.status === 'running') {
+        await sleep(700);
+        r = await api('/api/jobs/' + job.id, { cache: 'no-store' });
+        if (!r.ok) throw new Error(`Server error (${r.status})`);
+        job = await r.json();
+      }
+      if (job.status !== 'done') throw new Error(job.error || 'Generation failed.');
+      return job.audio_url;
+    } catch (e) {
+      // A dropped connection (a tunnel, a dead zone) is retried; a used-up allowance is not.
+      if (e instanceof QuotaReached || attempt >= 3) throw e;
+      await sleep(1500 * 2 ** attempt);
+    }
+  }
+}
+
+// Parts are made once per voice and kept for this page, so replaying or going back is instant.
+const PARTS = new Map();
+const partKey = i => `${i}|${JSON.stringify(settings())}`;
+function partAudio(i) {
+  const key = partKey(i);
+  if (!PARTS.has(key)) PARTS.set(key, makePart(DOC.parts[i].text, settings()).catch(e => { PARTS.delete(key); throw e; }));
+  return PARTS.get(key);
+}
+
+// --- Playback -------------------------------------------------------------------------------------
+let DOC = null, cur = 0, playing = false, loaded = -1, seq = 0;
+const audio = new Audio();
+audio.preload = 'auto';
+
+// iPhones only let a page play sound that a tap started. Playing a silent clip inside the tap
+// unlocks this audio element; after that it can play each next part on its own, even locked.
+function unlock() {
+  if (audio.dataset.unlocked) return;
+  // Marked at once: the tap is what unlocks it, and a real part may replace the silence
+  // before it finishes playing (which rejects this play() but keeps the unlock).
+  audio.dataset.unlocked = '1';
+  audio.src = SILENCE;
+  audio.play().catch(() => {});
+}
+
+function setStatus(text, kind = '') { const st = $('#status'); st.className = 'status' + (kind ? ' ' + kind : ''); st.textContent = text; }
+
+async function playFrom(i) {
+  const my = ++seq;
+  cur = i; playing = true; render();
+  setStatus(PARTS.has(partKey(i)) ? '' : (i === 0 ? 'Getting the voice ready…' : 'Loading…'), 'busy');
+  try {
+    const url = await partAudio(i);
+    if (my !== seq) return;
+    for (let k = 1; k <= AHEAD && i + k < DOC.parts.length; k++) partAudio(i + k).catch(() => {});
+    audio.src = url; loaded = i;
+    audio.defaultPlaybackRate = audio.playbackRate = PREFS.speed;
+    await audio.play();
+    if (my === seq) setStatus('');
+  } catch (e) {
+    if (my !== seq) return;
+    playing = false; render();
+    if (e.name === 'NotAllowedError') setStatus('Tap ▶ to start listening.');
+    else if (e instanceof QuotaReached) setStatus(e.message + (liteFor($('#lang').value).length ? ' English on-device voices have no daily limit.' : ''), 'err');
+    else setStatus('Stopped: ' + e.message + '. Tap ▶ to try again.', 'err');
+  }
+}
+
+function resume() {
+  if (!DOC) return;
+  if (loaded === cur && audio.currentTime > 0 && !audio.ended) {
+    playing = true; render();
+    audio.play().catch(() => playFrom(cur));
+  } else playFrom(cur);
+}
+function pause() { playing = false; seq++; audio.pause(); render(); setStatus(''); }
+const jump = i => { if (DOC && i >= 0 && i < DOC.parts.length) playFrom(i); };
+
+audio.addEventListener('ended', () => {
+  if (!playing || loaded !== cur) return;
+  if (cur + 1 < DOC.parts.length) playFrom(cur + 1);
+  else { playing = false; cur = 0; loaded = -1; render(); setStatus('Finished. Tap ▶ to listen again.'); }
+});
+audio.addEventListener('pause', () => { if (playing && !audio.ended && audio.src && loaded === cur && audio.currentTime > 0) { playing = false; render(); } });
+audio.addEventListener('play', () => { if (loaded === cur) { playing = true; render(); } });
+
+function render() {
+  $('#playicon').innerHTML = playing ? PAUSE : PLAY;
+  $('#play').ariaLabel = playing ? 'Pause' : 'Play';
+  $('#player').classList.toggle('playing-host', playing);
+  if (!DOC) return;
+  const n = DOC.parts.length;
+  $('#prev').disabled = cur === 0; $('#next').disabled = cur >= n - 1;
+  $('#partof').textContent = `Part ${cur + 1} of ${n}`;
+  const left = DOC.parts.slice(cur).reduce((a, p) => a + p.text.length, 0) / CHARS_PER_SECOND / PREFS.speed;
+  $('#timeleft').textContent = `about ${shortDuration(left)} left`;
+  $('#fill').style.width = (100 * cur / n) + '%';
+  const para = DOC.parts[cur].para;
+  document.querySelectorAll('#textview p').forEach(p => {
+    const now = +p.dataset.i === para;
+    // Scroll only inside the text box, so the controls never move out of reach.
+    if (now && !p.classList.contains('now') && playing) {
+      const tv = $('#textview');
+      tv.scrollTo({ top: tv.scrollTop + p.getBoundingClientRect().top - tv.getBoundingClientRect().top - 8, behavior: 'smooth' });
+    }
+    p.classList.toggle('now', now);
+  });
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+    const v = voice();
+    navigator.mediaSession.metadata = new MediaMetadata({ title: DOC.title, artist: `Voxa · ${v ? v.name : ''}`, album: `Part ${cur + 1} of ${n}`,
+      artwork: [{ src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }] });
+  }
+}
+
+if ('mediaSession' in navigator) {
+  const on = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch (e) {} };
+  on('play', resume); on('pause', pause); on('stop', pause);
+  on('nexttrack', () => jump(cur + 1)); on('previoustrack', () => jump(Math.max(0, cur - 1)));
+  on('seekbackward', () => { audio.currentTime = Math.max(0, audio.currentTime - 10); });
+  on('seekforward', () => { audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 10); });
+}
+
+// --- Loading text ------------------------------------------------------------------------------
+async function load(text, { autoplay }) {
+  await setupVoices();
+  const st = $('#startstatus');
+  const lang = detectLang(text, PREFS.lang);
+  if (lang === 'unsupported') {
+    st.className = 'status err';
+    st.textContent = "This looks like Arabic, which Voxa's voices can't speak yet. Voxa reads English, Spanish, French, Italian, Portuguese, Hindi, Japanese and Chinese.";
+    return;
+  }
+  const plan = readerPlan(text);
+  if (!plan.parts.length) { st.className = 'status err'; st.textContent = 'There is no text to read.'; return; }
+  pause();
+  PARTS.forEach(p => p.then(u => u.startsWith('blob:') && URL.revokeObjectURL(u)).catch(() => {}));
+  PARTS.clear();
+  const words = plan.paras.join(' ').split(/\s+/);
+  DOC = { ...plan, title: words.slice(0, 9).join(' ') + (words.length > 9 ? '…' : '') };
+  cur = 0; loaded = -1;
+  try { sessionStorage.setItem('voxa-reader-text', text); } catch (e) {}
+  if ($('#lang').value !== lang) { $('#lang').value = lang; fillVoices(); }
+  st.className = 'status'; st.textContent = '';
+  $('#textview').replaceChildren(...DOC.paras.map((t, i) => {
+    const p = Object.assign(document.createElement('p'), { textContent: t, onclick: () => { unlock(); jump(DOC.parts.findIndex(x => x.para === i)); } });
+    p.dataset.i = i;
+    return p;
+  }));
+  $('#nowtitle').textContent = DOC.title;
+  $('#player').hidden = $('#textcard').hidden = false;
+  $('#start').hidden = true;
+  render();
+  if (studioNeeded()) quotaNote();
+  if (autoplay) playFrom(0);
+  else setStatus('Tap ▶ to start listening.');
+  $('#player').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+const studioNeeded = () => voice() && !voice().lite;
+async function quotaNote() {
+  await setupAccount();
+  const q = await api('/api/quota', { cache: 'no-store' }).then(r => r.json()).then(j => j.quota).catch(() => null);
+  if (!q || q.unlimited || !DOC) return;
+  const need = DOC.parts.reduce((a, p) => a + p.text.length, 0);
+  if (need > q.remaining) $('#voicenote').textContent = `This text is ${need.toLocaleString()} characters and you have ${q.remaining.toLocaleString()} Studio characters left today, so Voxa will stop part-way.` +
+    (liteFor($('#lang').value).length ? ' On-device voices have no limit.' : ' Sign in on the main page for more.');
+}
+
+$('#paste').onclick = async () => {
+  unlock();
+  const st = $('#startstatus');
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text.trim()) throw new Error('empty');
+    await load(text, { autoplay: true });
+  } catch (e) {
+    $('#typebox').open = true; $('#typed').focus();
+    st.className = 'status';
+    st.textContent = e.message === 'empty' ? 'The clipboard is empty. Copy some text first, or paste it below.' : 'Paste the text below (touch and hold, then Paste), and tap Read this.';
+  }
+};
+$('#readtyped').onclick = () => { unlock(); if ($('#typed').value.trim()) load($('#typed').value, { autoplay: true }); };
+$('#play').onclick = () => { unlock(); playing ? pause() : resume(); };
+$('#prev').onclick = () => { unlock(); jump(cur - 1); };
+$('#next').onclick = () => { unlock(); jump(cur + 1); };
+$('#newtext').onclick = () => {
+  pause(); DOC = null;
+  try { sessionStorage.removeItem('voxa-reader-text'); } catch (e) {}
+  $('#player').hidden = $('#textcard').hidden = true; $('#start').hidden = false; $('#typed').value = '';
+  $('#start').scrollIntoView({ behavior: 'smooth' });
+};
+const settingsChanged = () => {
+  PREFS.lang = $('#lang').value; PREFS.voices[PREFS.lang] = $('#voice').value; savePrefs(); voiceNote();
+  if (DOC && playing) playFrom(cur); else render();
+};
+$('#lang').onchange = () => { stopPreview(); fillVoices(); settingsChanged(); };
+$('#voice').onchange = () => { stopPreview(); settingsChanged(); };
+$('#speed').onchange = () => { PREFS.speed = +$('#speed').value; savePrefs(); audio.playbackRate = PREFS.speed; render(); };
+$('#hear').addEventListener('click', () => { if (playing) pause(); });
+attachPreview($('#hear'), $('#hearnote'), () => voice(), async (v, note) => {
+  const tts = await liteEngine(note);
+  if (!LITE_ADDED.has(v.id)) { await tts.addVoice(v.id, v.url); LITE_ADDED.add(v.id); }
+  note.textContent = 'Speaking…';
+  return new Blob([encodeWav(floatToInt16(await tts.synth(PREVIEW_LINE(v.name), { voice: v.id, temperature: 0.3, seed: LITE_SEED })), SAMPLE_RATE)], { type: 'audio/wav' });
+});
+
+// The bookmark and the Shortcut point at wherever this page is served.
+$('#bookmarklet').href = `javascript:(()=>{const t=String(getSelection()).trim()||prompt('Text for Voxa to read:');if(t)open('${location.origin}/listen#t='+encodeURIComponent(t))})()`;
+$('#bookmarklet').onclick = e => { e.preventDefault(); alert('Drag this button to your bookmarks bar, then use it on any page.'); };
+$('#shortcuturl').textContent = `${location.origin}/listen#t=`;
+
+// Text sent from the Share menu, a Shortcut or the bookmark arrives in the address. It is moved
+// out of the address straight away (so it stays out of history) and kept for this tab only.
+(async () => {
+  setupAccount();
+  const incoming = incomingText(location.href);
+  if (incoming.trim()) {
+    history.replaceState(null, '', '/listen');
+    await load(incoming, { autoplay: true });
+    return;
+  }
+  let kept = null;
+  try { kept = sessionStorage.getItem('voxa-reader-text'); } catch (e) {}
+  if (kept) await load(kept, { autoplay: false });
+  else setupVoices();
+})();
+</script>
+</body></html>

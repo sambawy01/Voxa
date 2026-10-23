@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Voxa Privacy</title>
+{{HEAD}}</head>
+<body data-page="legal">
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+</div></header>
+<!-- Have this policy reviewed (GDPR/UK GDPR in particular, including the transfer to DeepSeek in China). -->
+<main class="wrap doc">
+<section class="hero">
+  <span class="eyebrow"><span class="dot"></span>Legal</span>
+  <h1 class="display sm">Privacy <span class="grad-text">policy</span></h1>
+  <p class="lead">Last updated: 23 October 2026. Voxa is run by {{OPERATOR}}, who is responsible for your data here.</p>
+</section>
+<section class="card flat doc-body"><h2>What stays on your device</h2>
+<ul>
+<li><b>Books and documents you open.</b> PDFs, presentations and text files are read in your browser. The file itself is never uploaded.</li>
+<li><b>Audiobooks, podcasts and their audio.</b> Saved in your browser's storage until you delete them or clear your browser data.</li>
+<li><b>On-device voices.</b> Speech made with on-device voices is generated in your browser and never sent to Voxa.</li>
+</ul></section>
+
+<section class="card flat doc-body"><h2>What Voxa's servers receive</h2>
+<ul>
+<li><b>Text you ask a Studio voice to speak</b>, with the language, voice and pacing. It is used to make the audio and is not stored in a database. Finished audio is kept in the server's memory for a while so repeated requests come back quickly, and is lost when the server restarts. Logs record a failed request's language, voice and length, not its text.</li>
+<li><b>Documents you turn into podcasts.</b> The page sends the document's text (not the file), your focus note and the episode settings. Voxa passes them to DeepSeek to write the script and returns it to your browser. Voxa does not store the text or the script; finished scripts expire from memory within an hour. DeepSeek processes the text on servers in the People's Republic of China under its own terms, which may allow it to keep and use what it receives.</li>
+<li><b>Paid accounts' Studio text</b> may be processed the same way on a GPU service run by Modal.</li>
+<li><b>An anonymous id</b> in a cookie (<code>voxa_id</code>, one year) and <b>your IP address</b>, to apply daily allowances. Usage counts are kept per day and deleted the next day.</li>
+<li><b>Your account</b>: your email address, held by Supabase, which runs sign-in. Usage is counted by account.</li>
+<li><b>Payments</b>: Paddle, our reseller and merchant of record, handles payment and billing details; Voxa never sees your card. Voxa stores your Paddle customer and subscription ids and your plan on your account.</li>
+</ul></section>
+
+<section class="card flat doc-body"><h2>Who else receives data</h2>
+<div class="table-scroll"><table>
+<tr><th>Service</th><th>What it receives</th><th>Why</th></tr>
+<tr><td>Fly.io</td><td>everything sent to Voxa's server</td><td>hosting</td></tr>
+<tr><td>Supabase</td><td>your email and sign-in sessions</td><td>accounts</td></tr>
+<tr><td>Paddle</td><td>payment, billing and tax details</td><td>the paid plan</td></tr>
+<tr><td>Modal</td><td>paid accounts' Studio text</td><td>GPU voices</td></tr>
+<tr><td>DeepSeek (China)</td><td>the text of documents you turn into podcasts, and your focus note</td><td>writing podcast scripts</td></tr>
+<tr><td>Hugging Face</td><td>your IP address, when your browser downloads the on-device voice</td><td>on-device voices</td></tr>
+<tr><td>jsDelivr</td><td>your IP address, when the page loads the sign-in library</td><td>sign-in</td></tr>
+</table></div></section>
+
+<section class="card flat doc-body"><h2>Your choices and rights</h2>
+<ul>
+<li>Use on-device voices to keep text off Voxa's servers entirely.</li>
+<li>Don't use the podcast feature for confidential documents, or documents you may not share with a third party.</li>
+<li>Delete saved audiobooks and podcasts on their pages, or clear your browser data.</li>
+<li>To see, correct or delete your account and its data, write to <a href="mailto:{{CONTACT_EMAIL}}">{{CONTACT_EMAIL}}</a>.</li>
+</ul></section>
+<p class="small-print">Questions: <a href="mailto:{{CONTACT_EMAIL}}">{{CONTACT_EMAIL}}</a>. Voxa is run by {{OPERATOR}}.</p>
+</main>
+{{FOOTER}}
+</body></html>

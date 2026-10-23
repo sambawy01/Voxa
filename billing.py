@@ -1,15 +1,21 @@
-"""Voxa payments: Stripe Checkout for the paid plan, Stripe webhooks to mark accounts paid.
+"""Voxa payments: Paddle Billing for the paid plan, Paddle webhooks to mark accounts paid.
 
-Configuration (all on the server; see docs/STRIPE.md):
-    STRIPE_SECRET_KEY        sk_live_... or sk_test_...
-    STRIPE_PRICE_ID          price_... of the paid plan (a recurring price)
-    STRIPE_WEBHOOK_SECRET    whsec_... of the webhook endpoint /api/billing/webhook
+Paddle is the merchant of record: it sells the subscription, charges VAT and sales tax, and
+pays out (for example to Payoneer). Stripe does not onboard sellers in Egypt.
+
+Configuration (all on the server; see docs/PADDLE.md):
+    PADDLE_API_KEY           pdl_live_apikey_... or pdl_sdbx_apikey_... (sandbox)
+    PADDLE_CLIENT_TOKEN      live_... or test_...: public, lets the page open Paddle's checkout
+    PADDLE_PRICE_ID          pri_... of the paid plan (a recurring price)
+    PADDLE_WEBHOOK_SECRET    the endpoint secret of the notification destination
     SUPABASE_SERVICE_ROLE_KEY  lets the webhook set an account's tier
 
 The tier lives in the account's app_metadata ("tier": "paid"), which is in every sign-in
 token and which users cannot edit. Only the webhook writes it, and only after checking
-Stripe's signature. The service-role key is used for nothing else.
+Paddle's signature. Checkout runs in the browser, so the account id it carries is signed
+by this server and checked again when Paddle reports the subscription.
 """
+import datetime
 import hashlib
 import hmac
 import json
@@ -22,16 +28,30 @@ import urllib.request
 
 log = logging.getLogger('voxa.billing')
 
-STRIPE_API = os.environ.get('STRIPE_API_BASE', 'https://api.stripe.com').rstrip('/')
-STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
-STRIPE_PRICE_ID = os.environ.get('STRIPE_PRICE_ID', '')
-STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
+PADDLE_API_KEY = os.environ.get('PADDLE_API_KEY', '')
+PADDLE_CLIENT_TOKEN = os.environ.get('PADDLE_CLIENT_TOKEN', '')
+PADDLE_PRICE_ID = os.environ.get('PADDLE_PRICE_ID', '')
+PADDLE_WEBHOOK_SECRET = os.environ.get('PADDLE_WEBHOOK_SECRET', '')
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get('SUPABASE_SERVICE_ROLE_KEY', '')
 # What the page shows on the upgrade button, e.g. "$5 a month". Optional.
 PRICE_LABEL = os.environ.get('VOXA_PRICE_LABEL', '')
-SIGNATURE_TOLERANCE = 300  # seconds; Stripe's own default
-# Subscription states that keep an account paid. past_due keeps access while Stripe retries.
+# Paddle signs each delivery afresh, and applying an event twice changes nothing, so a few
+# minutes covers clock drift without opening a useful replay window.
+SIGNATURE_TOLERANCE = 300
+# Subscription states that keep an account paid. past_due keeps access while Paddle retries.
 PAID_STATUSES = {'active', 'trialing', 'past_due'}
+SUBSCRIPTION_EVENTS = {'subscription.created', 'subscription.activated', 'subscription.updated',
+                       'subscription.canceled', 'subscription.past_due', 'subscription.paused',
+                       'subscription.resumed', 'subscription.trialing'}
+
+
+def sandbox():
+    return '_sdbx_' in PADDLE_API_KEY
+
+
+def api_base():
+    return os.environ.get('PADDLE_API_BASE') or (
+        'https://sandbox-api.paddle.com' if sandbox() else 'https://api.paddle.com')
 
 
 class BillingError(Exception):
@@ -43,64 +63,75 @@ class BadSignature(Exception):
 
 
 def enabled(supabase_url):
-    return bool(STRIPE_SECRET_KEY and STRIPE_PRICE_ID and STRIPE_WEBHOOK_SECRET
+    return bool(PADDLE_API_KEY and PADDLE_CLIENT_TOKEN and PADDLE_PRICE_ID and PADDLE_WEBHOOK_SECRET
                 and SUPABASE_SERVICE_ROLE_KEY and supabase_url)
 
 
-def _stripe(path, fields):
-    """POST form fields to the Stripe API; returns the JSON object."""
-    data = urllib.parse.urlencode(fields).encode()
-    req = urllib.request.Request(f'{STRIPE_API}{path}', data=data, headers={
-        'Authorization': f'Bearer {STRIPE_SECRET_KEY}',
-        'Content-Type': 'application/x-www-form-urlencoded'})
+def _paddle(method, path, body=None):
+    """Call the Paddle API; returns the JSON object."""
+    req = urllib.request.Request(f'{api_base()}{path}', method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={'Authorization': f'Bearer {PADDLE_API_KEY}',
+                                          'Content-Type': 'application/json'})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
-        detail = e.read()[:500]
-        log.error('Stripe %s failed: %s %s', path, e.code, detail)
+        log.error('Paddle %s %s failed: %s %s', method, path, e.code, e.read()[:500])
+        raise BillingError('The payment service is not available right now. Please try again.')
+    except (urllib.error.URLError, TimeoutError) as e:
+        log.error('Paddle %s %s failed: %s', method, path, e)
         raise BillingError('The payment service is not available right now. Please try again.')
 
 
-def checkout_url(who, return_to):
-    """A Stripe Checkout page for this signed-in account to start the paid plan."""
-    fields = {
-        'mode': 'subscription',
-        'line_items[0][price]': STRIPE_PRICE_ID,
-        'line_items[0][quantity]': '1',
-        'success_url': f'{return_to}?upgraded=1',
-        'cancel_url': return_to,
-        'client_reference_id': who.user,
-        'metadata[user_id]': who.user,
-        'subscription_data[metadata][user_id]': who.user,
-        'allow_promotion_codes': 'true',
-    }
-    if who.customer:
-        fields['customer'] = who.customer  # a returning subscriber keeps one Stripe customer
-    elif who.email:
-        fields['customer_email'] = who.email
-    return _stripe('/v1/checkout/sessions', fields)['url']
+def sign_user(user_id, secret=None):
+    """A tag proving this server put the account id into the checkout."""
+    secret = secret if secret is not None else PADDLE_WEBHOOK_SECRET
+    return hmac.new(secret.encode(), b'voxa-user:' + user_id.encode(), hashlib.sha256).hexdigest()[:32]
 
 
-def portal_url(who, return_to):
-    """Stripe's customer portal, where a subscriber changes card, plan or cancels."""
+def checked_user(custom_data, secret=None):
+    """The account id from a subscription's custom data, if this server signed it."""
+    data = custom_data if isinstance(custom_data, dict) else {}
+    user, tag = data.get('user_id'), data.get('user_sig')
+    if isinstance(user, str) and isinstance(tag, str) and hmac.compare_digest(sign_user(user, secret), tag):
+        return user
+    return None
+
+
+def checkout(who, return_to):
+    """What the checkout page needs to open Paddle's checkout for this signed-in account."""
+    customer = {'id': who.customer} if who.customer else ({'email': who.email} if who.email else {})
+    return {'environment': 'sandbox' if sandbox() else 'production', 'token': PADDLE_CLIENT_TOKEN,
+            'price_id': PADDLE_PRICE_ID, 'customer': customer,
+            'custom_data': {'user_id': who.user, 'user_sig': sign_user(who.user)},
+            'success_url': f'{return_to}?upgraded=1'}
+
+
+def portal_url(who):
+    """Paddle's customer portal, where a subscriber changes card or cancels."""
     if not who.customer:
         raise BillingError('There is no subscription on this account yet.')
-    return _stripe('/v1/billing_portal/sessions', {'customer': who.customer, 'return_url': return_to})['url']
+    body = {'subscription_ids': [who.subscription]} if who.subscription else {}
+    reply = _paddle('POST', f'/customers/{urllib.parse.quote(who.customer)}/portal-sessions', body)
+    try:
+        return reply['data']['urls']['general']['overview']
+    except (KeyError, TypeError):
+        raise BillingError('The payment service is not available right now. Please try again.')
 
 
 def verify(payload, header, secret=None, now=None):
-    """Check a Stripe-Signature header against the raw body. Returns the parsed event."""
-    secret = secret if secret is not None else STRIPE_WEBHOOK_SECRET
+    """Check a Paddle-Signature header (ts=...;h1=...) against the raw body. Returns the event."""
+    secret = secret if secret is not None else PADDLE_WEBHOOK_SECRET
     now = time.time() if now is None else now
-    items = [part.split('=', 1) for part in (header or '').split(',') if '=' in part]
-    timestamps = [v for k, v in items if k == 't']
-    signatures = [v for k, v in items if k == 'v1']
+    items = [part.split('=', 1) for part in (header or '').split(';') if '=' in part]
+    timestamps = [v for k, v in items if k == 'ts']
+    signatures = [v for k, v in items if k == 'h1']
     if not secret or len(timestamps) != 1 or not signatures or not timestamps[0].isdigit():
         raise BadSignature('missing or malformed signature')
     if abs(now - int(timestamps[0])) > SIGNATURE_TOLERANCE:
         raise BadSignature('signature too old')
-    expected = hmac.new(secret.encode(), timestamps[0].encode() + b'.' + payload, hashlib.sha256).hexdigest()
+    expected = hmac.new(secret.encode(), timestamps[0].encode() + b':' + payload, hashlib.sha256).hexdigest()
     if not any(hmac.compare_digest(expected, s) for s in signatures):
         raise BadSignature('signature does not match')
     return json.loads(payload)
@@ -116,34 +147,45 @@ def _supabase(supabase_url, method, path, body=None):
         return json.load(r)
 
 
-def set_tier(supabase_url, user_id, tier, customer=None, subscription=None):
-    """Write the tier (and Stripe ids) into the account's app_metadata, keeping other keys."""
+def _when(stamp):
+    """An RFC 3339 time from Paddle as a datetime, or None."""
+    try:
+        return datetime.datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+    except (AttributeError, ValueError):
+        return None
+
+
+def apply_subscription(supabase_url, user_id, sub, occurred_at):
+    """Set the account's tier from a Paddle subscription, keeping other app_metadata keys.
+
+    Events can arrive out of order, so an event older than the last one applied is skipped.
+    An account returns to free only when the subscription that ended is the one it holds,
+    so cancelling an old subscription never removes a newer one.
+    """
     user = _supabase(supabase_url, 'GET', f'/admin/users/{urllib.parse.quote(user_id)}')
     meta = dict(user.get('app_metadata') or {})
-    meta['tier'] = tier
-    if customer:
-        meta['stripe_customer'] = customer
-    if subscription:
-        meta['stripe_subscription'] = subscription
+    if _when(occurred_at) and _when(meta.get('paddle_event_at')) and _when(occurred_at) < _when(meta['paddle_event_at']):
+        return 'ignored: older than the last change'
+    paid = sub.get('status') in PAID_STATUSES
+    if not paid and meta.get('paddle_subscription') not in (None, sub.get('id')):
+        return 'ignored: not the current subscription'
+    meta['tier'] = 'paid' if paid else 'free'
+    meta['paddle_customer'] = sub.get('customer_id') or meta.get('paddle_customer')
+    meta['paddle_subscription'] = sub.get('id')
+    if occurred_at:
+        meta['paddle_event_at'] = occurred_at
     _supabase(supabase_url, 'PUT', f'/admin/users/{urllib.parse.quote(user_id)}', {'app_metadata': meta})
-    log.info('account %s is now %s', user_id, tier)
+    log.info('account %s is now %s (%s)', user_id, meta['tier'], sub.get('status'))
+    return meta['tier']
 
 
 def handle_event(event, supabase_url):
-    """Apply a verified Stripe event. Returns what it did, for the log and the tests."""
-    kind, obj = event.get('type'), (event.get('data') or {}).get('object') or {}
-    user = (obj.get('metadata') or {}).get('user_id') or obj.get('client_reference_id')
-    if kind == 'checkout.session.completed':
-        if not user or obj.get('mode') != 'subscription':
-            return 'ignored'
-        if obj.get('payment_status') not in ('paid', 'no_payment_required'):
-            return 'ignored: not paid yet'
-        set_tier(supabase_url, user, 'paid', obj.get('customer'), obj.get('subscription'))
-        return 'paid'
-    if kind in ('customer.subscription.updated', 'customer.subscription.deleted'):
-        if not user:
-            return 'ignored'
-        paid = kind == 'customer.subscription.updated' and obj.get('status') in PAID_STATUSES
-        set_tier(supabase_url, user, 'paid' if paid else 'free', obj.get('customer'), obj.get('id'))
-        return 'paid' if paid else 'free'
-    return 'ignored'
+    """Apply a verified Paddle event. Returns what it did, for the log and the tests."""
+    if event.get('event_type') not in SUBSCRIPTION_EVENTS:
+        return 'ignored'
+    sub = event.get('data') or {}
+    user = checked_user(sub.get('custom_data'))
+    if not user:
+        log.warning('Paddle %s for %s has no signed account id', event.get('event_type'), sub.get('id'))
+        return 'ignored: no signed account id'
+    return apply_subscription(supabase_url, user, sub, event.get('occurred_at'))

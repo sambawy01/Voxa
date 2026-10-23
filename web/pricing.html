@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Voxa Pricing</title>
+{{HEAD}}<style>
+.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;align-items:stretch}
+.plan{gap:16px}
+.plan .tier{font:800 13px var(--font-display);letter-spacing:.12em;text-transform:uppercase;color:#aeb5d6}
+.plan .price{font:820 40px/1 var(--font-display);letter-spacing:-.03em}
+.plan .price small{font-size:15px;font-weight:600;color:var(--dim);letter-spacing:0}
+.plan ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.plan li{display:flex;gap:10px;align-items:flex-start;color:var(--ink-2);font-size:14.5px}
+.plan li svg{flex:none;width:18px;height:18px;margin-top:2px;color:var(--mint)}
+.plan .cta{margin-top:auto}
+.plan.best{background:linear-gradient(180deg,rgba(139,92,246,.2),rgba(34,211,238,.06));box-shadow:var(--shadow),0 0 90px -25px rgba(139,92,246,.75)}
+.plan.best::before{padding:1.5px;background:linear-gradient(140deg,#a78bfa,#6366f1 45%,#22d3ee)}
+.badge{position:absolute;top:16px;right:16px;padding:4px 11px;border-radius:99px;background:var(--grad);color:#fff;font-size:11.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;box-shadow:var(--glow)}
+.btn-primary,.btn-ghost{width:100%}
+</style></head>
+<body data-page="pricing">
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+</div></header>
+<main class="wrap">
+<section class="hero center">
+  <span class="eyebrow"><span class="dot"></span>Simple plans</span>
+  <h1 class="display sm">Start free. <span class="grad-text">Go unlimited</span> when you're ready.</h1>
+  <p class="lead">On-device English voices are always free. Studio voices in nine languages come with a daily allowance, or none at all on the paid plan.</p>
+</section>
+
+<section class="plans">
+  <div class="card plan flat">
+    <span class="tier">Free</span>
+    <div class="price">$0 <small>no account</small></div>
+    <ul>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b data-limit="guest">1,000</b> characters a day of Studio voices, in nine languages</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span>On-device English voices with no daily limit</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span>Audiobooks from PDFs and text files</span></li>
+    </ul>
+    <a class="btn-ghost cta" href="/">Start in the Studio</a>
+  </div>
+  <div class="card plan">
+    <span class="tier">Free account</span>
+    <div class="price">$0 <small>signed in</small></div>
+    <ul>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b data-limit="free">4,000</b> characters a day of Studio voices</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b data-pod="free">1</b> AI podcast script a day</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span>Everything in Free</span></li>
+    </ul>
+    <a class="btn-ghost cta" href="/">Sign in on the main page</a>
+  </div>
+  <div class="card plan best">
+    <span class="badge">Unlimited</span>
+    <span class="tier">Paid plan</span>
+    <div class="price"><span class="grad-text">{{PRICE_LABEL}}</span></div>
+    <ul>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b>No daily limit</b> on Studio voices: whole audiobooks in any of the nine languages</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span>Faster Studio voices on dedicated servers</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b data-pod="paid">20</b> AI podcast scripts a day</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span>Cancel any time with <b>Manage plan</b>. 14-day refunds: see the <a href="/refunds">refund policy</a>.</span></li>
+    </ul>
+    <a class="btn-primary cta" href="/">Sign in and choose Upgrade</a>
+  </div>
+</section>
+<p class="small-print" style="text-align:center">Renews automatically. Sales tax or VAT is added at checkout where it applies. Payments are handled by Paddle, our reseller and merchant of record.</p>
+<p class="small-print" style="text-align:center">Questions: <a href="mailto:{{CONTACT_EMAIL}}">{{CONTACT_EMAIL}}</a>. Voxa is run by {{OPERATOR}}.</p>
+</main>
+{{FOOTER}}
+<script>
+// Show the allowances the server actually applies.
+fetch('/api/config').then(r => r.json()).then(c => {
+  for (const el of document.querySelectorAll('[data-limit]')) { const n = (c.limits || {})[el.dataset.limit]; if (n) el.textContent = n.toLocaleString('en'); }
+  for (const el of document.querySelectorAll('[data-pod]')) { const n = c.podcast && c.podcast.daily[el.dataset.pod]; if (n) el.textContent = n; }
+}).catch(() => {});
+</script>
+</body></html>

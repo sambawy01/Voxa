@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Voxa · Words, out loud</title>
+<meta name="description" content="Studio-quality AI text to speech in nine languages, audiobooks from PDFs, and two-host podcasts from your documents.">
+{{HEAD}}<style>
+.hero-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,.75fr);align-items:center;gap:24px}
+.hero-art{position:relative;height:300px;display:grid;place-items:center}
+.orb{position:absolute;width:250px;height:250px;border-radius:50%;
+  background:conic-gradient(from 0deg,#5e17eb,#a78bfa,#22d3ee,#5e17eb);
+  box-shadow:0 0 90px rgba(94,23,235,.65),0 0 180px rgba(34,211,238,.18);animation:spin 16s linear infinite}
+.orb::after{content:"";position:absolute;inset:7px;border-radius:50%;
+  background:radial-gradient(circle at 35% 28%,#1c1840 0%,#090a16 60%)}
+.orb-ring{position:absolute;width:310px;height:310px;border-radius:50%;border:1px solid rgba(167,139,250,.18);animation:breathe 5s ease-in-out infinite}
+.orb-ring.two{width:370px;height:370px;border-color:rgba(34,211,238,.1);animation-delay:-2.5s}
+.hero-art .wave{position:relative;z-index:1;height:96px;gap:5px}
+.hero-art .wave i{width:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes breathe{0%,100%{transform:scale(.96);opacity:.5}50%{transform:scale(1.04);opacity:1}}
+@media(max-width:820px){.hero-grid{grid-template-columns:1fr}.hero-art{height:120px;margin-top:-6px}.orb,.orb-ring{display:none}.hero-art .wave{height:70px}}
+.studio{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:18px;align-items:start}
+@media(max-width:900px){.studio{grid-template-columns:1fr}}
+#text{min-height:270px;font-size:16px}
+.meta{display:flex;justify-content:space-between;gap:10px;color:var(--dim);font-size:12.5px;font-variant-numeric:tabular-nums;margin-top:-4px}
+.field{display:flex;flex-direction:column;gap:8px}
+.val{color:#67e8f9;font-variant-numeric:tabular-nums;letter-spacing:0;text-transform:none;font-size:13px;margin-left:6px}
+.genline{display:flex;align-items:center;gap:12px;min-height:34px}
+.genline .status{flex:1}
+.actions{display:flex;flex-direction:column;gap:10px}
+.actions button.primary{width:100%;font-size:17px;padding:17px 22px}
+.result{display:flex;flex-direction:column;gap:10px}
+.signin{max-width:470px}
+.signin .row{display:flex;gap:8px;flex-wrap:wrap}
+.signin .row button{flex:1 1 160px;justify-content:center;padding:10px 14px}
+.signin p{font-size:13px;color:var(--dim)}
+.account .who{color:var(--ink-2);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:20ch}
+.account .tier{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:99px;color:#a7f3d0;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3)}
+.account .tier:empty{display:none}
+@media(max-width:520px){.account .who{display:none}}
+</style></head>
+<body data-page="studio">
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+  <div class="top-actions account" id="account" hidden>
+    <span class="who" id="who"></span><span class="tier" id="tier"></span>
+    <button class="small accent" id="signin-open">Sign in</button>
+    <button class="small accent" id="upgrade" hidden>Upgrade</button>
+    <button class="small" id="manage" hidden>Manage plan</button>
+    <button class="small" id="signout" hidden>Sign out</button>
+  </div>
+</div></header>
+<main class="wrap">
+<form class="signin card glow" id="signin" hidden>
+  <label for="email">Sign in for 4,000 free characters a day</label>
+  <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+  <div class="row">
+    <button class="small accent" id="signin-email" type="submit">Email me a sign-in link</button>
+    <button class="small" id="signin-google" type="button">Continue with Google</button>
+  </div>
+  <p id="signin-msg" role="status"></p>
+</form>
+
+<section class="hero hero-grid">
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <a class="eyebrow" href="/podcast" style="text-decoration:none"><span class="dot"></span>New · Turn any document into a podcast</a>
+    <h1 class="display">Words, <span class="grad-text">out loud.</span></h1>
+    <p class="lead">Natural AI voices in nine languages. Made on our servers in seconds, or free and private right on your device.</p>
+    <div class="pills">
+      <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg><b class="grad-text">57</b> voices</span>
+      <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg><b class="grad-text">9</b> languages</span>
+      <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/></svg>On-device &amp; offline</span>
+    </div>
+  </div>
+  <div class="hero-art" aria-hidden="true">
+    <span class="orb-ring two"></span><span class="orb-ring"></span><span class="orb"></span>
+    <div class="wave live"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  </div>
+</section>
+
+<section class="studio">
+  <div class="card glow">
+    <div class="card-head"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></span>
+      <div><h2>Your script</h2><p class="sub">Type or paste up to 4,000 characters</p></div></div>
+    <textarea id="text" maxlength="4000" placeholder="Type or paste what you want spoken…" aria-label="Your script"></textarea>
+    <div class="meta"><span id="count">0 / 4000 characters</span><span id="est"></span></div>
+    <p class="hint" id="quota"></p>
+    <div class="field"><span class="label">Try a sample</span>
+    <div class="chips">
+      <button class="chip" data-lang="a">🇺🇸 English</button>
+      <button class="chip" data-lang="f">🇫🇷 Français</button>
+      <button class="chip" data-lang="e">🇪🇸 Español</button>
+      <button class="chip" data-lang="i">🇮🇹 Italiano</button>
+      <button class="chip" data-lang="j">🇯🇵 日本語</button>
+      <button class="chip" data-lang="z">🇨🇳 中文</button>
+      <button class="chip" data-lang="clear">Clear</button>
+    </div></div>
+  </div>
+  <div class="card wave-host">
+    <div class="card-head"><span class="ico cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></span>
+      <div><h2>Voice &amp; sound</h2><p class="sub">Pick a voice, hear it, then generate</p></div></div>
+    <div class="field">
+      <label for="lang">Language</label>
+      <select id="lang"></select>
+      <p class="hint" id="langnote"></p>
+    </div>
+    <div class="field">
+      <label for="voice">Voice</label>
+      <select id="voice"></select>
+      <p class="hint" id="voicenote"></p>
+      <div class="hear"><button class="small" id="hear" type="button">▶ Hear this voice</button><span class="hint" id="hearnote" role="status"></span></div>
+    </div>
+    <div class="field" id="litebox" hidden>
+      <label for="expr">Expressiveness</label>
+      <select id="expr"></select>
+    </div>
+    <div class="field" id="pacebox">
+      <label for="speed">Pacing <span class="val" id="speedv">1.00×</span></label>
+      <input type="range" id="speed" min="0.6" max="1.4" step="0.05" value="1">
+    </div>
+    <div class="actions">
+      <button id="go" class="primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l1.9 5 5 1.9-5 1.9-1.9 5-1.9-5-5-1.9 5-1.9z"/><path d="M19 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>Generate speech</button>
+      <button id="newtake" class="ghost" hidden>New take</button>
+      <button id="cancel" class="ghost" hidden>Cancel</button>
+    </div>
+    <div class="genline">
+      <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <p class="status" id="status" role="status"></p>
+    </div>
+    <div class="bar" id="bar" hidden><i></i></div>
+    <div class="result">
+      <audio id="player" controls hidden></audio>
+      <a id="download" class="download" download="voxa.wav" hidden>⬇ Download audio</a>
+      <a id="playerlink" class="download" hidden>Open in player</a>
+    </div>
+  </div>
+</section>
+
+<div class="section-title"><h2>More from <span class="grad-text">Voxa</span></h2><span class="dim">Long-form audio, made for you</span></div>
+<section class="tiles">
+  <a class="card tile" href="/book">
+    <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 21.5V4.5"/><path d="M9 7h7M9 11h5"/></svg></span>
+    <h3>Audiobooks</h3>
+    <p>Open a PDF or text file. Voxa finds the chapters, cleans up headers and page numbers, and reads the whole book into one MP3 with chapter marks.</p>
+    <span class="go">Make an audiobook <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+  </a>
+  <a class="card tile" href="/podcast">
+    <span class="ico pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="11.5" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3.5M8.5 21.5h7"/></svg></span>
+    <h3>AI podcasts</h3>
+    <p>Share a deck, report or article. Two hosts talk through the ideas behind it, following the focus you set. Edit the script, then listen.</p>
+    <span class="go">Make a podcast <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+  </a>
+  <a class="card tile" href="/listen">
+    <span class="ico mint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg></span>
+    <h3>Read anything aloud</h3>
+    <p>Copy an email or article and listen, even with the screen locked. Add "Read with Voxa" to your iPhone's Share menu and Siri.</p>
+    <span class="go">Open Voxa Reader <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+  </a>
+  <a class="card tile" href="/pricing">
+    <span class="ico cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></span>
+    <h3>Go unlimited</h3>
+    <p>No daily limit on Studio voices, faster generation on dedicated servers, and more podcasts every day.</p>
+    <span class="go">See plans <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+  </a>
+</section>
+
+<section class="card flat">
+  <div class="card-head"><span class="ico mint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>
+    <div><h2>About the voices</h2></div></div>
+  <p class="note">Studio voices run Kokoro-82M (Apache 2.0) on our servers: one set of weights serves all nine languages, and repeated phrases come back instantly. On-device voices run Phonon 31m by Gradium (Apache 2.0) in your browser, so they cost nothing and work offline once loaded. Voice names are Voxa's own. <a href="/credits">Credits</a></p>
+</section>
+</main>
+{{FOOTER}}
+<script>
+const $=s=>document.querySelector(s);
+const MAX=4000;
+let LANG={}, VOICES={}, CAT={}, LITE=null, LITE_BY_ID={}, PHONON_VERSION='';
+const isLite=id=>!!LITE_BY_ID[id];
+const langSel=$('#lang'), voiceSel=$('#voice');
+Promise.all([
+  fetch('/api/languages').then(r=>r.json()),
+  fetch('/api/voices').then(r=>r.json())
+]).then(([l,v])=>{
+  LANG=l.languages||{}; VOICES=v.voices||{}; CAT=v.catalogue||{}; LITE=v.lite; PHONON_VERSION=v.phonon_version||'';
+  // Lite voices need module workers and WebAssembly SIMD; older browsers just don't see them.
+  if(LITE&&typeof WebAssembly==='object'&&'Worker' in window){
+    Object.values(LITE.voices).flat().forEach(x=>LITE_BY_ID[x.id]=x);
+    $('#expr').innerHTML=LITE.expressiveness.map(e=>`<option value="${e.temperature}"${e.default?' selected':''}>${e.name}</option>`).join('');
+  }
+  langSel.innerHTML=Object.entries(LANG).map(([k,lab])=>`<option value="${k}">${lab}</option>`).join('');
+  refreshVoices();
+}).catch(()=>{ langSel.innerHTML='<option value="a">English (US)</option>'; });
+
+function refreshVoices(){
+  const k=langSel.value, list=CAT[k]||(VOICES[k]||[]).map(id=>({id,name:id}));
+  const lite=Object.keys(LITE_BY_ID).length&&LITE.voices[k]||[];
+  const opts=l=>l.map(v=>`<option value="${v.id}">${v.name}${v.signature?' ✦':''}</option>`).join('');
+  voiceSel.innerHTML=!list.length?'<option value="">default</option>':lite.length
+    ? `<optgroup label="Studio voices">${opts(list)}</optgroup><optgroup label="On this device · free, no daily limit">${opts(lite)}</optgroup>`
+    : opts(list);
+  const n=list.length, m=lite.length;
+  $('#langnote').textContent = !n ? '' : m
+    ? `${n} Studio voices and ${m} on-device voices for ${LANG[k]}.`
+    : `${n} voice${n===1?'':'s'} for ${LANG[k]}${n===1?' — the model only ships one for this language':''}.`;
+  describeVoice();
+}
+function describeVoice(){
+  const id=voiceSel.value, v=LITE_BY_ID[id]||(CAT[langSel.value]||[]).find(x=>x.id===id);
+  $('#voicenote').textContent=v?v.description:'';
+  // Phonon has expressiveness and takes but no pacing control; Kokoro the other way round.
+  $('#litebox').hidden=!isLite(id); $('#pacebox').hidden=isLite(id); $('#newtake').hidden=true;
+}
+langSel.addEventListener('change',refreshVoices);
+voiceSel.addEventListener('change',describeVoice);
+// "Hear this voice": the shared preview button (web/preview.js). On-device voices speak the
+// preview line here with the same engine and settings as a real take.
+import('/preview.js').then(P=>{
+  P.attachPreview($('#hear'), $('#hearnote'), ()=>{
+    const id=voiceSel.value, lite=LITE_BY_ID[id], v=lite||(CAT[langSel.value]||[]).find(x=>x.id===id);
+    return v?{...v, lite:!!lite, key:$('#expr').value}:null;
+  }, async(v,note)=>(await generateLite(P.PREVIEW_LINE(v.name), v.id, note)).blob);
+  langSel.addEventListener('change',P.stopPreview); voiceSel.addEventListener('change',P.stopPreview);
+}).catch(()=>{ $('#hear').hidden=true; });
+$('#speed').addEventListener('input',e=>$('#speedv').textContent=(+e.target.value).toFixed(2)+'×');
+function upd(){const t=$('#text').value;const c=$('#count');c.textContent=`${t.length} / ${MAX} characters`;c.className=t.length>MAX?'over':'';$('#est').textContent=t.length?`≈ ${Math.ceil(t.length/14)}s of audio`:'';}
+$('#text').addEventListener('input',upd);upd();
+const SAMPLES={a:'Voxa turns your words into speech. This audio was generated on a server, so it sounds the same on every device.',
+f:'Bonjour. Ceci est Voxa, une voix de synthèse qui fonctionne sur un serveur.',
+e:'Hola. Esto es Voxa, una voz sintética generada en un servidor.',
+i:'Ciao. Questa è Voxa, una voce sintetica generata su un server.',
+j:'こんにちは。これはサーバーで生成された合成音声です。',
+z:'你好。这是在服务器上生成的合成语音。'};
+document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{
+  const k=c.dataset.lang;
+  if(k==='clear'){$('#text').value='';}else{$('#text').value=SAMPLES[k]||'';langSel.value=k;refreshVoices();}
+  upd();
+}));
+
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+// fetch() rejects with a TypeError ("Load failed" in Safari, "Failed to fetch" in Chrome) when
+// the connection drops. Say what that means instead of echoing the browser's wording.
+function friendly(e){
+  if(e.name==='AbortError') return 'Cancelled.';
+  if(e instanceof TypeError) return 'Lost the connection to the server. Check your connection and try again.';
+  return e.message;
+}
+// Accounts (Supabase). The sign-in library loads only when the server says sign-in is on,
+// so guests on a server without accounts load nothing extra.
+const SUPABASE_JS='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js';
+let SB=null, CONFIG={auth:null,limits:{}};
+async function token(){
+  if(!SB) return null;
+  try{ const {data}=await SB.auth.getSession(); return data.session?data.session.access_token:null; }
+  catch(e){ return null; }
+}
+// fetch() with the signed-in account's token. A 401 means the session expired: refresh it
+// once and retry; if that fails, sign out locally so the page falls back to guest.
+async function api(url, opts={}){
+  const send=async t=>fetch(url,{...opts,headers:{...(opts.headers||{}),...(t?{Authorization:'Bearer '+t}:{})}});
+  const t=await token();
+  let r=await send(t);
+  if(r.status===401&&SB){
+    const {data}=await SB.auth.refreshSession().catch(()=>({data:{}}));
+    if(data&&data.session){ r=await send(data.session.access_token); }
+    if(r.status===401){ await SB.auth.signOut({scope:'local'}).catch(()=>{}); r=await send(null); }
+  }
+  return r;
+}
+function loadScript(src){
+  // crossOrigin: the page is cross-origin isolated, so other-origin scripts load with CORS.
+  return new Promise((ok,fail)=>{const el=document.createElement('script');el.crossOrigin='anonymous';el.src=src;el.onload=ok;el.onerror=fail;document.head.appendChild(el);});
+}
+let SIGNED_IN=false;
+// The paid plan: Upgrade for signed-in free accounts, Manage plan for subscribers.
+function showPlan(){
+  const b=CONFIG.billing, tier=QUOTA&&QUOTA.tier;
+  $('#upgrade').hidden=!(b&&SIGNED_IN&&tier==='free');
+  $('#upgrade').textContent=b&&b.price_label?`Upgrade · ${b.price_label}`:'Upgrade';
+  $('#manage').hidden=!(b&&SIGNED_IN&&tier==='paid');
+}
+async function goBilling(path, btn){
+  btn.disabled=true;
+  try{
+    const r=await api(path,{method:'POST'}), j=await r.json().catch(()=>({}));
+    if(!r.ok||!(j.url||j.checkout)) throw new Error(j.error||'The payment page is not available right now.');
+    // Paddle's checkout opens on its own page (it cannot run inside this isolated one).
+    if(j.checkout){ sessionStorage.setItem('voxa-checkout',JSON.stringify(j.checkout)); location.href='/checkout'; }
+    else location.href=j.url;
+  }catch(e){ const st=$('#status'); st.className='status err'; st.textContent='Error: '+e.message; btn.disabled=false; }
+}
+$('#upgrade').addEventListener('click',e=>goBilling('/api/billing/checkout',e.currentTarget));
+$('#manage').addEventListener('click',e=>goBilling('/api/billing/portal',e.currentTarget));
+// Back from Paddle's checkout. The plan arrives by webhook, sometimes a few seconds after the
+// visitor does, and only reaches the sign-in token on refresh, so refresh until it shows.
+async function welcomeBack(){
+  if(!new URLSearchParams(location.search).has('upgraded')||!SB) return;
+  history.replaceState(null,'',location.pathname);
+  const st=$('#status'); st.className='status busy'; st.textContent='Confirming your payment…';
+  for(let i=0;i<8;i++){
+    await SB.auth.refreshSession().catch(()=>{});
+    const q=await loadQuota();
+    if(q&&q.tier==='paid'){ st.className='status'; st.textContent='You are on the paid plan: no daily limit. Thank you!'; return; }
+    await sleep(2500);
+  }
+  st.className='status'; st.textContent='Payment received. Your plan can take a minute to switch on; reload the page shortly.';
+}
+
+function showAccount(session){
+  const signedIn=!!session;
+  SIGNED_IN=signedIn;
+  $('#account').hidden=false;
+  $('#who').textContent=signedIn?(session.user.email||'Signed in'):'';
+  $('#signin-open').hidden=signedIn; $('#signout').hidden=!signedIn;
+  if(signedIn) $('#signin').hidden=true;
+  loadQuota();
+}
+async function initAuth(){
+  try{ CONFIG=await fetch('/api/config',{cache:'no-store'}).then(r=>r.json()); }catch(e){ return; }
+  if(!CONFIG.auth) return;
+  try{ await loadScript(SUPABASE_JS); }
+  catch(e){ console.warn('sign-in library failed to load'); return; }
+  SB=window.supabase.createClient(CONFIG.auth.url, CONFIG.auth.anon_key);
+  SB.auth.onAuthStateChange((_event, session)=>showAccount(session));
+  const {data}=await SB.auth.getSession(); showAccount(data.session);
+  welcomeBack();
+}
+$('#signin-open').addEventListener('click',()=>{const f=$('#signin');f.hidden=!f.hidden;if(!f.hidden)$('#email').focus();});
+$('#signout').addEventListener('click',async()=>{ if(SB) await SB.auth.signOut(); });
+$('#signin').addEventListener('submit',async ev=>{
+  ev.preventDefault();
+  const email=$('#email').value.trim(), msg=$('#signin-msg');
+  if(!SB||!email) return;
+  msg.textContent='Sending…';
+  const {error}=await SB.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname}});
+  msg.textContent=error?('Could not send the link: '+error.message):`Check ${email} for a sign-in link. Open it on this device.`;
+});
+$('#signin-google').addEventListener('click',async()=>{
+  if(!SB) return;
+  const {error}=await SB.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}});
+  if(error) $('#signin-msg').textContent='Google sign-in is not available: '+error.message;
+});
+
+async function getJSON(url, opts){
+  const r=await api(url, opts);
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){const err=new Error(j.error||('Server error ('+r.status+')'));err.status=r.status;throw err;}
+  return j;
+}
+// Poll the job. A phone that sleeps or switches networks drops a request or two, so retry
+// transient network errors rather than failing a generation the server is still running.
+async function waitFor(job, signal, onTick){
+  let misses=0;
+  while(job.status==='queued'||job.status==='running'){
+    onTick(job);
+    await sleep(700);
+    if(signal.aborted) throw new DOMException('aborted','AbortError');
+    try{ job=await getJSON('/api/jobs/'+job.id,{signal,cache:'no-store'}); misses=0; }
+    catch(e){
+      if(e.name==='AbortError') throw e;
+      if(e.status===404) throw new Error('The server restarted and lost this request. Please generate again.');
+      if(e.status || ++misses>8) throw e;
+      await sleep(1000*misses);
+    }
+  }
+  if(job.status==='error') throw new Error(job.error||'Generation failed.');
+  return job;
+}
+
+// Free tier: a daily character allowance, kept on the server. null means no limit.
+let QUOTA=null;
+function showQuota(q){
+  if(q!==undefined) QUOTA=q;
+  const el=$('#quota');
+  $('#tier').textContent=QUOTA&&QUOTA.tier==='paid'?'Paid':'';
+  showPlan();
+  if(!QUOTA){el.textContent='';return;}
+  if(QUOTA.unlimited){el.className='hint';el.textContent='No daily limit on your plan.';return;}
+  const left=QUOTA.remaining.toLocaleString(), lim=QUOTA.limit.toLocaleString();
+  const free=(CONFIG.limits.free||0).toLocaleString();
+  const upsell=QUOTA.tier==='guest'&&SB?` Sign in for ${free} a day.`
+    :QUOTA.tier==='free'&&CONFIG.billing&&SIGNED_IN?' Upgrade for no daily limit.':'';
+  el.className=QUOTA.remaining?'hint':'hint over';
+  el.textContent=QUOTA.remaining
+    ? `${left} of ${lim} free characters left today.${upsell||' Replaying something you already made is free.'}`
+    : `You've used today's ${lim} free characters. They reset at midnight UTC.${upsell}`;
+}
+// Requests can overlap (sign-in, a token refresh, a finished job); only the newest one's
+// answer may be shown, or an older token's allowance could overwrite the current one.
+let QUOTA_SEQ=0;
+function loadQuota(){
+  const n=++QUOTA_SEQ;
+  return api('/api/quota',{cache:'no-store'}).then(r=>r.json())
+    .then(j=>{ if(n===QUOTA_SEQ) showQuota(j.quota); return j.quota; }).catch(()=>null);
+}
+loadQuota();
+initAuth();
+
+let ctrl=null;
+$('#cancel').addEventListener('click',()=>{if(ctrl)ctrl.abort();});
+// Show finished audio: player, download, and the share sheet on iOS. Downloads come from the
+// blob the browser ALREADY has. iOS Safari ignores the HTML `download` attribute on blob URLs,
+// so use the Web Share API there: that is what surfaces "Save to Files".
+function showAudio(blob, fileUrl){
+  const url=URL.createObjectURL(blob);
+  const p=$('#player'); p.src=url; p.hidden=false; p.play().catch(()=>{});
+  const a=$('#download');
+  a.href=url; a.download='voxa.wav'; a.hidden=false; a.onclick=null;
+  const pl=$('#playerlink');
+  if(fileUrl){ pl.href=fileUrl; pl.download='voxa.wav'; pl.hidden=false; } else { pl.hidden=true; }
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (isIOS && navigator.canShare) {
+    a.textContent = '⬇ Save or share audio';
+    a.onclick = async (ev) => {
+      try {
+        const file = new File([blob], 'voxa.wav', { type: 'audio/wav' });
+        if (navigator.canShare({ files: [file] })) {
+          ev.preventDefault();
+          await navigator.share({ files: [file], title: 'Voxa audio' });
+        }
+      } catch (e) { /* user cancelled — fall through to the plain link */ }
+    };
+  }
+}
+
+// Voxa Lite: Phonon generates on this device, so it is free and unlimited and never touches
+// the server. The package (~4 MB) and the model (~65 MB) load on first use, then come from
+// the browser's cache.
+let LITE_TTS=null, LITE_LOADING=null, LITE_SEED=4242424242424242;
+const LITE_VOICES_LOADED=new Set(), LITE_CACHE=new Map();
+async function liteEngine(st){
+  if(LITE_TTS) return LITE_TTS;
+  if(!LITE_LOADING){
+    LITE_LOADING=(async()=>{
+      const {PhononTTS}=await import(`/static/phonon-${PHONON_VERSION}/index.js`);
+      const seen={};
+      return PhononTTS.load({lang:'en', model:LITE.model, onProgress:({file,loaded,cached})=>{
+        seen[file]=loaded||0;
+        const mb=Object.values(seen).reduce((a,b)=>a+b,0)/1e6;
+        st.textContent=cached?'Loading the on-device voice…':`Downloading the on-device voice (once)… ${mb.toFixed(0)} MB of about 65`;
+      }});
+    })().catch(e=>{LITE_LOADING=null;throw e;});
+  }
+  LITE_TTS=await LITE_LOADING;
+  return LITE_TTS;
+}
+async function generateLite(text, voiceId, st, signal){
+  const v=LITE_BY_ID[voiceId], temperature=+$('#expr').value;
+  const key=[text,voiceId,temperature,LITE_SEED].join('|');
+  if(LITE_CACHE.has(key)) return {blob:LITE_CACHE.get(key), cached:true};
+  st.textContent='Starting the on-device voice…';
+  let tts;
+  try{ tts=await liteEngine(st); }
+  catch(e){ throw new Error("This device can't run on-device voices ("+e.message+'). Choose a Studio voice instead.'); }
+  if(!LITE_VOICES_LOADED.has(voiceId)){ await tts.addVoice(voiceId, v.url); LITE_VOICES_LOADED.add(voiceId); }
+  st.textContent='Generating on this device…';
+  const blob=await tts.synthWav(text,{voice:voiceId, temperature, seed:LITE_SEED, signal});
+  if(LITE_CACHE.size>20) LITE_CACHE.delete(LITE_CACHE.keys().next().value);
+  LITE_CACHE.set(key, blob);
+  return {blob, cached:false};
+}
+
+async function generate(newTake){
+  const text=$('#text').value.trim(); const st=$('#status');
+  if(!text){st.className='status';st.textContent='Type something first.';return;}
+  if(text.length>MAX){st.className='status err';st.textContent=`That script is ${text.length} characters; the limit is ${MAX}.`;return;}
+  const btn=$('#go'), bar=$('#bar'), fill=$('#bar i'), lite=isLite(voiceSel.value);
+  // A new take reads the same line differently: Phonon's output depends on its seed.
+  if(newTake) LITE_SEED=Math.floor(Math.random()*2**48);
+  btn.disabled=true; $('#newtake').disabled=true; $('#cancel').hidden=false; $('#player').hidden=true; $('#download').hidden=true; $('#playerlink').hidden=true;
+  ctrl=new AbortController();
+  const t0=performance.now();
+  st.className='status busy'; st.textContent='Sending…'; bar.hidden=lite; fill.style.width='0';
+  try{
+    if(lite){
+      const {blob,cached}=await generateLite(text, voiceSel.value, st, ctrl.signal);
+      showAudio(blob, null);
+      st.className='status';
+      st.textContent=`Made on this device in ${((performance.now()-t0)/1000).toFixed(1)}s${cached?' · from cache':''} · free, no daily limit`;
+      $('#newtake').hidden=false;
+      return;
+    }
+    let job=await getJSON('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
+      signal:ctrl.signal,
+      body:JSON.stringify({text,lang:langSel.value,voice:voiceSel.value||null,speed:+$('#speed').value})})
+      .catch(e=>{ if(e.status===429) loadQuota(); throw e; });
+    if(job.quota!==undefined) showQuota(job.quota);
+    job=await waitFor(job, ctrl.signal, j=>{
+      if(j.status==='queued'){st.textContent=j.ahead?`Waiting — ${j.ahead} request${j.ahead===1?'':'s'} ahead of yours…`:'Starting…';}
+      else{const pct=Math.round(j.progress*100);st.textContent=`Generating… ${pct}%`;fill.style.width=Math.max(pct,3)+'%';}
+    });
+    fill.style.width='100%'; st.textContent='Downloading audio…';
+    const r=await fetch(job.audio_url,{signal:ctrl.signal});
+    if(!r.ok) throw new Error(r.status===404?'The server restarted and lost this audio. Please generate again.':'Server error ('+r.status+')');
+    showAudio(await r.blob(), job.audio_url);
+    st.className='status';
+    st.textContent=`Done in ${((performance.now()-t0)/1000).toFixed(1)}s`+(job.cache==='hit'?' · from cache':'');
+  }catch(e){
+    if(!lite) loadQuota();  // a failed generation is refunded
+    st.className=e.name==='AbortError'?'status':'status err'; st.textContent=(e.name==='AbortError'?'':'Error: ')+friendly(e);
+  }finally{btn.disabled=false;$('#newtake').disabled=false;$('#cancel').hidden=true;bar.hidden=true;ctrl=null;}
+}
+$('#go').addEventListener('click',()=>generate(false));
+$('#newtake').addEventListener('click',()=>generate(true));
+</script></body></html>

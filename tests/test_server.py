@@ -749,3 +749,51 @@ class CreditsTest(ServerTestCase):
         for kokoro in ('jf_gongitsune', 'jf_tebukuro', 'jf_nezumi', 'jm_kumo', 'ff_siwis'):
             name = server.VOICE_BY_ID[server.KOKORO_ALIASES[kokoro]]['name']
             self.assertIn(name.encode(), body, kokoro)
+
+
+class DesignTest(ServerTestCase):
+    """Every page shares one stylesheet, top bar and footer, with every placeholder filled."""
+
+    def test_pages_share_the_design_system(self):
+        version = server.web_values()['CSS_VERSION'].encode()
+        code, headers, css = self.req('/voxa.css')
+        self.assertEqual(code, 200)
+        self.assertTrue(headers['Content-Type'].startswith('text/css'))
+        self.assertIn(b'.topbar', css)
+        for path, name in server.WEB_PAGES.items():
+            if not name.endswith('.html'):
+                continue
+            with self.subTest(path=path):
+                code, _, page = self.req(path)
+                self.assertEqual(code, 200)
+                self.assertNotIn(b'{{', page)
+                self.assertIn(b'/voxa.css?v=' + version, page)
+                self.assertIn(b'class="topbar"', page)
+                self.assertIn(b'class="tabs"', page)
+                self.assertIn(b'class="footer"', page)
+        # The current page's tab is the highlighted one.
+        _, _, book = self.req('/book')
+        self.assertIn(b'<body data-page="book">', book)
+
+
+class ReaderTest(ServerTestCase):
+    """Voxa Reader: the page, its install manifest (with the Android share target) and icons."""
+
+    def test_page_manifest_and_icons(self):
+        code, headers, page = self.req('/listen')
+        self.assertEqual(code, 200)
+        self.assertEqual(headers['Cross-Origin-Embedder-Policy'], 'require-corp')  # on-device voices
+        for needle in (b'rel="manifest"', b'apple-touch-icon', b'id="paste"', b'Read with Voxa',
+                       f'/listen.js?v={server.web_values()["LISTEN_VERSION"]}'.encode()):
+            self.assertIn(needle, page)
+        code, headers, body = self.req('/manifest.webmanifest')
+        self.assertEqual((code, headers['Content-Type']), (200, 'application/manifest+json'))
+        manifest = json.loads(body)
+        self.assertEqual(manifest['share_target']['action'], '/listen')
+        self.assertEqual(manifest['share_target']['params']['text'], 'text')
+        for icon in [i['src'] for i in manifest['icons']] + ['/apple-touch-icon.png']:
+            code, headers, png = self.req(icon)
+            self.assertEqual((code, headers['Content-Type']), (200, 'image/png'), icon)
+            self.assertTrue(png.startswith(b'\x89PNG'), icon)
+        _, _, home = self.req('/')
+        self.assertIn(b'href="/listen"', home)

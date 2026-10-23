@@ -1,13 +1,13 @@
 {
   "name": "Voxa Reader",
   "short_name": "Voxa",
-  "description": "Read any text aloud with natural AI voices.",
+  "description": "Words, out loud. Read any text aloud with natural AI voices.",
   "id": "/listen",
   "start_url": "/listen?source=app",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#05060b",
-  "theme_color": "#05060b",
+  "background_color": "#030207",
+  "theme_color": "#5e17eb",
   "icons": [
     {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
     {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}

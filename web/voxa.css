@@ -4,7 +4,7 @@
 
 :root {
   color-scheme: dark;
-  --bg: #05060b;
+  --bg: #030207;
   --surface: rgba(255, 255, 255, .035);
   --surface-2: rgba(255, 255, 255, .06);
   --surface-3: rgba(255, 255, 255, .1);
@@ -14,22 +14,22 @@
   --ink: #f2f4ff;
   --ink-2: #c8cde6;
   --dim: #8f97b5;
-  --violet: #8b5cf6;
-  --indigo: #6366f1;
+  --violet: #5e17eb;
+  --indigo: #7c3aed;
   --cyan: #22d3ee;
   --pink: #f472b6;
   --mint: #34d399;
   --amber: #fbbf24;
   --bad: #fb7185;
   --accent: #a78bfa;
-  --grad: linear-gradient(115deg, #8b5cf6 0%, #6366f1 42%, #06b6d4 100%);
-  --grad-soft: linear-gradient(135deg, rgba(139, 92, 246, .22), rgba(34, 211, 238, .12));
-  --grad-text: linear-gradient(95deg, #e9e3ff 0%, #b69cff 28%, #67e8f9 62%, #f5b4f7 100%);
-  --grad-edge: linear-gradient(140deg, rgba(167, 139, 250, .55), rgba(255, 255, 255, .05) 38%, rgba(255, 255, 255, .03) 62%, rgba(34, 211, 238, .4));
+  --grad: linear-gradient(115deg, #5e17eb 0%, #7c3aed 55%, #22d3ee 100%);
+  --grad-soft: linear-gradient(135deg, rgba(94, 23, 235, .28), rgba(34, 211, 238, .1));
+  --grad-text: linear-gradient(95deg, #ece6ff 0%, #b69cff 30%, #8b5cf6 55%, #67e8f9 100%);
+  --grad-edge: linear-gradient(140deg, rgba(139, 92, 246, .6), rgba(255, 255, 255, .05) 38%, rgba(255, 255, 255, .03) 62%, rgba(34, 211, 238, .35));
   --radius: 22px;
   --radius-sm: 14px;
   --shadow: 0 24px 70px -28px rgba(0, 0, 0, .9);
-  --glow: 0 10px 34px -8px rgba(99, 102, 241, .65), 0 0 0 1px rgba(196, 181, 253, .25) inset;
+  --glow: 0 10px 34px -8px rgba(94, 23, 235, .75), 0 0 0 1px rgba(196, 181, 253, .25) inset;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
   --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -45,16 +45,16 @@ body {
   background: var(--bg); color: var(--ink);
   font: 15.5px/1.6 var(--font); -webkit-font-smoothing: antialiased;
 }
-::selection { background: rgba(139, 92, 246, .45); color: #fff }
+::selection { background: rgba(94, 23, 235, .55); color: #fff }
 
 /* Aurora: slow drifting light behind everything, plus a faint grid that fades out. */
 body::before {
   content: ""; position: fixed; inset: -25%; z-index: -2; pointer-events: none;
   background:
-    radial-gradient(38% 32% at 18% 12%, rgba(124, 58, 237, .42), transparent 70%),
-    radial-gradient(34% 30% at 85% 8%, rgba(6, 182, 212, .30), transparent 70%),
-    radial-gradient(30% 28% at 70% 60%, rgba(236, 72, 153, .16), transparent 70%),
-    radial-gradient(40% 34% at 10% 85%, rgba(79, 70, 229, .22), transparent 70%);
+    radial-gradient(38% 32% at 18% 12%, rgba(94, 23, 235, .5), transparent 70%),
+    radial-gradient(34% 30% at 85% 8%, rgba(6, 182, 212, .22), transparent 70%),
+    radial-gradient(30% 28% at 70% 60%, rgba(120, 20, 30, .28), transparent 70%),
+    radial-gradient(40% 34% at 10% 85%, rgba(94, 23, 235, .24), transparent 70%);
   animation: aurora 28s ease-in-out infinite alternate;
 }
 body::after {
@@ -113,7 +113,9 @@ code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); 
   display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink);
   font: 800 21px/1 var(--font-display); letter-spacing: -.03em;
 }
-.logo svg { width: 34px; height: 34px; flex: none; filter: drop-shadow(0 6px 16px rgba(99, 102, 241, .55)) }
+.logo svg { width: 36px; height: 36px; flex: none; filter: drop-shadow(0 6px 18px rgba(94, 23, 235, .7)) }
+.wordmark { font: 900 21px/1 var(--font-display); letter-spacing: .04em; color: #fff }
+.slogan { font: 500 11px/1 var(--font); letter-spacing: .28em; text-transform: uppercase; color: var(--dim); margin-left: 4px }
 .logo:hover { color: var(--ink) }
 .tabs {
   display: flex; gap: 4px; padding: 4px; margin: 0 auto;
@@ -369,8 +371,9 @@ td { border-top: 1px solid var(--line); padding: 10px 8px; vertical-align: top; 
   max-width: var(--max); margin: 30px auto 0; padding: 26px var(--gutter) calc(30px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center; justify-content: space-between;
 }
-.footer .logo { font-size: 17px }
-.footer .logo svg { width: 26px; height: 26px }
+.footer .logo { gap: 9px; flex-wrap: wrap }
+.footer .logo svg { width: 28px; height: 28px }
+.footer .wordmark { font-size: 17px }
 .footer nav { display: flex; flex-wrap: wrap; gap: 8px 18px }
 .footer nav a { color: var(--dim); text-decoration: none; font-size: 14px; font-weight: 600 }
 .footer nav a:hover { color: var(--ink) }

@@ -117,17 +117,24 @@ ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
 # Served without cross-origin isolation: Paddle's checkout runs in a frame from Paddle's own
 # site, which an isolated page would refuse to embed.
 PLAIN_PAGES = {'/checkout'}
-WEB_PAGES = {'/checkout': 'checkout.html', '/pricing': 'pricing.html', '/terms': 'terms.html',
+WEB_PAGES = {'/': 'index.html', '/voxa.css': 'voxa.css', '/checkout': 'checkout.html', '/pricing': 'pricing.html', '/terms': 'terms.html',
              '/privacy': 'privacy.html', '/refunds': 'refunds.html', '/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
              '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html',
              '/podcast': 'podcast.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js'}
 
 
 def web_values():
+    """{{NAME}} placeholders for web/ pages. The shared head, top bar and footer come first, so
+    placeholders inside them are filled too."""
     def version(name):
         with open(os.path.join(WEB_DIR, name), 'rb') as f:
             return hashlib.sha256(f.read()).hexdigest()[:12]
-    return {'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,
+
+    def partial(name):
+        with open(os.path.join(WEB_DIR, 'partials', name), encoding='utf-8') as f:
+            return f.read()
+    return {'HEAD': partial('head.html'), 'NAV': partial('nav.html'), 'FOOTER': partial('footer.html'),
+            'CSS_VERSION': version('voxa.css'), 'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,
             'LAMEJS_VERSION': LAMEJS_VERSION, 'BOOK_VERSION': version('book.js'),
             'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js'),
             'OPERATOR': html.escape(OPERATOR), 'CONTACT_EMAIL': html.escape(CONTACT_EMAIL),
@@ -866,476 +873,6 @@ def job_json(job):
     return out
 
 
-PAGE = r"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Voxa — text to speech</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='none' stroke='%237aa2ff' stroke-width='2'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%237aa2ff'/%3E%3C/svg%3E">
-<style>
-:root{--bg:#0f1115;--panel:#171b22;--panel2:#1e2430;--line:#2b3341;--ink:#e9edf4;--dim:#9aa5b5;--accent:#7aa2ff;--good:#6fe3b4;--bad:#ff8a8a}
-*{box-sizing:border-box}
-body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#1b2333 0%,var(--bg) 60%);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
-.wrap{max-width:1020px;margin:0 auto;padding:30px 18px 70px}
-.brand{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.account{margin-left:auto;display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:8px 10px;font-size:13px;color:var(--dim);min-width:0}
-.account button.small{white-space:nowrap}
-.account[hidden],.signin[hidden]{display:none}
-.account .who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:22ch}
-.account .tier{color:var(--good);font-weight:600}
-button.small{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:6px 13px;font:inherit;font-size:13px;cursor:pointer}
-button.small:hover{border-color:var(--accent)}
-.signin{margin:14px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px;max-width:420px}
-.signin input{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 11px;font:inherit}
-.signin .row{display:flex;gap:8px;flex-wrap:wrap}
-.signin .row button{flex:1 1 140px}
-.signin p{margin:0;font-size:13px;color:var(--dim)}
-button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.mark{color:var(--accent);font-size:20px}
-h1{font-size:26px;margin:0;letter-spacing:.4px;font-weight:680}
-.tagline{color:var(--dim);font-size:14px;margin:8px 0 24px;max-width:62ch}
-.grid{display:grid;grid-template-columns:1fr 340px;gap:16px}
-@media(max-width:860px){.grid{grid-template-columns:1fr}}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
-label{display:block;font-size:11.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);margin:16px 0 7px}
-label:first-child{margin-top:0}
-#litebox label,#pacebox label{margin-top:16px}
-textarea{width:100%;min-height:210px;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:13px;font:inherit;resize:vertical}
-select{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 11px;font:inherit}
-input[type=range]{width:100%;accent-color:var(--accent)}
-.meta{display:flex;justify-content:space-between;color:var(--dim);font-size:12px;margin-top:7px;font-variant-numeric:tabular-nums}
-.meta .over,.hint.over{color:var(--bad)}
-.hint{color:var(--dim);font-size:12px;margin:6px 0 0;min-height:18px}
-.hear{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:2px 0 10px}
-.hear .hint{margin:0;min-height:0}
-.hear button[hidden]{display:none}
-.val{color:var(--good);font-variant-numeric:tabular-nums;font-size:13px}
-button.primary{width:100%;margin-top:18px;background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:680;cursor:pointer}
-button.primary:disabled{opacity:.45;cursor:default}
-button.ghost{width:100%;margin-top:8px;background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;cursor:pointer}
-button[hidden]{display:none}
-.status{font-size:13px;color:var(--dim);margin:10px 0 0;min-height:18px}
-.status.busy{color:var(--accent)}
-.status.err{color:var(--bad)}
-.bar{height:4px;background:var(--panel2);border-radius:4px;margin-top:10px;overflow:hidden}
-.bar[hidden]{display:none}
-.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
-audio{width:100%;margin-top:12px}
-audio[hidden]{display:none}
-.download{display:block;margin-top:12px;text-align:center;background:var(--panel2);color:var(--ink);font-size:14px;font-weight:600;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:11px 16px;cursor:pointer}
-.download:hover{border-color:var(--accent)}
-.download[hidden]{display:none}
-.note{margin-top:16px;color:var(--dim);font-size:13px;line-height:1.65}
-.note strong{color:var(--ink)}
-.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
-.chip{background:var(--panel2);border:1px solid var(--line);color:var(--dim);border-radius:999px;padding:6px 11px;font-size:12px;cursor:pointer;font-family:inherit}
-.chip:hover{border-color:var(--accent);color:var(--ink)}
-</style></head>
-<body><div class="wrap">
-<div class="brand"><span class="mark">◉</span><h1>Voxa</h1>
-  <div class="account" id="account" hidden>
-    <span class="who" id="who"></span><span class="tier" id="tier"></span>
-    <button class="small" id="signin-open">Sign in</button>
-    <button class="small" id="upgrade" hidden>Upgrade</button>
-    <button class="small" id="manage" hidden>Manage plan</button>
-    <button class="small" id="signout" hidden>Sign out</button>
-  </div>
-</div>
-<form class="signin" id="signin" hidden>
-  <label for="email">Sign in for 4,000 free characters a day</label>
-  <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
-  <div class="row">
-    <button class="small" id="signin-email" type="submit">Email me a sign-in link</button>
-    <button class="small" id="signin-google" type="button">Continue with Google</button>
-  </div>
-  <p id="signin-msg" role="status"></p>
-</form>
-<p class="tagline">Text to speech. Nine languages, real voices. Generated on a server, so it sounds the same on every device.
-<a href="/book" style="color:var(--accent)">Turn a PDF into an audiobook →</a>
-<a href="/podcast" style="color:var(--accent)">Turn a document into a podcast →</a></p>
-<div class="grid">
-  <section class="card">
-    <label for="text">Your script</label>
-    <textarea id="text" maxlength="4000" placeholder="Type or paste what you want spoken…"></textarea>
-    <div class="meta"><span id="count">0 / 4000 characters</span><span id="est"></span></div>
-    <p class="hint" id="quota"></p>
-    <div class="chips">
-      <button class="chip" data-lang="a">English</button>
-      <button class="chip" data-lang="f">Français</button>
-      <button class="chip" data-lang="e">Español</button>
-      <button class="chip" data-lang="i">Italiano</button>
-      <button class="chip" data-lang="j">日本語</button>
-      <button class="chip" data-lang="z">中文</button>
-      <button class="chip" data-lang="clear">Clear</button>
-    </div>
-  </section>
-  <section class="card">
-    <label for="lang">Language</label>
-    <select id="lang"></select>
-    <p class="hint" id="langnote"></p>
-    <label for="voice">Voice</label>
-    <select id="voice"></select>
-    <p class="hint" id="voicenote"></p>
-    <div class="hear"><button class="small" id="hear" type="button">▶ Hear this voice</button><span class="hint" id="hearnote" role="status"></span></div>
-    <div id="litebox" hidden>
-      <label for="expr">Expressiveness</label>
-      <select id="expr"></select>
-    </div>
-    <div id="pacebox">
-      <label for="speed">Pacing <span class="val" id="speedv">1.00×</span></label>
-      <input type="range" id="speed" min="0.6" max="1.4" step="0.05" value="1">
-    </div>
-    <button id="go" class="primary">Generate speech</button>
-    <button id="newtake" class="ghost" hidden>New take</button>
-    <button id="cancel" class="ghost" hidden>Cancel</button>
-    <div class="bar" id="bar" hidden><i></i></div>
-    <p class="status" id="status" role="status"></p>
-    <audio id="player" controls hidden></audio>
-    <a id="download" class="download" download="voxa.wav" hidden>⬇ Download audio</a>
-    <a id="playerlink" class="download" hidden>Open in player</a>
-  </section>
-</div>
-<div class="card note"><strong>About the voices.</strong> Studio voices run Kokoro-82M (Apache 2.0) on our
-server: one set of weights serves all nine languages, and repeated phrases are cached and come
-back instantly. On-device voices run Phonon 31m by Gradium (Apache 2.0) in your browser, so
-they cost nothing and work offline once loaded. Voice names are Voxa's own. <a href="/credits" style="color:var(--accent)">Credits</a>
-· <a href="/pricing" style="color:var(--accent)">Pricing</a> · <a href="/terms" style="color:var(--accent)">Terms</a>
-· <a href="/privacy" style="color:var(--accent)">Privacy</a> · <a href="/refunds" style="color:var(--accent)">Refunds</a></div>
-</div>
-<script>
-const $=s=>document.querySelector(s);
-const MAX=4000;
-let LANG={}, VOICES={}, CAT={}, LITE=null, LITE_BY_ID={}, PHONON_VERSION='';
-const isLite=id=>!!LITE_BY_ID[id];
-const langSel=$('#lang'), voiceSel=$('#voice');
-Promise.all([
-  fetch('/api/languages').then(r=>r.json()),
-  fetch('/api/voices').then(r=>r.json())
-]).then(([l,v])=>{
-  LANG=l.languages||{}; VOICES=v.voices||{}; CAT=v.catalogue||{}; LITE=v.lite; PHONON_VERSION=v.phonon_version||'';
-  // Lite voices need module workers and WebAssembly SIMD; older browsers just don't see them.
-  if(LITE&&typeof WebAssembly==='object'&&'Worker' in window){
-    Object.values(LITE.voices).flat().forEach(x=>LITE_BY_ID[x.id]=x);
-    $('#expr').innerHTML=LITE.expressiveness.map(e=>`<option value="${e.temperature}"${e.default?' selected':''}>${e.name}</option>`).join('');
-  }
-  langSel.innerHTML=Object.entries(LANG).map(([k,lab])=>`<option value="${k}">${lab}</option>`).join('');
-  refreshVoices();
-}).catch(()=>{ langSel.innerHTML='<option value="a">English (US)</option>'; });
-
-function refreshVoices(){
-  const k=langSel.value, list=CAT[k]||(VOICES[k]||[]).map(id=>({id,name:id}));
-  const lite=Object.keys(LITE_BY_ID).length&&LITE.voices[k]||[];
-  const opts=l=>l.map(v=>`<option value="${v.id}">${v.name}${v.signature?' ✦':''}</option>`).join('');
-  voiceSel.innerHTML=!list.length?'<option value="">default</option>':lite.length
-    ? `<optgroup label="Studio voices">${opts(list)}</optgroup><optgroup label="On this device · free, no daily limit">${opts(lite)}</optgroup>`
-    : opts(list);
-  const n=list.length, m=lite.length;
-  $('#langnote').textContent = !n ? '' : m
-    ? `${n} Studio voices and ${m} on-device voices for ${LANG[k]}.`
-    : `${n} voice${n===1?'':'s'} for ${LANG[k]}${n===1?' — the model only ships one for this language':''}.`;
-  describeVoice();
-}
-function describeVoice(){
-  const id=voiceSel.value, v=LITE_BY_ID[id]||(CAT[langSel.value]||[]).find(x=>x.id===id);
-  $('#voicenote').textContent=v?v.description:'';
-  // Phonon has expressiveness and takes but no pacing control; Kokoro the other way round.
-  $('#litebox').hidden=!isLite(id); $('#pacebox').hidden=isLite(id); $('#newtake').hidden=true;
-}
-langSel.addEventListener('change',refreshVoices);
-voiceSel.addEventListener('change',describeVoice);
-// "Hear this voice": the shared preview button (web/preview.js). On-device voices speak the
-// preview line here with the same engine and settings as a real take.
-import('/preview.js').then(P=>{
-  P.attachPreview($('#hear'), $('#hearnote'), ()=>{
-    const id=voiceSel.value, lite=LITE_BY_ID[id], v=lite||(CAT[langSel.value]||[]).find(x=>x.id===id);
-    return v?{...v, lite:!!lite, key:$('#expr').value}:null;
-  }, async(v,note)=>(await generateLite(P.PREVIEW_LINE(v.name), v.id, note)).blob);
-  langSel.addEventListener('change',P.stopPreview); voiceSel.addEventListener('change',P.stopPreview);
-}).catch(()=>{ $('#hear').hidden=true; });
-$('#speed').addEventListener('input',e=>$('#speedv').textContent=(+e.target.value).toFixed(2)+'×');
-function upd(){const t=$('#text').value;const c=$('#count');c.textContent=`${t.length} / ${MAX} characters`;c.className=t.length>MAX?'over':'';$('#est').textContent=t.length?`≈ ${Math.ceil(t.length/14)}s of audio`:'';}
-$('#text').addEventListener('input',upd);upd();
-const SAMPLES={a:'Voxa turns your words into speech. This audio was generated on a server, so it sounds the same on every device.',
-f:'Bonjour. Ceci est Voxa, une voix de synthèse qui fonctionne sur un serveur.',
-e:'Hola. Esto es Voxa, una voz sintética generada en un servidor.',
-i:'Ciao. Questa è Voxa, una voce sintetica generata su un server.',
-j:'こんにちは。これはサーバーで生成された合成音声です。',
-z:'你好。这是在服务器上生成的合成语音。'};
-document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{
-  const k=c.dataset.lang;
-  if(k==='clear'){$('#text').value='';}else{$('#text').value=SAMPLES[k]||'';langSel.value=k;refreshVoices();}
-  upd();
-}));
-
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-// fetch() rejects with a TypeError ("Load failed" in Safari, "Failed to fetch" in Chrome) when
-// the connection drops. Say what that means instead of echoing the browser's wording.
-function friendly(e){
-  if(e.name==='AbortError') return 'Cancelled.';
-  if(e instanceof TypeError) return 'Lost the connection to the server. Check your connection and try again.';
-  return e.message;
-}
-// Accounts (Supabase). The sign-in library loads only when the server says sign-in is on,
-// so guests on a server without accounts load nothing extra.
-const SUPABASE_JS='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js';
-let SB=null, CONFIG={auth:null,limits:{}};
-async function token(){
-  if(!SB) return null;
-  try{ const {data}=await SB.auth.getSession(); return data.session?data.session.access_token:null; }
-  catch(e){ return null; }
-}
-// fetch() with the signed-in account's token. A 401 means the session expired: refresh it
-// once and retry; if that fails, sign out locally so the page falls back to guest.
-async function api(url, opts={}){
-  const send=async t=>fetch(url,{...opts,headers:{...(opts.headers||{}),...(t?{Authorization:'Bearer '+t}:{})}});
-  const t=await token();
-  let r=await send(t);
-  if(r.status===401&&SB){
-    const {data}=await SB.auth.refreshSession().catch(()=>({data:{}}));
-    if(data&&data.session){ r=await send(data.session.access_token); }
-    if(r.status===401){ await SB.auth.signOut({scope:'local'}).catch(()=>{}); r=await send(null); }
-  }
-  return r;
-}
-function loadScript(src){
-  // crossOrigin: the page is cross-origin isolated, so other-origin scripts load with CORS.
-  return new Promise((ok,fail)=>{const el=document.createElement('script');el.crossOrigin='anonymous';el.src=src;el.onload=ok;el.onerror=fail;document.head.appendChild(el);});
-}
-let SIGNED_IN=false;
-// The paid plan: Upgrade for signed-in free accounts, Manage plan for subscribers.
-function showPlan(){
-  const b=CONFIG.billing, tier=QUOTA&&QUOTA.tier;
-  $('#upgrade').hidden=!(b&&SIGNED_IN&&tier==='free');
-  $('#upgrade').textContent=b&&b.price_label?`Upgrade · ${b.price_label}`:'Upgrade';
-  $('#manage').hidden=!(b&&SIGNED_IN&&tier==='paid');
-}
-async function goBilling(path, btn){
-  btn.disabled=true;
-  try{
-    const r=await api(path,{method:'POST'}), j=await r.json().catch(()=>({}));
-    if(!r.ok||!(j.url||j.checkout)) throw new Error(j.error||'The payment page is not available right now.');
-    // Paddle's checkout opens on its own page (it cannot run inside this isolated one).
-    if(j.checkout){ sessionStorage.setItem('voxa-checkout',JSON.stringify(j.checkout)); location.href='/checkout'; }
-    else location.href=j.url;
-  }catch(e){ const st=$('#status'); st.className='status err'; st.textContent='Error: '+e.message; btn.disabled=false; }
-}
-$('#upgrade').addEventListener('click',e=>goBilling('/api/billing/checkout',e.currentTarget));
-$('#manage').addEventListener('click',e=>goBilling('/api/billing/portal',e.currentTarget));
-// Back from Paddle's checkout. The plan arrives by webhook, sometimes a few seconds after the
-// visitor does, and only reaches the sign-in token on refresh, so refresh until it shows.
-async function welcomeBack(){
-  if(!new URLSearchParams(location.search).has('upgraded')||!SB) return;
-  history.replaceState(null,'',location.pathname);
-  const st=$('#status'); st.className='status busy'; st.textContent='Confirming your payment…';
-  for(let i=0;i<8;i++){
-    await SB.auth.refreshSession().catch(()=>{});
-    const q=await loadQuota();
-    if(q&&q.tier==='paid'){ st.className='status'; st.textContent='You are on the paid plan: no daily limit. Thank you!'; return; }
-    await sleep(2500);
-  }
-  st.className='status'; st.textContent='Payment received. Your plan can take a minute to switch on; reload the page shortly.';
-}
-
-function showAccount(session){
-  const signedIn=!!session;
-  SIGNED_IN=signedIn;
-  $('#account').hidden=false;
-  $('#who').textContent=signedIn?(session.user.email||'Signed in'):'';
-  $('#signin-open').hidden=signedIn; $('#signout').hidden=!signedIn;
-  if(signedIn) $('#signin').hidden=true;
-  loadQuota();
-}
-async function initAuth(){
-  try{ CONFIG=await fetch('/api/config',{cache:'no-store'}).then(r=>r.json()); }catch(e){ return; }
-  if(!CONFIG.auth) return;
-  try{ await loadScript(SUPABASE_JS); }
-  catch(e){ console.warn('sign-in library failed to load'); return; }
-  SB=window.supabase.createClient(CONFIG.auth.url, CONFIG.auth.anon_key);
-  SB.auth.onAuthStateChange((_event, session)=>showAccount(session));
-  const {data}=await SB.auth.getSession(); showAccount(data.session);
-  welcomeBack();
-}
-$('#signin-open').addEventListener('click',()=>{const f=$('#signin');f.hidden=!f.hidden;if(!f.hidden)$('#email').focus();});
-$('#signout').addEventListener('click',async()=>{ if(SB) await SB.auth.signOut(); });
-$('#signin').addEventListener('submit',async ev=>{
-  ev.preventDefault();
-  const email=$('#email').value.trim(), msg=$('#signin-msg');
-  if(!SB||!email) return;
-  msg.textContent='Sending…';
-  const {error}=await SB.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname}});
-  msg.textContent=error?('Could not send the link: '+error.message):`Check ${email} for a sign-in link. Open it on this device.`;
-});
-$('#signin-google').addEventListener('click',async()=>{
-  if(!SB) return;
-  const {error}=await SB.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}});
-  if(error) $('#signin-msg').textContent='Google sign-in is not available: '+error.message;
-});
-
-async function getJSON(url, opts){
-  const r=await api(url, opts);
-  const j=await r.json().catch(()=>({}));
-  if(!r.ok){const err=new Error(j.error||('Server error ('+r.status+')'));err.status=r.status;throw err;}
-  return j;
-}
-// Poll the job. A phone that sleeps or switches networks drops a request or two, so retry
-// transient network errors rather than failing a generation the server is still running.
-async function waitFor(job, signal, onTick){
-  let misses=0;
-  while(job.status==='queued'||job.status==='running'){
-    onTick(job);
-    await sleep(700);
-    if(signal.aborted) throw new DOMException('aborted','AbortError');
-    try{ job=await getJSON('/api/jobs/'+job.id,{signal,cache:'no-store'}); misses=0; }
-    catch(e){
-      if(e.name==='AbortError') throw e;
-      if(e.status===404) throw new Error('The server restarted and lost this request. Please generate again.');
-      if(e.status || ++misses>8) throw e;
-      await sleep(1000*misses);
-    }
-  }
-  if(job.status==='error') throw new Error(job.error||'Generation failed.');
-  return job;
-}
-
-// Free tier: a daily character allowance, kept on the server. null means no limit.
-let QUOTA=null;
-function showQuota(q){
-  if(q!==undefined) QUOTA=q;
-  const el=$('#quota');
-  $('#tier').textContent=QUOTA&&QUOTA.tier==='paid'?'Paid':'';
-  showPlan();
-  if(!QUOTA){el.textContent='';return;}
-  if(QUOTA.unlimited){el.className='hint';el.textContent='No daily limit on your plan.';return;}
-  const left=QUOTA.remaining.toLocaleString(), lim=QUOTA.limit.toLocaleString();
-  const free=(CONFIG.limits.free||0).toLocaleString();
-  const upsell=QUOTA.tier==='guest'&&SB?` Sign in for ${free} a day.`
-    :QUOTA.tier==='free'&&CONFIG.billing&&SIGNED_IN?' Upgrade for no daily limit.':'';
-  el.className=QUOTA.remaining?'hint':'hint over';
-  el.textContent=QUOTA.remaining
-    ? `${left} of ${lim} free characters left today.${upsell||' Replaying something you already made is free.'}`
-    : `You've used today's ${lim} free characters. They reset at midnight UTC.${upsell}`;
-}
-// Requests can overlap (sign-in, a token refresh, a finished job); only the newest one's
-// answer may be shown, or an older token's allowance could overwrite the current one.
-let QUOTA_SEQ=0;
-function loadQuota(){
-  const n=++QUOTA_SEQ;
-  return api('/api/quota',{cache:'no-store'}).then(r=>r.json())
-    .then(j=>{ if(n===QUOTA_SEQ) showQuota(j.quota); return j.quota; }).catch(()=>null);
-}
-loadQuota();
-initAuth();
-
-let ctrl=null;
-$('#cancel').addEventListener('click',()=>{if(ctrl)ctrl.abort();});
-// Show finished audio: player, download, and the share sheet on iOS. Downloads come from the
-// blob the browser ALREADY has. iOS Safari ignores the HTML `download` attribute on blob URLs,
-// so use the Web Share API there: that is what surfaces "Save to Files".
-function showAudio(blob, fileUrl){
-  const url=URL.createObjectURL(blob);
-  const p=$('#player'); p.src=url; p.hidden=false; p.play().catch(()=>{});
-  const a=$('#download');
-  a.href=url; a.download='voxa.wav'; a.hidden=false; a.onclick=null;
-  const pl=$('#playerlink');
-  if(fileUrl){ pl.href=fileUrl; pl.download='voxa.wav'; pl.hidden=false; } else { pl.hidden=true; }
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  if (isIOS && navigator.canShare) {
-    a.textContent = '⬇ Save or share audio';
-    a.onclick = async (ev) => {
-      try {
-        const file = new File([blob], 'voxa.wav', { type: 'audio/wav' });
-        if (navigator.canShare({ files: [file] })) {
-          ev.preventDefault();
-          await navigator.share({ files: [file], title: 'Voxa audio' });
-        }
-      } catch (e) { /* user cancelled — fall through to the plain link */ }
-    };
-  }
-}
-
-// Voxa Lite: Phonon generates on this device, so it is free and unlimited and never touches
-// the server. The package (~4 MB) and the model (~65 MB) load on first use, then come from
-// the browser's cache.
-let LITE_TTS=null, LITE_LOADING=null, LITE_SEED=4242424242424242;
-const LITE_VOICES_LOADED=new Set(), LITE_CACHE=new Map();
-async function liteEngine(st){
-  if(LITE_TTS) return LITE_TTS;
-  if(!LITE_LOADING){
-    LITE_LOADING=(async()=>{
-      const {PhononTTS}=await import(`/static/phonon-${PHONON_VERSION}/index.js`);
-      const seen={};
-      return PhononTTS.load({lang:'en', model:LITE.model, onProgress:({file,loaded,cached})=>{
-        seen[file]=loaded||0;
-        const mb=Object.values(seen).reduce((a,b)=>a+b,0)/1e6;
-        st.textContent=cached?'Loading the on-device voice…':`Downloading the on-device voice (once)… ${mb.toFixed(0)} MB of about 65`;
-      }});
-    })().catch(e=>{LITE_LOADING=null;throw e;});
-  }
-  LITE_TTS=await LITE_LOADING;
-  return LITE_TTS;
-}
-async function generateLite(text, voiceId, st, signal){
-  const v=LITE_BY_ID[voiceId], temperature=+$('#expr').value;
-  const key=[text,voiceId,temperature,LITE_SEED].join('|');
-  if(LITE_CACHE.has(key)) return {blob:LITE_CACHE.get(key), cached:true};
-  st.textContent='Starting the on-device voice…';
-  let tts;
-  try{ tts=await liteEngine(st); }
-  catch(e){ throw new Error("This device can't run on-device voices ("+e.message+'). Choose a Studio voice instead.'); }
-  if(!LITE_VOICES_LOADED.has(voiceId)){ await tts.addVoice(voiceId, v.url); LITE_VOICES_LOADED.add(voiceId); }
-  st.textContent='Generating on this device…';
-  const blob=await tts.synthWav(text,{voice:voiceId, temperature, seed:LITE_SEED, signal});
-  if(LITE_CACHE.size>20) LITE_CACHE.delete(LITE_CACHE.keys().next().value);
-  LITE_CACHE.set(key, blob);
-  return {blob, cached:false};
-}
-
-async function generate(newTake){
-  const text=$('#text').value.trim(); const st=$('#status');
-  if(!text){st.className='status';st.textContent='Type something first.';return;}
-  if(text.length>MAX){st.className='status err';st.textContent=`That script is ${text.length} characters; the limit is ${MAX}.`;return;}
-  const btn=$('#go'), bar=$('#bar'), fill=$('#bar i'), lite=isLite(voiceSel.value);
-  // A new take reads the same line differently: Phonon's output depends on its seed.
-  if(newTake) LITE_SEED=Math.floor(Math.random()*2**48);
-  btn.disabled=true; $('#newtake').disabled=true; $('#cancel').hidden=false; $('#player').hidden=true; $('#download').hidden=true; $('#playerlink').hidden=true;
-  ctrl=new AbortController();
-  const t0=performance.now();
-  st.className='status busy'; st.textContent='Sending…'; bar.hidden=lite; fill.style.width='0';
-  try{
-    if(lite){
-      const {blob,cached}=await generateLite(text, voiceSel.value, st, ctrl.signal);
-      showAudio(blob, null);
-      st.className='status';
-      st.textContent=`Made on this device in ${((performance.now()-t0)/1000).toFixed(1)}s${cached?' · from cache':''} · free, no daily limit`;
-      $('#newtake').hidden=false;
-      return;
-    }
-    let job=await getJSON('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
-      signal:ctrl.signal,
-      body:JSON.stringify({text,lang:langSel.value,voice:voiceSel.value||null,speed:+$('#speed').value})})
-      .catch(e=>{ if(e.status===429) loadQuota(); throw e; });
-    if(job.quota!==undefined) showQuota(job.quota);
-    job=await waitFor(job, ctrl.signal, j=>{
-      if(j.status==='queued'){st.textContent=j.ahead?`Waiting — ${j.ahead} request${j.ahead===1?'':'s'} ahead of yours…`:'Starting…';}
-      else{const pct=Math.round(j.progress*100);st.textContent=`Generating… ${pct}%`;fill.style.width=Math.max(pct,3)+'%';}
-    });
-    fill.style.width='100%'; st.textContent='Downloading audio…';
-    const r=await fetch(job.audio_url,{signal:ctrl.signal});
-    if(!r.ok) throw new Error(r.status===404?'The server restarted and lost this audio. Please generate again.':'Server error ('+r.status+')');
-    showAudio(await r.blob(), job.audio_url);
-    st.className='status';
-    st.textContent=`Done in ${((performance.now()-t0)/1000).toFixed(1)}s`+(job.cache==='hit'?' · from cache':'');
-  }catch(e){
-    if(!lite) loadQuota();  // a failed generation is refunded
-    st.className=e.name==='AbortError'?'status':'status err'; st.textContent=(e.name==='AbortError'?'':'Error: ')+friendly(e);
-  }finally{btn.disabled=false;$('#newtake').disabled=false;$('#cancel').hidden=true;bar.hidden=true;ctrl=null;}
-}
-$('#go').addEventListener('click',()=>generate(false));
-$('#newtake').addEventListener('click',()=>generate(true));
-</script></body></html>
-"""
-
-
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
@@ -1503,12 +1040,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _get(self):
         p = urlparse(self.path).path
-        if p in ('/', '/index.html'):
-            # Isolated so on-device voices get WebAssembly threads.
-            extra = {**ISOLATION, 'Cache-Control': 'no-cache'}
-            if not self._visitor():
-                extra['Set-Cookie'] = self._new_visitor_cookie()
-            return self._send(200, PAGE, 'text/html; charset=utf-8', extra)
+        if p == '/index.html':
+            p = '/'
         if p.startswith('/static/'):
             return self._send_static(p[len('/static/'):])
         if p in WEB_PAGES:
@@ -1517,9 +1050,13 @@ class Handler(BaseHTTPRequestHandler):
                 page = f.read()
             for key, value in web_values().items():
                 page = page.replace('{{' + key + '}}', value)
-            ctype = 'text/javascript; charset=utf-8' if name.endswith('.js') else 'text/html; charset=utf-8'
-            isolation = {} if p in PLAIN_PAGES else ISOLATION
-            return self._send(200, page, ctype, {**isolation, 'Cache-Control': 'no-cache'})
+            ctype = {'.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8'}.get(
+                os.path.splitext(name)[1], 'text/html; charset=utf-8')
+            # Isolated so on-device voices get WebAssembly threads (all but PLAIN_PAGES).
+            extra = {**({} if p in PLAIN_PAGES else ISOLATION), 'Cache-Control': 'no-cache'}
+            if p == '/' and not self._visitor():
+                extra['Set-Cookie'] = self._new_visitor_cookie()
+            return self._send(200, page, ctype, extra)
         if p == '/api/quota':
             who = self._identity()
             status = _quota.status(who) if _quota else None

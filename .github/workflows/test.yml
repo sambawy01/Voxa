@@ -15,11 +15,11 @@ jobs:
       - name: Install test dependencies
         run: pip install cryptography
       - name: Compile
-        run: python -m py_compile server.py scripts/smoke.py
+        run: python -m py_compile server.py billing.py podcast.py scripts/smoke.py
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Audiobook text tests
+      - name: Audiobook and podcast page tests
         run: node --test tests/*.test.mjs
       - name: Unit tests (generation stubbed; no torch needed)
         run: python -m unittest discover -s tests -v

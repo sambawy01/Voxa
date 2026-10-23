@@ -18,6 +18,13 @@ rights holder's permission unless the book is yours, in the public domain, or th
 otherwise allowed where you live. Do not use Voxa to impersonate real people, to deceive, or
 for anything unlawful.
 
+## Podcasts
+
+Podcast scripts are written by an AI model (DeepSeek) from the document you share. They can
+contain mistakes, leave things out, or state things the document does not say. Read and
+correct the script before you publish or rely on the episode; you are responsible for what
+you publish. Only share documents you are allowed to send to a third party.
+
 ## Voices
 
 Voices are synthetic and named by Voxa; they are not recordings of the people their names

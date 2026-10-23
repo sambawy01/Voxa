@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Voxa Podcasts</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='none' stroke='%237aa2ff' stroke-width='2'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%237aa2ff'/%3E%3C/svg%3E">
+<style>
+:root{--bg:#0f1115;--panel:#171b22;--panel2:#1e2430;--line:#2b3341;--ink:#e9edf4;--dim:#9aa5b5;--accent:#7aa2ff;--good:#6fe3b4;--bad:#ff8a8a;--a:#ffb3d1;--b:#9fd4ff}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#1b2333 0%,var(--bg) 60%);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
+.wrap{max-width:820px;margin:0 auto;padding:28px max(16px,env(safe-area-inset-right)) 70px max(16px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:16px}
+.brand{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.brand a{color:var(--dim);text-decoration:none;font-size:14px}.brand a:hover{color:var(--ink)}
+h1{font-size:24px;margin:0}
+h2{font-size:16px;margin:0}
+p{margin:0}
+.dim{color:var(--dim);font-size:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:12px}
+.card[hidden]{display:none}
+input[type=file]{font:inherit;color:var(--dim);max-width:100%}
+input[type=file]::file-selector-button{background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:10px 16px;font:inherit;font-weight:650;margin-right:12px;cursor:pointer}
+.status{font-size:14px;color:var(--accent);min-height:20px}
+.status.err{color:var(--bad)}
+textarea,input[type=text]{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;font-size:14px}
+textarea{resize:vertical}
+details summary{cursor:pointer;color:var(--dim);font-size:14px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.controls label,.host label{display:flex;flex-direction:column;gap:6px;font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim)}
+.controls label[hidden]{display:none}
+.hosts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.host{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.host h3{margin:0;font-size:14px}
+.host.a h3{color:var(--a)}.host.b h3{color:var(--b)}
+select{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;text-transform:none;letter-spacing:0;width:100%}
+.host select,.host input{text-transform:none;letter-spacing:0}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+button.primary{flex:1 1 200px;background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:680;cursor:pointer}
+button.primary:disabled{opacity:.45;cursor:default}
+button.ghost{flex:1 1 120px;background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit;cursor:pointer}
+button.small{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:6px 13px;font:inherit;font-size:13px;cursor:pointer}
+button[hidden]{display:none}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.privacy{font-size:13px;color:var(--dim);border-left:3px solid var(--line);padding-left:10px}
+input.eptitle{font-size:18px;font-weight:650}
+ol.chapters{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.chapter{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.chapter input{font-weight:600}
+.chapter textarea{min-height:220px;line-height:1.6}
+.chapter .meta{font-size:12.5px;color:var(--dim)}
+.bar{height:6px;background:var(--panel2);border-radius:6px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
+audio{width:100%}
+a.dl{color:var(--accent);font-size:14px;font-weight:600;text-decoration:none}
+.note{font-size:14px;color:var(--dim)}
+ol.saved{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+ol.saved li{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+</style></head>
+<body><div class="wrap">
+<div class="brand"><h1>Voxa podcasts</h1><a href="/">← Back to Voxa</a></div>
+<p class="dim">Share a presentation, report or article. Two hosts talk it through: the ideas, the reasoning behind them and what they mean. You read and edit the script before any audio is made.</p>
+
+<section class="card" id="off" hidden>
+  <h2>Not available yet</h2>
+  <p class="dim">Podcasts are not switched on for this site yet. <a href="/book" style="color:var(--accent)">Audiobooks</a> work already.</p>
+</section>
+
+<section class="card" id="savedbox" hidden>
+  <h2>Your podcasts on this device</h2>
+  <ol class="saved" id="saved"></ol>
+</section>
+
+<section class="card" id="source">
+  <label for="file"><h2>1. Your document</h2></label>
+  <input id="file" type="file" accept=".pdf,.pptx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/markdown">
+  <p class="dim">PDF, PowerPoint (.pptx) or text. Keynote and Google Slides can export a PDF or .pptx. Speaker notes in a .pptx are used too.</p>
+  <details id="pastebox"><summary>Or paste text</summary>
+    <textarea id="paste" rows="8" placeholder="Paste the text of an article, report or deck here"></textarea>
+  </details>
+  <p class="status" id="status" role="status"></p>
+</section>
+
+<section class="card" id="setup" hidden>
+  <h2>2. The episode</h2>
+  <label for="focus" class="dim">Focus (optional): what should the hosts dig into?</label>
+  <textarea id="focus" rows="3" maxlength="1000" placeholder="For example: the business model and the biggest risks. Explain it for investors who know nothing about the field."></textarea>
+  <div class="controls">
+    <label>Length<select id="minutes"><option value="5">About 5 minutes</option><option value="10" selected>About 10 minutes</option><option value="20">About 20 minutes</option></select></label>
+    <label>Style<select id="tone">
+      <option value="friendly" selected>Friendly and curious</option><option value="expert">Expert briefing</option>
+      <option value="lively">Lively, with humour</option><option value="critical">Critical: test the ideas</option></select></label>
+    <label>Language<select id="lang"></select></label>
+  </div>
+  <div class="hosts">
+    <div class="host a"><h3>First host</h3>
+      <label>Voice<select id="voiceA"></select></label>
+      <label>Name<input id="nameA" type="text" maxlength="40"></label></div>
+    <div class="host b"><h3>Second host</h3>
+      <label>Voice<select id="voiceB"></select></label>
+      <label>Name<input id="nameB" type="text" maxlength="40"></label></div>
+  </div>
+  <p class="note" id="voicenote"></p>
+  <p class="privacy">To write the script, the document's text and your focus are sent to DeepSeek, an AI service whose servers are in China. They are not kept by Voxa. Don't use documents you are not allowed to share.</p>
+  <div class="row"><button class="primary" id="write" type="button">Write the script</button></div>
+  <p class="note" id="allowance"></p>
+  <p class="status" id="writestatus" role="status"></p>
+</section>
+
+<section class="card" id="scriptbox" hidden>
+  <h2>3. The script</h2>
+  <input class="eptitle" id="eptitle" type="text" aria-label="Episode title">
+  <p class="dim" id="epsummary"></p>
+  <p class="note">Edit anything. Keep one turn per paragraph, starting with the host's name and a colon.</p>
+  <ol class="chapters" id="chapters"></ol>
+  <p class="note" id="scriptstats"></p>
+</section>
+
+<section class="card" id="make" hidden>
+  <h2>4. The audio</h2>
+  <div class="controls">
+    <label id="exprbox" hidden>On-device expressiveness<select id="expr"></select></label>
+  </div>
+  <p class="note" id="costnote"></p>
+  <div class="row">
+    <button class="primary" id="start" type="button">Make the podcast</button>
+    <button class="ghost" id="pause" type="button" hidden>Pause</button>
+  </div>
+  <div class="bar" id="bar"><i></i></div>
+  <p class="status" id="genstatus" role="status"></p>
+  <div id="result"></div>
+</section>
+<p class="dim" style="font-size:12.5px">Your document is read on this device (pdf.js, Apache-2.0). Scripts are written by DeepSeek. MP3 files are made here with lamejs (LGPL-3.0). Studio voices send each line to Voxa to be spoken; on-device voices never leave this device. <a href="/credits" style="color:var(--accent)">Credits</a></p>
+</div>
+
+<script type="module">
+import * as pdfjs from '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.min.mjs';
+import { paragraphsFromText, formatDuration, estimateSeconds, openStore, saveChunk, loadChunk, savedChunkKeys,
+  saveBook, listBooks, deleteBook, parseWav, encodeWav, floatToInt16, SAMPLE_RATE, bookMp3 } from '/book.js';
+import { pdfText, pptxText, limitText, chapterToText, textToLines, scriptChars, planParts, joinTurns, MAX_TEXT } from '/podcast.js?v={{PODCAST_VERSION}}';
+
+pdfjs.GlobalWorkerOptions.workerSrc = '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.worker.min.mjs';
+const PDF_OPTIONS = { cMapUrl: '/static/pdfjs-{{PDFJS_VERSION}}/cmaps/', cMapPacked: true };
+
+const $ = s => document.querySelector(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function el(tag, props = {}, ...children) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...children);
+  return e;
+}
+
+let DOC = null;   // {name, text}
+let POD = null;   // {id, name, script, voices: {A, B}, saved}
+let VOICES = null, CONFIG = { auth: null, limits: {} }, SB = null, accountReady = null, db = null;
+const LITE_SEED = 4242424242424242;
+
+// --- Account: the same sign-in as the main page -------------------------------------------------
+async function token() {
+  if (!SB) return null;
+  try { const { data } = await SB.auth.getSession(); return data.session ? data.session.access_token : null; }
+  catch (e) { return null; }
+}
+async function api(url, opts = {}) {
+  const send = t => fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...(t ? { Authorization: 'Bearer ' + t } : {}) } });
+  let r = await send(await token());
+  if (r.status === 401 && SB) {
+    const { data } = await SB.auth.refreshSession().catch(() => ({ data: {} }));
+    r = await send(data && data.session ? data.session.access_token : null);
+  }
+  return r;
+}
+function setupAccount() {
+  return accountReady ||= (async () => {
+    CONFIG = await fetch('/api/config', { cache: 'no-store' }).then(r => r.json()).catch(() => CONFIG);
+    if (!CONFIG.auth) return;
+    await new Promise((ok, fail) => document.head.appendChild(Object.assign(document.createElement('script'),
+      { crossOrigin: 'anonymous', src: 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js', onload: ok, onerror: fail })))
+      .then(() => { SB = window.supabase.createClient(CONFIG.auth.url, CONFIG.auth.anon_key); })
+      .catch(() => {});
+  })();
+}
+
+// --- 1. Reading the document ---------------------------------------------------------------------
+function useText(name, text, note) {
+  const { text: t, cut } = limitText(text.replace(/[ \t]+/g, ' ').trim());
+  if (t.split(/\s+/).length < 30) throw new Error('There is too little text. If this is a scanned document, it has pictures of pages rather than text.');
+  DOC = { name, text: t };
+  $('#status').className = 'status';
+  $('#status').textContent = `${note}${t.length.toLocaleString()} characters of text` +
+    (cut ? ` (cut to the first ${MAX_TEXT.toLocaleString()}; the rest is left out)` : '') + '.';
+  $('#setup').hidden = false;
+  setupVoices();
+}
+
+async function openFile(file) {
+  const st = $('#status');
+  st.className = 'status'; st.textContent = `Reading ${file.name}…`;
+  try {
+    const name = file.name.replace(/\.[^.]+$/, '');
+    if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
+      const doc = await pdfText(pdfjs, new Uint8Array(await file.arrayBuffer()), (n, t) => { st.textContent = `Reading page ${n} of ${t}…`; }, PDF_OPTIONS);
+      useText(name, doc.text, `${doc.pages} pages · `);
+    } else if (/\.pptx$/i.test(file.name)) {
+      const doc = await pptxText(new Uint8Array(await file.arrayBuffer()));
+      useText(name, doc.text, `${doc.pages} slides · `);
+    } else if (/\.(key|ppt)$/i.test(file.name)) {
+      throw new Error('this format cannot be read here. Export it as PDF or .pptx first.');
+    } else {
+      useText(name, paragraphsFromText(await file.text()).join('\n\n'), '');
+    }
+  } catch (e) {
+    st.className = 'status err';
+    st.textContent = e.name === 'PasswordException' ? 'This PDF is password-protected. Open it without a password and try again.'
+      : e.name === 'InvalidPDFException' ? 'This file is not a readable PDF.' : 'Could not read the file: ' + e.message;
+  }
+}
+$('#file').addEventListener('change', e => { if (e.target.files[0]) openFile(e.target.files[0]); });
+let pasteTimer = null;
+$('#paste').addEventListener('input', () => {
+  clearTimeout(pasteTimer);
+  pasteTimer = setTimeout(() => {
+    const t = $('#paste').value;
+    if (!t.trim()) return;
+    try { useText('Pasted text', t, ''); } catch (e) { $('#status').className = 'status err'; $('#status').textContent = e.message; }
+  }, 500);
+});
+
+// --- 2. Voices and settings ----------------------------------------------------------------------
+const liteOK = () => typeof WebAssembly === 'object' && 'Worker' in window;
+const liteFor = lang => (VOICES && VOICES.lite && liteOK() && VOICES.lite.voices[lang]) || [];
+const voicesFor = lang => [...liteFor(lang).map(v => ({ ...v, lite: true })), ...(VOICES.catalogue[lang] || [])];
+const voiceById = (lang, id) => voicesFor(lang).find(v => v.id === id);
+const named = { A: false, B: false };  // a name typed by hand is kept when the voice changes
+
+async function setupVoices() {
+  if (VOICES) return;
+  const [l, v] = await Promise.all([fetch('/api/languages').then(r => r.json()), fetch('/api/voices').then(r => r.json())]);
+  VOICES = v;
+  $('#lang').replaceChildren(...Object.entries(l.languages).map(([k, lab]) => el('option', { value: k, textContent: lab })));
+  $('#expr').replaceChildren(...((v.lite && v.lite.expressiveness) || []).map(e =>
+    el('option', { value: e.temperature, textContent: e.name, selected: !!e.default })));
+  $('#lang').onchange = () => fillVoices();
+  for (const h of ['A', 'B']) {
+    $('#voice' + h).onchange = () => { if (!named[h]) $('#name' + h).value = voiceById($('#lang').value, $('#voice' + h).value).name; voiceNote(); };
+    $('#name' + h).oninput = () => { named[h] = !!$('#name' + h).value.trim(); };
+  }
+  fillVoices();
+}
+
+function fillVoices(sel = {}) {
+  const lang = $('#lang').value, all = voicesFor(lang);
+  const groups = () => {
+    const lite = all.filter(v => v.lite), studio = all.filter(v => !v.lite);
+    const opt = v => el('option', { value: v.id, textContent: `${v.name} · ${v.gender === 'male' ? 'man' : 'woman'}` });
+    const out = [];
+    if (lite.length) out.push(el('optgroup', { label: 'On this device · free, no daily limit' }, ...lite.map(opt)));
+    out.push(el('optgroup', { label: 'Studio voices' }, ...studio.map(opt)));
+    return out;
+  };
+  // Defaults: a woman and a man, on-device first in English since they cost nothing.
+  const pick = (gender, not) => (all.find(v => v.gender === gender && v.id !== not) || all.find(v => v.id !== not) || all[0]).id;
+  const a = sel.A || pick('female'), b = sel.B || pick('male', a);
+  $('#voiceA').replaceChildren(...groups()); $('#voiceA').value = a;
+  $('#voiceB').replaceChildren(...groups()); $('#voiceB').value = b;
+  // A saved voice that is no longer offered (or on-device voices unavailable here) falls back.
+  for (const h of ['A', 'B']) if (!voiceById(lang, $('#voice' + h).value)) $('#voice' + h).selectedIndex = 0;
+  for (const h of ['A', 'B']) if (!named[h]) $('#name' + h).value = voiceById(lang, $('#voice' + h).value).name;
+  voiceNote();
+}
+
+function voiceNote() {
+  const lang = $('#lang').value, a = voiceById(lang, $('#voiceA').value), b = voiceById(lang, $('#voiceB').value);
+  const notes = [];
+  if (a.id === b.id) notes.push(`${$('#lang').selectedOptions[0].textContent} has only one voice, so both hosts share it.`);
+  if (a.lite !== b.lite) notes.push('One host is on-device and one is a Studio voice; they will sound a little different.');
+  $('#voicenote').textContent = notes.join(' ');
+  $('#exprbox').hidden = !(a.lite || b.lite);
+  refreshMake();
+}
+
+function hostVoices() {
+  const lang = $('#lang').value, temperature = +$('#expr').value;
+  const one = h => {
+    const v = voiceById(lang, $('#voice' + h).value);
+    return v.lite ? { engine: 'lite', lang, voice: v.id, temperature, seed: LITE_SEED } : { engine: 'studio', lang, voice: v.id, speed: 1 };
+  };
+  return { A: one('A'), B: one('B') };
+}
+
+async function showAllowance() {
+  await setupAccount();
+  const p = CONFIG.podcast;
+  $('#off').hidden = !!p; $('#source').hidden = !p;
+  if (!p) return;
+  const signedIn = !!(await token());
+  const tier = signedIn ? null : 'guest';
+  if (tier === 'guest' && !p.daily.guest) $('#allowance').textContent = 'Sign in on the main page to make podcasts.';
+  else if (tier === 'guest') $('#allowance').textContent = `You can write ${p.daily.guest} script${p.daily.guest === 1 ? '' : 's'} a day.`;
+  else $('#allowance').textContent = `Free accounts: ${p.daily.free || 'no'} script${p.daily.free === 1 ? '' : 's'} a day. Paid: ${p.daily.paid} a day.`;
+}
+
+// --- Writing the script ----------------------------------------------------------------------------
+$('#write').onclick = async () => {
+  const st = $('#writestatus'), btn = $('#write');
+  const names = { a: $('#nameA').value.trim(), b: $('#nameB').value.trim() };
+  if (!names.a || !names.b || names.a.toLowerCase() === names.b.toLowerCase()) {
+    st.className = 'status err'; st.textContent = 'Give the hosts two different names.'; return;
+  }
+  const lang = $('#lang').value, gender = h => voiceById(lang, $('#voice' + h).value).gender === 'male' ? 'man' : 'woman';
+  btn.disabled = true; st.className = 'status'; st.textContent = 'Sending the document…';
+  const t0 = Date.now();
+  try {
+    let r = await api('/api/podcast/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      text: DOC.text, title: DOC.name, focus: $('#focus').value, minutes: +$('#minutes').value, tone: $('#tone').value, lang,
+      hosts: { ...names, a_gender: gender('A'), b_gender: gender('B') } }) });
+    let job = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(job.error || `Server error (${r.status})`);
+    while (job.status === 'running') {
+      const s = Math.round((Date.now() - t0) / 1000);
+      st.textContent = `Writing the script… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} (usually one to three minutes; keep this page open)`;
+      await sleep(2500);
+      r = await api('/api/podcast/script/' + job.id, { cache: 'no-store' });
+      if (r.status >= 500 || r.status === 0) continue;  // a blip; the job carries on
+      job = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(job.error || `Server error (${r.status})`);
+    }
+    if (job.status !== 'done') throw new Error(job.error || 'Writing the script failed.');
+    POD = { id: crypto.randomUUID(), name: job.script.title, script: job.script, saved: Date.now() };
+    await savePod();
+    st.textContent = 'Script ready. Read it below.';
+    showScript();
+    $('#scriptbox').scrollIntoView({ behavior: 'smooth' });
+    listSaved();
+  } catch (e) {
+    st.className = 'status err'; st.textContent = e.message;
+  } finally { btn.disabled = false; btn.textContent = POD ? 'Write a new script' : 'Write the script'; }
+};
+
+// --- 3. The script -------------------------------------------------------------------------------
+async function savePod() {
+  db ||= await openStore('voxa-podcasts');
+  POD.saved = Date.now();
+  POD.settings = { lang: $('#lang').value, A: $('#voiceA').value, B: $('#voiceB').value };
+  await saveBook(db, POD.id, POD);
+}
+let saveTimer = null;
+const saveSoon = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => savePod().catch(() => {}), 800); };
+
+function showScript() {
+  const s = POD.script;
+  $('#eptitle').value = s.title;
+  $('#eptitle').oninput = () => { s.title = POD.name = $('#eptitle').value; saveSoon(); };
+  $('#epsummary').textContent = s.summary;
+  $('#chapters').replaceChildren(...s.chapters.map((c, i) => {
+    const title = el('input', { type: 'text', value: c.title, ariaLabel: `Title of part ${i + 1}` });
+    const text = el('textarea', { value: chapterToText(c, s.hosts), ariaLabel: `Script of ${c.title}` });
+    const meta = el('p', { className: 'meta' });
+    const update = () => { meta.textContent = `${c.lines.length} turns · about ${formatDuration(estimateSeconds(c.lines.reduce((a, l) => a + l.text.length, 0)))}`; };
+    title.oninput = () => { c.title = title.value; saveSoon(); };
+    text.oninput = () => { c.lines = textToLines(text.value, s.hosts); update(); stats(); saveSoon(); refreshMake(); };
+    update();
+    return el('li', { className: 'chapter' }, title, text, meta);
+  }));
+  stats();
+  $('#scriptbox').hidden = false;
+  $('#make').hidden = false;
+  refreshMake();
+}
+function stats() {
+  const chars = scriptChars(POD.script);
+  $('#scriptstats').textContent = `${chars.toLocaleString()} characters · about ${formatDuration(estimateSeconds(chars))} of audio`;
+}
+
+// --- 4. The audio --------------------------------------------------------------------------------
+let running = false, controller = null;
+
+async function audioKey() {
+  const data = JSON.stringify({ voices: hostVoices(), chapters: POD.script.chapters.map(c => c.lines) });
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(data));
+  return [...new Uint8Array(hash)].slice(0, 12).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+let refreshSeq = 0;
+async function refreshMake() {
+  if (!POD || running || !VOICES) return;
+  // Settings can change while this awaits; only the latest call may update the page.
+  const seq = ++refreshSeq, stale = () => seq !== refreshSeq;
+  db ||= await openStore('voxa-podcasts');
+  const key = await audioKey(), plan = planParts(POD.script);
+  const saved = new Set((await savedChunkKeys(db, key)).map(k => k[1] + ':' + k[2]));
+  if (stale()) return;
+  const left = plan.filter(p => !saved.has(p.chapter + ':' + p.index));
+  const voices = hostVoices();
+  const studioChars = left.filter(p => voices[p.speaker].engine === 'studio').reduce((a, p) => a + p.text.length, 0);
+  const note = $('#costnote');
+  if (!left.length) note.textContent = 'All parts are made and saved on this device.';
+  else if (!studioChars) note.textContent = 'Both hosts are on-device voices: free, with no daily limit. Keep this page open while it works.';
+  else {
+    const q = await api('/api/quota', { cache: 'no-store' }).then(r => r.json()).then(j => j.quota).catch(() => null);
+    if (stale()) return;
+    note.textContent = !q || q.unlimited ? 'Studio voices on your plan have no daily limit.'
+      : `This needs ${studioChars.toLocaleString()} characters of Studio voice; you have ${q.remaining.toLocaleString()} left today.` +
+        (studioChars > q.remaining ? ' Voxa makes what fits, saves it, and continues tomorrow.' : '');
+  }
+  const done = plan.length - left.length;
+  $('#start').hidden = !left.length;
+  $('#start').textContent = done ? `Continue (${done} of ${plan.length} parts made)` : 'Make the podcast';
+  $('#bar i').style.width = plan.length ? (100 * done / plan.length) + '%' : '0';
+  if (!left.length && plan.length) await showResult(key, plan);
+  else { shown = null; $('#result').replaceChildren(); }
+}
+
+let LITE_TTS = null;
+const LITE_ADDED = new Set();
+async function liteEngine(st) {
+  if (LITE_TTS) return LITE_TTS;
+  const { PhononTTS } = await import(`/static/phonon-${VOICES.phonon_version}/index.js`);
+  const seen = {};
+  LITE_TTS = await PhononTTS.load({ lang: 'en', model: VOICES.lite.model, onProgress: ({ file, loaded, cached }) => {
+    seen[file] = loaded || 0;
+    st.textContent = cached ? 'Loading the on-device voice…' : `Downloading the on-device voice (once)… ${(Object.values(seen).reduce((a, b) => a + b, 0) / 1e6).toFixed(0)} MB of about 65`;
+  } });
+  return LITE_TTS;
+}
+
+class QuotaReached extends Error {}
+
+async function makePart(text, s, signal, st) {
+  if (s.engine === 'lite') {
+    const tts = await liteEngine(st);
+    if (!LITE_ADDED.has(s.voice)) { await tts.addVoice(s.voice, voiceById(s.lang, s.voice).url); LITE_ADDED.add(s.voice); }
+    return floatToInt16(await tts.synth(text, { voice: s.voice, temperature: s.temperature, seed: s.seed, signal }));
+  }
+  let r = await api('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+    body: JSON.stringify({ text, lang: s.lang, voice: s.voice, speed: s.speed }) });
+  let job = await r.json().catch(() => ({}));
+  if (r.status === 429) throw new QuotaReached(job.error || 'Daily limit reached.');
+  if (!r.ok) throw new Error(job.error || `Server error (${r.status})`);
+  while (job.status === 'queued' || job.status === 'running') {
+    await sleep(800);
+    r = await api('/api/jobs/' + job.id, { signal, cache: 'no-store' });
+    if (!r.ok) throw new Error(`Server error (${r.status})`);
+    job = await r.json();
+  }
+  if (job.status !== 'done') throw new Error(job.error || 'Generation failed.');
+  r = await fetch(job.audio_url, { signal });
+  if (!r.ok) throw new Error(`Server error (${r.status})`);
+  return parseWav(await r.arrayBuffer()).pcm;
+}
+
+const controls = ['#lang', '#voiceA', '#voiceB', '#expr', '#file', '#write'];
+async function start() {
+  const st = $('#genstatus'), voices = hostVoices(), key = await audioKey(), plan = planParts(POD.script);
+  running = true; controller = new AbortController();
+  $('#start').hidden = true; $('#pause').hidden = false; controls.forEach(x => $(x).disabled = true);
+  document.querySelectorAll('#scriptbox input, #scriptbox textarea').forEach(x => x.readOnly = true);
+  st.className = 'status'; st.textContent = 'Starting…';
+  const wake = navigator.wakeLock ? await navigator.wakeLock.request('screen').catch(() => null) : null;
+  await savePod();
+  const saved = new Set((await savedChunkKeys(db, key)).map(k => k[1] + ':' + k[2]));
+  try {
+    for (const p of plan) {
+      if (!running) break;
+      if (saved.has(p.chapter + ':' + p.index)) continue;
+      st.textContent = `Making part ${saved.size + 1} of ${plan.length}: ${POD.script.hosts[p.speaker]}`;
+      let pcm;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          pcm = await makePart(p.text, voices[p.speaker], controller.signal, st);
+          if (controller.signal.aborted) throw new DOMException('Paused', 'AbortError');
+          break;
+        } catch (e) {
+          if (e instanceof QuotaReached || e.name === 'AbortError' || attempt >= 3) throw e;
+          st.textContent = `Connection trouble, retrying part ${saved.size + 1}…`;
+          await sleep(2000 * 2 ** attempt);
+        }
+      }
+      await saveChunk(db, key, p.chapter, p.index, pcm);
+      saved.add(p.chapter + ':' + p.index);
+      $('#bar i').style.width = (100 * saved.size / plan.length) + '%';
+    }
+    st.textContent = saved.size === plan.length ? 'Done.' : `Paused. ${saved.size} of ${plan.length} parts are saved on this device.`;
+  } catch (e) {
+    const kept = `${saved.size} of ${plan.length} parts are saved on this device`;
+    st.className = 'status' + (e.name === 'AbortError' ? '' : ' err');
+    st.textContent = e instanceof QuotaReached ? `Paused at today's limit. ${kept}; come back after midnight UTC, or choose on-device voices (English).`
+      : e.name === 'AbortError' ? `Paused. ${kept}.` : `Stopped: ${e.message}. ${kept}; press Continue to try again.`;
+  } finally {
+    running = false; controller = null; if (wake) wake.release().catch(() => {});
+    $('#pause').hidden = true; controls.forEach(x => $(x).disabled = false);
+    document.querySelectorAll('#scriptbox input, #scriptbox textarea').forEach(x => x.readOnly = false);
+    await refreshMake();
+  }
+}
+$('#start').onclick = () => start();
+$('#pause').onclick = () => { running = false; if (controller) controller.abort(); };
+$('#expr').onchange = () => refreshMake();
+
+// MP3 per chapter in the audiobook encoder's worker, then one file with chapter marks.
+let mp3Worker = null, mp3Seq = 0;
+const mp3Jobs = new Map();
+function toMp3(pcm) {
+  if (!mp3Worker) {
+    mp3Worker = new Worker('/mp3-worker.js', { type: 'module' });
+    mp3Worker.onmessage = e => {
+      const job = mp3Jobs.get(e.data.id);
+      if (!job || e.data.progress != null) return;
+      mp3Jobs.delete(e.data.id);
+      e.data.error ? job.fail(new Error(e.data.error)) : job.ok(e.data.mp3);
+    };
+  }
+  const id = ++mp3Seq;
+  return new Promise((ok, fail) => { mp3Jobs.set(id, { ok, fail }); mp3Worker.postMessage({ id, pcm }, [pcm.buffer]); });
+}
+
+let shown = null;
+async function showResult(key, plan) {
+  if (shown === key) return;
+  shown = key;
+  const out = $('#result'), name = (POD.script.title || 'Voxa podcast').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80);
+  out.replaceChildren(el('p', { className: 'note', textContent: 'Making the MP3…' }));
+  const chapters = [];
+  for (const [i, c] of POD.script.chapters.entries()) {
+    const parts = plan.filter(p => p.chapter === i);
+    if (!parts.length) continue;
+    const pcm = [];
+    for (const p of parts) pcm.push(await loadChunk(db, key, i, p.index));
+    if (pcm.some(x => !x)) { shown = null; return; }
+    chapters.push({ title: c.title, pcm: joinTurns(pcm, parts.map(p => p.speaker), SAMPLE_RATE) });
+  }
+  let blob, ext;
+  try {
+    const mp3s = [];
+    for (const c of chapters) mp3s.push({ title: c.title, mp3: await toMp3(c.pcm.slice()) });
+    blob = new Blob([bookMp3(POD.script.title, mp3s)], { type: 'audio/mpeg' }); ext = 'mp3';
+  } catch (e) {
+    const all = chapters.flatMap((c, i) => i ? [new Int16Array(Math.round(SAMPLE_RATE * 0.9)), c.pcm] : [c.pcm]);
+    const pcm = new Int16Array(all.reduce((a, p) => a + p.length, 0));
+    let at = 0; for (const p of all) { pcm.set(p, at); at += p.length; }
+    blob = new Blob([encodeWav(pcm, SAMPLE_RATE)], { type: 'audio/wav' }); ext = 'wav';
+  }
+  if (shown !== key) return;
+  const url = URL.createObjectURL(blob), file = `${name}.${ext}`;
+  const link = el('a', { className: 'dl', href: url, download: file, textContent: `⬇ Download the episode (${(blob.size / 1e6).toFixed(1)} MB${ext === 'mp3' ? ', with chapter marks' : ''})` });
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent) && navigator.canShare) {
+    link.onclick = async ev => {
+      const f = new File([blob], file, { type: blob.type });
+      if (navigator.canShare({ files: [f] })) { ev.preventDefault(); await navigator.share({ files: [f], title: POD.script.title }).catch(() => {}); }
+    };
+  }
+  out.replaceChildren(el('audio', { controls: true, src: url }), link);
+}
+
+// --- Saved podcasts ----------------------------------------------------------------------------
+async function listSaved() {
+  db ||= await openStore('voxa-podcasts');
+  const pods = (await listBooks(db).catch(() => [])).sort((a, b) => b.saved - a.saved);
+  $('#saved').replaceChildren(...pods.map(p => el('li', {}, el('b', { textContent: p.name || 'Untitled' }),
+    el('div', { className: 'row' },
+      el('button', { className: 'small', type: 'button', textContent: 'Open', onclick: () => openPod(p) }),
+      el('button', { className: 'small', type: 'button', textContent: 'Delete', onclick: async () => {
+        if (!confirm(`Delete "${p.name}" and its audio from this device?`)) return;
+        // Audio is stored under keys made from the script and voices; remove the script, then any audio of it.
+        if (POD && POD.id === p.id) { const k = await audioKey().catch(() => null); if (k) await deleteBook(db, k); POD = null; $('#scriptbox').hidden = $('#make').hidden = true; }
+        await deleteBook(db, p.id); listSaved();
+      } })))));
+  $('#savedbox').hidden = !pods.length;
+}
+
+async function openPod(p) {
+  POD = p;
+  $('#setup').hidden = false;
+  await setupVoices();
+  if (p.settings) {
+    $('#lang').value = p.settings.lang;
+    named.A = named.B = true;
+    $('#nameA').value = p.script.hosts.A; $('#nameB').value = p.script.hosts.B;
+    fillVoices({ A: p.settings.A, B: p.settings.B });
+  }
+  showScript();
+  $('#scriptbox').scrollIntoView({ behavior: 'smooth' });
+}
+
+showAllowance().catch(() => {});
+listSaved().catch(() => {});
+</script>
+</body></html>

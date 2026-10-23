@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Voxa Checkout</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='none' stroke='%237aa2ff' stroke-width='2'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%237aa2ff'/%3E%3C/svg%3E">
+<style>
+:root{--bg:#0f1115;--panel:#171b22;--line:#2b3341;--ink:#e9edf4;--dim:#9aa5b5;--accent:#7aa2ff;--bad:#ff8a8a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+.wrap{max-width:560px;margin:0 auto;padding:40px max(16px,env(safe-area-inset-right)) 60px max(16px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:14px}
+h1{font-size:22px;margin:0}
+p{margin:0}
+a{color:var(--accent)}
+.dim{color:var(--dim);font-size:14px}
+.err{color:var(--bad)}
+</style></head>
+<body><div class="wrap">
+<h1>Voxa paid plan</h1>
+<p id="status">Opening the secure checkout…</p>
+<p class="dim">Payments are handled by Paddle, our reseller and merchant of record. Your card details never reach Voxa. See <a href="/pricing">pricing</a>, <a href="/terms">terms</a> and <a href="/refunds">refunds</a>.</p>
+<p><a href="/">← Back to Voxa</a></p>
+</div>
+<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+<script>
+// This page is not cross-origin isolated (Paddle's checkout frame could not load otherwise).
+// The main page leaves the signed-in account's checkout details in sessionStorage; Paddle's
+// own payment links arrive here with ?_ptxn=, which Paddle.js opens by itself.
+const st = document.getElementById('status');
+const fail = msg => { st.className = 'err'; st.textContent = msg; };
+(async () => {
+  if (!window.Paddle) return fail('The checkout could not load. Check your connection, or turn off a content blocker, and try again.');
+  let start = null;
+  try { start = JSON.parse(sessionStorage.getItem('voxa-checkout') || 'null'); } catch (e) {}
+  const link = new URLSearchParams(location.search).has('_ptxn');
+  let setup = start;
+  if (!setup) {
+    const config = await fetch('/api/config', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}));
+    setup = config.billing && config.billing.paddle;
+  }
+  if (!setup || !setup.token) return fail(link ? 'Payments are not set up yet.' : 'Start from the Upgrade button on the main page while signed in.');
+  if (setup.environment === 'sandbox') Paddle.Environment.set('sandbox');
+  Paddle.Initialize({ token: setup.token, eventCallback: e => {
+    if (e.name === 'checkout.completed') { sessionStorage.removeItem('voxa-checkout'); st.textContent = 'Payment complete. Taking you back to Voxa…'; }
+    if (e.name === 'checkout.closed') { st.className = ''; st.innerHTML = 'Checkout closed. <a href="/">Back to Voxa</a> or <a href="">open it again</a>.'; }
+  } });
+  if (link) return;  // Paddle.js opens the linked transaction itself
+  if (!start) return fail('Start from the Upgrade button on the main page while signed in.');
+  Paddle.Checkout.open({
+    items: [{ priceId: start.price_id, quantity: 1 }],
+    customer: start.customer && (start.customer.id || start.customer.email) ? start.customer : undefined,
+    customData: start.custom_data,
+    settings: { displayMode: 'overlay', theme: 'dark', successUrl: start.success_url, allowLogout: false },
+  });
+})();
+</script>
+</body></html>

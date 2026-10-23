@@ -69,6 +69,6 @@ Optional variables:
 ## Privacy
 
 The document's text goes to DeepSeek, whose servers are in China. The page says so next to
-the button that writes the script. The draft privacy policy and terms cover it, but have a
+the button that writes the script. The privacy policy and terms pages cover it, but have a
 lawyer review them before launch, especially for EU and UK users. Use a different provider
 if that is not acceptable for your users.

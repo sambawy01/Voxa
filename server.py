@@ -26,6 +26,7 @@ import collections
 import datetime
 import hashlib
 import hmac
+import html
 import http.cookies
 import io
 import itertools
@@ -92,7 +93,10 @@ IP_DAILY_FACTOR = 5
 # Where usage counts are stored. Mount a Fly volume at /data to keep them across restarts.
 DATA_DIR = os.environ.get('VOXA_DATA_DIR') or ('/data' if os.path.isdir('/data') else '.')
 COOKIE = 'voxa_id'
-# The site's public address, for links Stripe sends people back to. Falls back to the request.
+# Who runs Voxa and how to reach them, shown on the terms, privacy and refund pages.
+OPERATOR = os.environ.get('VOXA_OPERATOR', '[operator name]')
+CONTACT_EMAIL = os.environ.get('VOXA_CONTACT_EMAIL', '[contact email]')
+# The site's public address, for links Paddle sends people back to. Falls back to the request.
 PUBLIC_URL = os.environ.get('VOXA_PUBLIC_URL', '').rstrip('/')
 # Voxa Lite: the phonon-tts browser package, fetched by scripts/fetch_phonon.py into static/
 # and served from here, since its worker must be same-origin. Pages that run it are served
@@ -110,7 +114,11 @@ ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
              'Cross-Origin-Embedder-Policy': 'require-corp'}
 # Pages and scripts served from web/, all cross-origin isolated. {{NAME}} placeholders in them
 # are filled from web_values().
-WEB_PAGES = {'/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
+# Served without cross-origin isolation: Paddle's checkout runs in a frame from Paddle's own
+# site, which an isolated page would refuse to embed.
+PLAIN_PAGES = {'/checkout'}
+WEB_PAGES = {'/checkout': 'checkout.html', '/pricing': 'pricing.html', '/terms': 'terms.html',
+             '/privacy': 'privacy.html', '/refunds': 'refunds.html', '/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
              '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html',
              '/podcast': 'podcast.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js'}
 
@@ -121,7 +129,9 @@ def web_values():
             return hashlib.sha256(f.read()).hexdigest()[:12]
     return {'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,
             'LAMEJS_VERSION': LAMEJS_VERSION, 'BOOK_VERSION': version('book.js'),
-            'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js')}
+            'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js'),
+            'OPERATOR': html.escape(OPERATOR), 'CONTACT_EMAIL': html.escape(CONTACT_EMAIL),
+            'PRICE_LABEL': html.escape(billing.PRICE_LABEL or 'see the price at checkout')}
 
 LANG_LABELS = {
     'a': 'English (US)',
@@ -531,12 +541,12 @@ class TokenVerifier:
 
 
 def identity_from_claims(claims, ip):
-    # The tier comes from app_metadata, which only the server side (service role, Stripe
+    # The tier comes from app_metadata, which only the server side (service role, Paddle
     # webhook) can write. user_metadata is editable by the user, so it is never trusted.
     app = claims.get('app_metadata') if isinstance(claims.get('app_metadata'), dict) else {}
     tier = 'paid' if app.get('tier') == 'paid' else 'free'
     return Identity(ip, user=claims['sub'], tier=tier, email=claims.get('email'),
-                    customer=app.get('stripe_customer'))
+                    customer=app.get('paddle_customer'), subscription=app.get('paddle_subscription'))
 
 
 _auth = None  # a TokenVerifier once sign-in is configured
@@ -559,9 +569,11 @@ class Identity:
     """Who a request is for. Signed-in users are counted by account; guests by their
     cookie id, or by IP when there is no cookie (scripts)."""
 
-    def __init__(self, ip, visitor=None, user=None, tier='guest', email=None, customer=None):
+    def __init__(self, ip, visitor=None, user=None, tier='guest', email=None, customer=None,
+                 subscription=None):
         self.ip, self.visitor, self.user, self.tier, self.email = ip, visitor, user, tier, email
-        self.customer = customer  # Stripe customer id, once the account has subscribed
+        # Paddle ids, once the account has subscribed: for "Manage plan".
+        self.customer, self.subscription = customer, subscription
 
 
 class Quota:
@@ -985,7 +997,9 @@ audio[hidden]{display:none}
 <div class="card note"><strong>About the voices.</strong> Studio voices run Kokoro-82M (Apache 2.0) on our
 server: one set of weights serves all nine languages, and repeated phrases are cached and come
 back instantly. On-device voices run Phonon 31m by Gradium (Apache 2.0) in your browser, so
-they cost nothing and work offline once loaded. Voice names are Voxa's own. <a href="/credits" style="color:var(--accent)">Credits</a></div>
+they cost nothing and work offline once loaded. Voice names are Voxa's own. <a href="/credits" style="color:var(--accent)">Credits</a>
+· <a href="/pricing" style="color:var(--accent)">Pricing</a> · <a href="/terms" style="color:var(--accent)">Terms</a>
+· <a href="/privacy" style="color:var(--accent)">Privacy</a> · <a href="/refunds" style="color:var(--accent)">Refunds</a></div>
 </div>
 <script>
 const $=s=>document.querySelector(s);
@@ -1098,13 +1112,15 @@ async function goBilling(path, btn){
   btn.disabled=true;
   try{
     const r=await api(path,{method:'POST'}), j=await r.json().catch(()=>({}));
-    if(!r.ok||!j.url) throw new Error(j.error||'The payment page is not available right now.');
-    location.href=j.url;
+    if(!r.ok||!(j.url||j.checkout)) throw new Error(j.error||'The payment page is not available right now.');
+    // Paddle's checkout opens on its own page (it cannot run inside this isolated one).
+    if(j.checkout){ sessionStorage.setItem('voxa-checkout',JSON.stringify(j.checkout)); location.href='/checkout'; }
+    else location.href=j.url;
   }catch(e){ const st=$('#status'); st.className='status err'; st.textContent='Error: '+e.message; btn.disabled=false; }
 }
 $('#upgrade').addEventListener('click',e=>goBilling('/api/billing/checkout',e.currentTarget));
 $('#manage').addEventListener('click',e=>goBilling('/api/billing/portal',e.currentTarget));
-// Back from Stripe Checkout. The plan arrives by webhook, sometimes a few seconds after the
+// Back from Paddle's checkout. The plan arrives by webhook, sometimes a few seconds after the
 // visitor does, and only reaches the sign-in token on refresh, so refresh until it shows.
 async function welcomeBack(){
   if(!new URLSearchParams(location.search).has('upgraded')||!SB) return;
@@ -1502,7 +1518,8 @@ class Handler(BaseHTTPRequestHandler):
             for key, value in web_values().items():
                 page = page.replace('{{' + key + '}}', value)
             ctype = 'text/javascript; charset=utf-8' if name.endswith('.js') else 'text/html; charset=utf-8'
-            return self._send(200, page, ctype, {**ISOLATION, 'Cache-Control': 'no-cache'})
+            isolation = {} if p in PLAIN_PAGES else ISOLATION
+            return self._send(200, page, ctype, {**isolation, 'Cache-Control': 'no-cache'})
         if p == '/api/quota':
             who = self._identity()
             status = _quota.status(who) if _quota else None
@@ -1511,7 +1528,9 @@ class Handler(BaseHTTPRequestHandler):
                               extra={'Cache-Control': 'no-store'})
         if p == '/api/config':
             auth = {'url': SUPABASE_URL, 'anon_key': SUPABASE_ANON_KEY} if _auth else None
-            paying = {'price_label': billing.PRICE_LABEL} if _auth and billing.enabled(SUPABASE_URL) else None
+            paying = ({'price_label': billing.PRICE_LABEL, 'paddle': {
+                'token': billing.PADDLE_CLIENT_TOKEN, 'environment': 'sandbox' if billing.sandbox() else 'production'}}
+                if _auth and billing.enabled(SUPABASE_URL) else None)
             pods = {'daily': podcast_limits(), 'minutes': sorted(podcast.LENGTHS),
                     'tones': list(podcast.TONES), 'max_text': podcast.MAX_SOURCE} if podcast.enabled() else None
             return self._send(200, {'auth': auth, 'limits': tier_limits(), 'billing': paying,
@@ -1570,7 +1589,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _billing(self, p):
-        """Upgrade, manage the plan, and Stripe's webhook."""
+        """Upgrade, manage the plan, and Paddle's webhook."""
         if not (_auth and billing.enabled(SUPABASE_URL)):
             return self._send(404, {'error': 'payments are not set up'})
         if p == '/api/billing/webhook':
@@ -1580,17 +1599,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(413, {'error': 'too large'})
             payload = self.rfile.read(n)
             try:
-                event = billing.verify(payload, self.headers.get('Stripe-Signature'))
+                event = billing.verify(payload, self.headers.get('Paddle-Signature'))
             except (billing.BadSignature, ValueError) as e:
-                log.warning('rejected Stripe webhook: %s', e)
+                log.warning('rejected Paddle webhook: %s', e)
                 return self._send(400, {'error': 'bad signature'})
             try:
                 result = billing.handle_event(event, SUPABASE_URL)
             except Exception:
-                # A non-2xx makes Stripe retry the event later, which is what we want here.
-                log.exception('Stripe event %s failed', event.get('id'))
+                # A non-2xx makes Paddle retry the event later, which is what we want here.
+                log.exception('Paddle event %s failed', event.get('event_id'))
                 return self._send(500, {'error': 'could not apply the event'})
-            log.info('Stripe %s %s: %s', event.get('type'), event.get('id'), result)
+            log.info('Paddle %s %s: %s', event.get('event_type'), event.get('event_id'), result)
             return self._send(200, {'received': True})
         who = self._identity()
         if not who.user:
@@ -1600,11 +1619,11 @@ class Handler(BaseHTTPRequestHandler):
             if p == '/api/billing/checkout':
                 if who.tier == 'paid':
                     return self._send(409, {'error': 'This account already has the paid plan.'})
-                return self._send(200, {'url': billing.checkout_url(who, origin + '/')})
+                return self._send(200, {'checkout': billing.checkout(who, origin + '/')})
             if p == '/api/billing/portal':
                 if not who.customer:
                     return self._send(409, {'error': 'There is no subscription on this account yet.'})
-                return self._send(200, {'url': billing.portal_url(who, origin + '/')})
+                return self._send(200, {'url': billing.portal_url(who)})
         except billing.BillingError as e:
             return self._send(502, {'error': str(e)})
         return self._send(404, {'error': 'not found'})

@@ -205,6 +205,27 @@ VOICE_BY_ID = {v['id']: v for v in CATALOGUE}
 KOKORO_ALIASES = {v['source']: v['id'] for v in CATALOGUE if isinstance(v['source'], str)}
 # Voxa voice ids per language; the first is the language's default.
 VOICES = {lang: [v['id'] for v in CATALOGUE if v['lang'] == lang] for lang in LANG_LABELS}
+
+# Voice previews: one fixed line per language, so each Studio voice is generated at most once
+# and kept on disk. Free for everyone, since nobody can choose the text. Names are left out
+# where the script is not Latin, so the pronunciation stays clean.
+PREVIEW_LINES = {
+    'a': "Hi, I'm {name}. Let's dig into the ideas behind your document together.",
+    'b': "Hello, I'm {name}. Shall we explore the ideas behind your document together?",
+    'e': 'Hola, soy {name}. Vamos a analizar juntos las ideas de tu documento.',
+    'f': 'Bonjour, je suis {name}. Explorons ensemble les idées de votre document.',
+    'h': 'नमस्ते! चलिए, आपके दस्तावेज़ के विचारों को साथ मिलकर समझते हैं।',
+    'i': 'Ciao, sono {name}. Esploriamo insieme le idee del tuo documento.',
+    'j': 'こんにちは。一緒に、あなたの資料のアイデアを見ていきましょう。',
+    'p': 'Olá, eu sou {name}. Vamos explorar juntos as ideias do seu documento.',
+    'z': '你好！让我们一起来聊聊你的文档里的想法。',
+}
+PREVIEW_WAIT = 90
+
+
+def preview_text(voice_id):
+    v = VOICE_BY_ID[voice_id]
+    return PREVIEW_LINES[v['lang']].format(name=v['name'])
 LITE = load_lite(studio_ids=VOICE_BY_ID)
 
 _shared_model = None
@@ -1320,6 +1341,37 @@ class Handler(BaseHTTPRequestHandler):
             'Content-Disposition': f'attachment; filename="voxa-{job.key[:8]}.wav"',
         })
 
+    def _send_preview(self, voice_id):
+        """A Studio voice saying its preview line: from disk, or generated once (uncharged)."""
+        if voice_id not in VOICE_BY_ID:
+            return self._send(404, {'error': 'unknown voice'})
+        text = preview_text(voice_id)
+        lang = VOICE_BY_ID[voice_id]['lang']
+        digest = hashlib.sha256(text.encode()).hexdigest()[:10]
+        folder = os.path.join(DATA_DIR, 'previews')
+        path = os.path.join(folder, f'{voice_id}-{digest}.wav')
+        headers = {'Cache-Control': 'public, max-age=86400', 'Cross-Origin-Resource-Policy': 'same-origin'}
+        if os.path.isfile(path):
+            with open(path, 'rb') as f:
+                return self._send(200, f.read(), 'audio/wav', headers)
+        # The text is fixed, so a preview is never charged; it goes to the CPU queue.
+        job = _jobs.submit(text, lang, voice_id, 1.0)
+        if not job.done.wait(PREVIEW_WAIT) or job.status != 'done':
+            return self._send(503, {'error': 'The preview is not ready. Please try again in a moment.'},
+                              extra={'Retry-After': '10'})
+        audio = _cache.get(job.key)
+        if audio is None:
+            return self._send(503, {'error': 'The preview is not ready. Please try again.'})
+        try:
+            os.makedirs(folder, exist_ok=True)
+            tmp = f'{path}.{uuid.uuid4().hex}.tmp'
+            with open(tmp, 'wb') as f:
+                f.write(audio)
+            os.replace(tmp, path)
+        except OSError as e:
+            log.warning('cannot keep preview %s: %s', path, e)
+        return self._send(200, audio, 'audio/wav', headers)
+
     def _send_static(self, rel):
         """A file under static/, by extension allow-list, never outside the directory."""
         root = os.path.realpath(STATIC_DIR)
@@ -1394,6 +1446,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             self._get()
+        except Busy:
+            self._send(503, {'error': 'The server is busy. Please try again in a minute.'},
+                       extra={'Retry-After': '30'})
         except AuthError as e:
             self._send_auth_error(e)
         except Exception:
@@ -1471,6 +1526,8 @@ class Handler(BaseHTTPRequestHandler):
                 'Content-Disposition': f'attachment; filename="voxa-{key[:8]}.wav"',
                 'Cache-Control': 'private, max-age=3600',
             })
+        if p.startswith('/api/preview/'):
+            return self._send_preview(p.rsplit('/', 1)[-1])
         if p == '/health':
             return self._send(200, {
                 'ok': True,

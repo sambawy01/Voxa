@@ -39,6 +39,8 @@ button.ghost{flex:1 1 120px;background:transparent;color:var(--ink);border:1px s
 button.small{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:6px 13px;font:inherit;font-size:13px;cursor:pointer}
 button[hidden]{display:none}
 button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.hear{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.hearnote{font-size:12.5px;color:var(--dim)}
 .privacy{font-size:13px;color:var(--dim);border-left:3px solid var(--line);padding-left:10px}
 input.eptitle{font-size:18px;font-weight:650}
 ol.chapters{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
@@ -88,13 +90,17 @@ ol.saved li{background:var(--panel2);border:1px solid var(--line);border-radius:
       <option value="friendly" selected>Friendly and curious</option><option value="expert">Expert briefing</option>
       <option value="lively">Lively, with humour</option><option value="critical">Critical: test the ideas</option></select></label>
     <label>Language<select id="lang"></select></label>
+    <label>Hosts<select id="pair">
+      <option value="mixed" selected>A woman and a man</option><option value="women">Two women</option><option value="men">Two men</option></select></label>
   </div>
   <div class="hosts">
     <div class="host a"><h3>First host</h3>
       <label>Voice<select id="voiceA"></select></label>
+      <div class="hear"><button class="small" id="hearA" type="button">▶ Hear this voice</button><span class="hearnote" id="hearnoteA" role="status"></span></div>
       <label>Name<input id="nameA" type="text" maxlength="40"></label></div>
     <div class="host b"><h3>Second host</h3>
       <label>Voice<select id="voiceB"></select></label>
+      <div class="hear"><button class="small" id="hearB" type="button">▶ Hear this voice</button><span class="hearnote" id="hearnoteB" role="status"></span></div>
       <label>Name<input id="nameB" type="text" maxlength="40"></label></div>
   </div>
   <p class="note" id="voicenote"></p>
@@ -238,16 +244,30 @@ async function setupVoices() {
   $('#expr').replaceChildren(...((v.lite && v.lite.expressiveness) || []).map(e =>
     el('option', { value: e.temperature, textContent: e.name, selected: !!e.default })));
   $('#lang').onchange = () => fillVoices();
+  $('#pair').onchange = () => fillVoices();
   for (const h of ['A', 'B']) {
-    $('#voice' + h).onchange = () => { if (!named[h]) $('#name' + h).value = voiceById($('#lang').value, $('#voice' + h).value).name; voiceNote(); };
+    $('#voice' + h).onchange = () => { stopPreview(); if (!named[h]) $('#name' + h).value = voiceById($('#lang').value, $('#voice' + h).value).name; voiceNote(); };
     $('#name' + h).oninput = () => { named[h] = !!$('#name' + h).value.trim(); };
+    $('#hear' + h).onclick = () => preview(h);
   }
   fillVoices();
 }
 
+// Which gender each host is, from the pairing: a woman and a man, two women, or two men.
+const PAIRS = { mixed: { A: 'female', B: 'male' }, women: { A: 'female', B: 'female' }, men: { A: 'male', B: 'male' } };
+
 function fillVoices(sel = {}) {
-  const lang = $('#lang').value, all = voicesFor(lang);
-  const groups = () => {
+  stopPreview();
+  const lang = $('#lang').value, every = voicesFor(lang), pair = PAIRS[$('#pair').value];
+  const missing = [];
+  // Each host's list holds voices of that host's gender, or every voice if the language has none.
+  const listFor = h => {
+    const same = every.filter(v => v.gender === pair[h]);
+    if (!same.length) missing.push(pair[h] === 'male' ? "men's" : "women's");
+    return same.length ? same : every;
+  };
+  const lists = { A: listFor('A'), B: listFor('B') };
+  const groups = all => {
     const lite = all.filter(v => v.lite), studio = all.filter(v => !v.lite);
     const opt = v => el('option', { value: v.id, textContent: `${v.name} · ${v.gender === 'male' ? 'man' : 'woman'}` });
     const out = [];
@@ -255,11 +275,13 @@ function fillVoices(sel = {}) {
     out.push(el('optgroup', { label: 'Studio voices' }, ...studio.map(opt)));
     return out;
   };
-  // Defaults: a woman and a man, on-device first in English since they cost nothing.
-  const pick = (gender, not) => (all.find(v => v.gender === gender && v.id !== not) || all.find(v => v.id !== not) || all[0]).id;
-  const a = sel.A || pick('female'), b = sel.B || pick('male', a);
-  $('#voiceA').replaceChildren(...groups()); $('#voiceA').value = a;
-  $('#voiceB').replaceChildren(...groups()); $('#voiceB').value = b;
+  // Defaults: the first fitting voice, on-device first in English since they cost nothing,
+  // and two different voices whenever the language has them.
+  const pick = (list, not) => (list.find(v => v.id !== not) || list[0]).id;
+  const a = sel.A || pick(lists.A), b = sel.B || pick(lists.B, a);
+  $('#voiceA').replaceChildren(...groups(lists.A)); $('#voiceA').value = a;
+  $('#voiceB').replaceChildren(...groups(lists.B)); $('#voiceB').value = b;
+  fillVoices.missing = [...new Set(missing)];
   // A saved voice that is no longer offered (or on-device voices unavailable here) falls back.
   for (const h of ['A', 'B']) if (!voiceById(lang, $('#voice' + h).value)) $('#voice' + h).selectedIndex = 0;
   for (const h of ['A', 'B']) if (!named[h]) $('#name' + h).value = voiceById(lang, $('#voice' + h).value).name;
@@ -269,11 +291,73 @@ function fillVoices(sel = {}) {
 function voiceNote() {
   const lang = $('#lang').value, a = voiceById(lang, $('#voiceA').value), b = voiceById(lang, $('#voiceB').value);
   const notes = [];
-  if (a.id === b.id) notes.push(`${$('#lang').selectedOptions[0].textContent} has only one voice, so both hosts share it.`);
+  const langName = $('#lang').selectedOptions[0].textContent;
+  if ((fillVoices.missing || []).length) notes.push(`${langName} has no ${fillVoices.missing.join(' or ')} voices, so every voice is offered.`);
+  if (a.id === b.id) {
+    const gender = PAIRS[$('#pair').value].B, sameGender = voicesFor(lang).filter(v => v.gender === gender).length;
+    notes.push(voicesFor(lang).length === 1 ? `${langName} has only one voice, so both hosts share it.`
+      : sameGender === 1 && $('#pair').value !== 'mixed' ? `${langName} has only one ${gender === 'male' ? "man's" : "woman's"} voice, so both hosts share it. Choose “A woman and a man” for two different voices.`
+      : 'Both hosts have the same voice. Pick another for the second host.');
+  }
   if (a.lite !== b.lite) notes.push('One host is on-device and one is a Studio voice; they will sound a little different.');
   $('#voicenote').textContent = notes.join(' ');
   $('#exprbox').hidden = !(a.lite || b.lite);
   refreshMake();
+}
+
+// --- Hearing a voice before choosing it ---------------------------------------------------------
+// Studio voices: a short fixed line the server makes once per voice and keeps (free). On-device
+// voices: the same line spoken here, which downloads the on-device voice the first time.
+const PREVIEW_LINE = name => `Hi, I'm ${name}. Let's dig into the ideas behind your document together.`;
+const SILENCE = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQIAAAAAAA==';
+const LITE_PREVIEWS = new Map();
+let player = null, playing = null;
+
+function stopPreview() {
+  if (player) { player.pause(); player.onended = player.onerror = null; }
+  if (playing) { $('#hear' + playing).textContent = '▶ Hear this voice'; $('#hearnote' + playing).textContent = ''; }
+  playing = null;
+}
+
+async function preview(h) {
+  if (playing === h) return stopPreview();
+  stopPreview();
+  const lang = $('#lang').value, v = voiceById(lang, $('#voice' + h).value), btn = $('#hear' + h), note = $('#hearnote' + h);
+  playing = h;
+  btn.textContent = '■ Stop';
+  // Start playback inside the tap: iPhones only let a page play sound it started from a tap,
+  // and audio made after an await would otherwise stay silent.
+  player ||= new Audio();
+  player.src = SILENCE;
+  player.play().catch(() => {});
+  try {
+    let src;
+    if (v.lite) {
+      const key = v.id + ':' + $('#expr').value;
+      if (!LITE_PREVIEWS.has(key)) {
+        note.textContent = 'Preparing the on-device voice…';
+        const tts = await liteEngine(note);
+        if (!LITE_ADDED.has(v.id)) { await tts.addVoice(v.id, v.url); LITE_ADDED.add(v.id); }
+        note.textContent = 'Speaking…';
+        const pcm = floatToInt16(await tts.synth(PREVIEW_LINE(v.name), { voice: v.id, temperature: +$('#expr').value, seed: LITE_SEED }));
+        LITE_PREVIEWS.set(key, URL.createObjectURL(new Blob([encodeWav(pcm, SAMPLE_RATE)], { type: 'audio/wav' })));
+      }
+      src = LITE_PREVIEWS.get(key);
+    } else {
+      note.textContent = 'Loading…';
+      src = '/api/preview/' + encodeURIComponent(v.id);
+    }
+    if (playing !== h) return;
+    player.src = src;
+    player.onended = () => { if (playing === h) stopPreview(); };
+    player.onerror = () => { if (playing === h) { stopPreview(); note.textContent = 'The preview could not play. Try again in a moment.'; } };
+    await player.play();
+    if (playing === h) note.textContent = `${v.name} · ${v.lite ? 'on this device' : 'Studio voice'}`;
+  } catch (e) {
+    if (playing !== h) return;
+    stopPreview();
+    note.textContent = 'The preview could not play: ' + e.message;
+  }
 }
 
 function hostVoices() {
@@ -338,7 +422,7 @@ $('#write').onclick = async () => {
 async function savePod() {
   db ||= await openStore('voxa-podcasts');
   POD.saved = Date.now();
-  POD.settings = { lang: $('#lang').value, A: $('#voiceA').value, B: $('#voiceB').value };
+  POD.settings = { lang: $('#lang').value, pair: $('#pair').value, A: $('#voiceA').value, B: $('#voiceB').value };
   await saveBook(db, POD.id, POD);
 }
 let saveTimer = null;
@@ -446,7 +530,7 @@ async function makePart(text, s, signal, st) {
   return parseWav(await r.arrayBuffer()).pcm;
 }
 
-const controls = ['#lang', '#voiceA', '#voiceB', '#expr', '#file', '#write'];
+const controls = ['#lang', '#pair', '#voiceA', '#voiceB', '#expr', '#file', '#write'];
 async function start() {
   const st = $('#genstatus'), voices = hostVoices(), key = await audioKey(), plan = planParts(POD.script);
   running = true; controller = new AbortController();
@@ -571,6 +655,7 @@ async function openPod(p) {
   await setupVoices();
   if (p.settings) {
     $('#lang').value = p.settings.lang;
+    $('#pair').value = p.settings.pair || 'mixed';
     named.A = named.B = true;
     $('#nameA').value = p.script.hosts.A; $('#nameB').value = p.script.hosts.B;
     fillVoices({ A: p.settings.A, B: p.settings.B });

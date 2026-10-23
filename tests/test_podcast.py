@@ -285,3 +285,52 @@ class PodcastOffTest(ts.ServerTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PreviewTest(ts.ServerTestCase):
+    """Voice previews: a fixed line per language, generated once, kept on disk, never charged."""
+
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved = server.DATA_DIR
+        server.DATA_DIR = self.tmp.name
+        server._quota = server.Quota(':memory:', {'guest': 10, 'free': 10, 'paid': 0})
+
+    def tearDown(self):
+        server.DATA_DIR = self.saved
+        server._quota = None
+        self.tmp.cleanup()
+
+    def test_every_language_has_a_line_and_latin_names_are_used(self):
+        self.assertEqual(set(server.PREVIEW_LINES), set(server.LANG_LABELS))
+        self.assertIn('Harper', server.preview_text('harper'))
+        for vid in server.VOICE_BY_ID:
+            self.assertNotIn('{', server.preview_text(vid))
+
+    def test_generated_once_then_served_from_disk_without_charge(self):
+        calls = len(self.gen.calls)
+        code, headers, body = self.req('/api/preview/harper')
+        self.assertEqual((code, headers['Content-Type']), (200, 'audio/wav'))
+        self.assertTrue(body.startswith(b'RIFF'))
+        self.assertEqual(len(self.gen.calls), calls + 1)
+        self.assertEqual(self.gen.calls[-1].text, server.preview_text('harper'))
+        files = os.listdir(os.path.join(self.tmp.name, 'previews'))
+        self.assertEqual(len(files), 1)
+        self.assertTrue(files[0].startswith('harper-'))
+        server._cache = server.AudioCache(server.MAX_CACHE_BYTES)  # as after a restart
+        code, _, again = self.req('/api/preview/harper')
+        self.assertEqual((code, again), (200, body))
+        self.assertEqual(len(self.gen.calls), calls + 1)
+        # The guest allowance (10 characters) is untouched.
+        _, _, quota = self.req('/api/quota')
+        self.assertEqual(json.loads(quota)['quota']['remaining'], 10)
+
+    def test_unknown_voice_and_failure(self):
+        self.assertEqual(self.req('/api/preview/nobody')[0], 404)
+        self.assertEqual(self.req('/api/preview/..%2Fetc')[0], 404)
+        self.gen.fail = True
+        code, _, _ = self.req('/api/preview/sienna')
+        self.assertEqual(code, 503)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, 'previews')))

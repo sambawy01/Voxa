@@ -20,6 +20,12 @@ voices and the daily character allowance.
   - `GET /api/podcast/script/<id>` returns it, only to the person who asked.
   - `/api/config` includes `podcast` when the feature is on.
 - `web/podcast.html` and `web/podcast.js`: the page, plus the deck reader and the script editor.
+- Hosts: a woman and a man by default, or two women or two men. Each host's voice can be
+  heard before choosing:
+  - Studio voices: `GET /api/preview/<voice>` speaks a fixed line in the voice's language. It
+    is made once per voice, free, and kept in `<data dir>/previews/`, so it survives
+    restarts with a Fly volume.
+  - On-device voices: the line is spoken in the browser.
 
 ## Cost
 

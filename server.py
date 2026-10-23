@@ -112,7 +112,7 @@ ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
 # are filled from web_values().
 WEB_PAGES = {'/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
              '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html',
-             '/podcast': 'podcast.html', '/podcast.js': 'podcast.js'}
+             '/podcast': 'podcast.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js'}
 
 
 def web_values():
@@ -121,7 +121,7 @@ def web_values():
             return hashlib.sha256(f.read()).hexdigest()[:12]
     return {'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,
             'LAMEJS_VERSION': LAMEJS_VERSION, 'BOOK_VERSION': version('book.js'),
-            'PODCAST_VERSION': version('podcast.js')}
+            'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js')}
 
 LANG_LABELS = {
     'a': 'English (US)',
@@ -210,15 +210,15 @@ VOICES = {lang: [v['id'] for v in CATALOGUE if v['lang'] == lang] for lang in LA
 # and kept on disk. Free for everyone, since nobody can choose the text. Names are left out
 # where the script is not Latin, so the pronunciation stays clean.
 PREVIEW_LINES = {
-    'a': "Hi, I'm {name}. Let's dig into the ideas behind your document together.",
-    'b': "Hello, I'm {name}. Shall we explore the ideas behind your document together?",
-    'e': 'Hola, soy {name}. Vamos a analizar juntos las ideas de tu documento.',
-    'f': 'Bonjour, je suis {name}. Explorons ensemble les idées de votre document.',
-    'h': 'नमस्ते! चलिए, आपके दस्तावेज़ के विचारों को साथ मिलकर समझते हैं।',
-    'i': 'Ciao, sono {name}. Esploriamo insieme le idee del tuo documento.',
-    'j': 'こんにちは。一緒に、あなたの資料のアイデアを見ていきましょう。',
-    'p': 'Olá, eu sou {name}. Vamos explorar juntos as ideias do seu documento.',
-    'z': '你好！让我们一起来聊聊你的文档里的想法。',
+    'a': "Hi, I'm {name}. This is how your words will sound in my voice.",
+    'b': "Hello, I'm {name}. This is how your words will sound in my voice.",
+    'e': 'Hola, soy {name}. Así sonarán tus palabras con mi voz.',
+    'f': 'Bonjour, je suis {name}. Voici comment vos mots sonneront avec ma voix.',
+    'h': 'नमस्ते! आपके शब्द मेरी आवाज़ में कुछ ऐसे सुनाई देंगे।',
+    'i': 'Ciao, sono {name}. Ecco come suoneranno le tue parole con la mia voce.',
+    'j': 'こんにちは。あなたの言葉は、私の声でこんなふうに聞こえます。',
+    'p': 'Olá, eu sou {name}. É assim que as suas palavras vão soar na minha voz.',
+    'z': '你好！你的文字用我的声音读出来，就是这样的。',
 }
 PREVIEW_WAIT = 90
 
@@ -893,6 +893,9 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .meta{display:flex;justify-content:space-between;color:var(--dim);font-size:12px;margin-top:7px;font-variant-numeric:tabular-nums}
 .meta .over,.hint.over{color:var(--bad)}
 .hint{color:var(--dim);font-size:12px;margin:6px 0 0;min-height:18px}
+.hear{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:2px 0 10px}
+.hear .hint{margin:0;min-height:0}
+.hear button[hidden]{display:none}
 .val{color:var(--good);font-variant-numeric:tabular-nums;font-size:13px}
 button.primary{width:100%;margin-top:18px;background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:680;cursor:pointer}
 button.primary:disabled{opacity:.45;cursor:default}
@@ -960,6 +963,7 @@ audio[hidden]{display:none}
     <label for="voice">Voice</label>
     <select id="voice"></select>
     <p class="hint" id="voicenote"></p>
+    <div class="hear"><button class="small" id="hear" type="button">▶ Hear this voice</button><span class="hint" id="hearnote" role="status"></span></div>
     <div id="litebox" hidden>
       <label for="expr">Expressiveness</label>
       <select id="expr"></select>
@@ -1024,6 +1028,15 @@ function describeVoice(){
 }
 langSel.addEventListener('change',refreshVoices);
 voiceSel.addEventListener('change',describeVoice);
+// "Hear this voice": the shared preview button (web/preview.js). On-device voices speak the
+// preview line here with the same engine and settings as a real take.
+import('/preview.js').then(P=>{
+  P.attachPreview($('#hear'), $('#hearnote'), ()=>{
+    const id=voiceSel.value, lite=LITE_BY_ID[id], v=lite||(CAT[langSel.value]||[]).find(x=>x.id===id);
+    return v?{...v, lite:!!lite, key:$('#expr').value}:null;
+  }, async(v,note)=>(await generateLite(P.PREVIEW_LINE(v.name), v.id, note)).blob);
+  langSel.addEventListener('change',P.stopPreview); voiceSel.addEventListener('change',P.stopPreview);
+}).catch(()=>{ $('#hear').hidden=true; });
 $('#speed').addEventListener('input',e=>$('#speedv').textContent=(+e.target.value).toFixed(2)+'×');
 function upd(){const t=$('#text').value;const c=$('#count');c.textContent=`${t.length} / ${MAX} characters`;c.className=t.length>MAX?'over':'';$('#est').textContent=t.length?`≈ ${Math.ceil(t.length/14)}s of audio`:'';}
 $('#text').addEventListener('input',upd);upd();

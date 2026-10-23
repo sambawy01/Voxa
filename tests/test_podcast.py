@@ -334,3 +334,16 @@ class PreviewTest(ts.ServerTestCase):
         code, _, _ = self.req('/api/preview/sienna')
         self.assertEqual(code, 503)
         self.assertFalse(os.path.exists(os.path.join(self.tmp.name, 'previews')))
+
+    def test_every_voice_picker_has_a_preview_button(self):
+        code, headers, js = self.req('/preview.js')
+        self.assertEqual(code, 200)
+        self.assertTrue(headers['Content-Type'].startswith('text/javascript'))
+        self.assertIn(b'export function attachPreview', js)
+        version = server.web_values()['PREVIEW_VERSION'].encode()
+        for path, needles in (('/', [b'id="hear"', b"import('/preview.js')"]),
+                              ('/book', [b'id="hear"', b'/preview.js?v=' + version]),
+                              ('/podcast', [b'id="hearA"', b'id="hearB"', b'/preview.js?v=' + version])):
+            _, _, page = self.req(path)
+            for needle in needles:
+                self.assertIn(needle, page, (path, needle))

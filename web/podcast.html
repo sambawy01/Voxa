@@ -33,6 +33,7 @@ details summary{cursor:pointer;color:var(--dim);font-size:14px}
 select{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;text-transform:none;letter-spacing:0;width:100%}
 .host select,.host input{text-transform:none;letter-spacing:0}
 .row{display:flex;gap:8px;flex-wrap:wrap}
+.row[hidden]{display:none}
 button.primary{flex:1 1 200px;background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:680;cursor:pointer}
 button.primary:disabled{opacity:.45;cursor:default}
 button.ghost{flex:1 1 120px;background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit;cursor:pointer}
@@ -140,6 +141,7 @@ ol.saved li{background:var(--panel2);border:1px solid var(--line);border-radius:
 import * as pdfjs from '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.min.mjs';
 import { paragraphsFromText, formatDuration, estimateSeconds, openStore, saveChunk, loadChunk, savedChunkKeys,
   saveBook, listBooks, deleteBook, parseWav, encodeWav, floatToInt16, SAMPLE_RATE, bookMp3 } from '/book.js';
+import { attachPreview, stopPreview, PREVIEW_LINE } from '/preview.js?v={{PREVIEW_VERSION}}';
 import { pdfText, pptxText, limitText, chapterToText, textToLines, scriptChars, planParts, joinTurns, MAX_TEXT } from '/podcast.js?v={{PODCAST_VERSION}}';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.worker.min.mjs';
@@ -248,9 +250,18 @@ async function setupVoices() {
   for (const h of ['A', 'B']) {
     $('#voice' + h).onchange = () => { stopPreview(); if (!named[h]) $('#name' + h).value = voiceById($('#lang').value, $('#voice' + h).value).name; voiceNote(); };
     $('#name' + h).oninput = () => { named[h] = !!$('#name' + h).value.trim(); };
-    $('#hear' + h).onclick = () => preview(h);
+    attachPreview($('#hear' + h), $('#hearnote' + h),
+      () => ({ ...voiceById($('#lang').value, $('#voice' + h).value), key: $('#expr').value }), speakOnDevice);
   }
   fillVoices();
+}
+
+async function speakOnDevice(v, note) {
+  const tts = await liteEngine(note);
+  if (!LITE_ADDED.has(v.id)) { await tts.addVoice(v.id, v.url); LITE_ADDED.add(v.id); }
+  note.textContent = 'Speaking…';
+  const pcm = floatToInt16(await tts.synth(PREVIEW_LINE(v.name), { voice: v.id, temperature: +$('#expr').value, seed: LITE_SEED }));
+  return new Blob([encodeWav(pcm, SAMPLE_RATE)], { type: 'audio/wav' });
 }
 
 // Which gender each host is, from the pairing: a woman and a man, two women, or two men.
@@ -303,61 +314,6 @@ function voiceNote() {
   $('#voicenote').textContent = notes.join(' ');
   $('#exprbox').hidden = !(a.lite || b.lite);
   refreshMake();
-}
-
-// --- Hearing a voice before choosing it ---------------------------------------------------------
-// Studio voices: a short fixed line the server makes once per voice and keeps (free). On-device
-// voices: the same line spoken here, which downloads the on-device voice the first time.
-const PREVIEW_LINE = name => `Hi, I'm ${name}. Let's dig into the ideas behind your document together.`;
-const SILENCE = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQIAAAAAAA==';
-const LITE_PREVIEWS = new Map();
-let player = null, playing = null;
-
-function stopPreview() {
-  if (player) { player.pause(); player.onended = player.onerror = null; }
-  if (playing) { $('#hear' + playing).textContent = '▶ Hear this voice'; $('#hearnote' + playing).textContent = ''; }
-  playing = null;
-}
-
-async function preview(h) {
-  if (playing === h) return stopPreview();
-  stopPreview();
-  const lang = $('#lang').value, v = voiceById(lang, $('#voice' + h).value), btn = $('#hear' + h), note = $('#hearnote' + h);
-  playing = h;
-  btn.textContent = '■ Stop';
-  // Start playback inside the tap: iPhones only let a page play sound it started from a tap,
-  // and audio made after an await would otherwise stay silent.
-  player ||= new Audio();
-  player.src = SILENCE;
-  player.play().catch(() => {});
-  try {
-    let src;
-    if (v.lite) {
-      const key = v.id + ':' + $('#expr').value;
-      if (!LITE_PREVIEWS.has(key)) {
-        note.textContent = 'Preparing the on-device voice…';
-        const tts = await liteEngine(note);
-        if (!LITE_ADDED.has(v.id)) { await tts.addVoice(v.id, v.url); LITE_ADDED.add(v.id); }
-        note.textContent = 'Speaking…';
-        const pcm = floatToInt16(await tts.synth(PREVIEW_LINE(v.name), { voice: v.id, temperature: +$('#expr').value, seed: LITE_SEED }));
-        LITE_PREVIEWS.set(key, URL.createObjectURL(new Blob([encodeWav(pcm, SAMPLE_RATE)], { type: 'audio/wav' })));
-      }
-      src = LITE_PREVIEWS.get(key);
-    } else {
-      note.textContent = 'Loading…';
-      src = '/api/preview/' + encodeURIComponent(v.id);
-    }
-    if (playing !== h) return;
-    player.src = src;
-    player.onended = () => { if (playing === h) stopPreview(); };
-    player.onerror = () => { if (playing === h) { stopPreview(); note.textContent = 'The preview could not play. Try again in a moment.'; } };
-    await player.play();
-    if (playing === h) note.textContent = `${v.name} · ${v.lite ? 'on this device' : 'Studio voice'}`;
-  } catch (e) {
-    if (playing !== h) return;
-    stopPreview();
-    note.textContent = 'The preview could not play: ' + e.message;
-  }
 }
 
 function hostVoices() {
@@ -530,7 +486,7 @@ async function makePart(text, s, signal, st) {
   return parseWav(await r.arrayBuffer()).pcm;
 }
 
-const controls = ['#lang', '#pair', '#voiceA', '#voiceB', '#expr', '#file', '#write'];
+const controls = ['#lang', '#pair', '#voiceA', '#voiceB', '#hearA', '#hearB', '#expr', '#file', '#write'];
 async function start() {
   const st = $('#genstatus'), voices = hostVoices(), key = await audioKey(), plan = planParts(POD.script);
   running = true; controller = new AbortController();

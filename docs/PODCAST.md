@@ -26,6 +26,7 @@ voices and the daily character allowance.
     is made once per voice, free, and kept in `<data dir>/previews/`, so it survives
     restarts with a Fly volume.
   - On-device voices: the line is spoken in the browser.
+- The same button (`web/preview.js`) is on every voice picker: the main page, audiobooks and podcasts.
 
 ## Cost
 

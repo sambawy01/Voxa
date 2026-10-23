@@ -120,7 +120,11 @@ PLAIN_PAGES = {'/checkout'}
 WEB_PAGES = {'/': 'index.html', '/voxa.css': 'voxa.css', '/checkout': 'checkout.html', '/pricing': 'pricing.html', '/terms': 'terms.html',
              '/privacy': 'privacy.html', '/refunds': 'refunds.html', '/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
              '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html',
-             '/podcast': 'podcast.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js'}
+             '/podcast': 'podcast.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
+             '/listen': 'listen.html', '/listen.js': 'listen.js', '/manifest.webmanifest': 'manifest.webmanifest'}
+# Binary files from web/: the app icons for home screens.
+WEB_FILES = {'/apple-touch-icon.png': 'icons/apple-touch-icon.png', '/icons/icon-192.png': 'icons/icon-192.png',
+             '/icons/icon-512.png': 'icons/icon-512.png'}
 
 
 def web_values():
@@ -137,6 +141,7 @@ def web_values():
             'CSS_VERSION': version('voxa.css'), 'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,
             'LAMEJS_VERSION': LAMEJS_VERSION, 'BOOK_VERSION': version('book.js'),
             'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js'),
+            'LISTEN_VERSION': version('listen.js'),
             'OPERATOR': html.escape(OPERATOR), 'CONTACT_EMAIL': html.escape(CONTACT_EMAIL),
             'PRICE_LABEL': html.escape(billing.PRICE_LABEL or 'see the price at checkout')}
 
@@ -1044,13 +1049,17 @@ class Handler(BaseHTTPRequestHandler):
             p = '/'
         if p.startswith('/static/'):
             return self._send_static(p[len('/static/'):])
+        if p in WEB_FILES:
+            with open(os.path.join(WEB_DIR, WEB_FILES[p]), 'rb') as f:
+                return self._send(200, f.read(), 'image/png', {'Cache-Control': 'public, max-age=86400'})
         if p in WEB_PAGES:
             name = WEB_PAGES[p]
             with open(os.path.join(WEB_DIR, name), encoding='utf-8') as f:
                 page = f.read()
             for key, value in web_values().items():
                 page = page.replace('{{' + key + '}}', value)
-            ctype = {'.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8'}.get(
+            ctype = {'.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+                     '.webmanifest': 'application/manifest+json'}.get(
                 os.path.splitext(name)[1], 'text/html; charset=utf-8')
             # Isolated so on-device voices get WebAssembly threads (all but PLAIN_PAGES).
             extra = {**({} if p in PLAIN_PAGES else ISOLATION), 'Cache-Control': 'no-cache'}

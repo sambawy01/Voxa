@@ -213,7 +213,7 @@ class PodcastHTTPTest(ts.ServerTestCase):
 
     def test_free_account_writes_one_script_a_day(self):
         token = self.keys.token(sub='alice')
-        code, job = self.call('/api/podcast/script', {'text': DOC, 'focus': 'money'}, token)
+        code, job = self.call('/api/podcast/script', {'text': DOC, 'focus': 'money', 'minutes': 5}, token)
         self.assertEqual(code, 202)
         code, job = self.finish(job['id'], token)
         self.assertEqual((code, job['status']), (200, 'done'))
@@ -222,7 +222,7 @@ class PodcastHTTPTest(ts.ServerTestCase):
         # Someone else cannot read it.
         code, _ = self.call(f'/api/podcast/script/{job["id"]}', token=self.keys.token(sub='mallory'))
         self.assertEqual(code, 404)
-        code, err = self.call('/api/podcast/script', {'text': DOC}, token)
+        code, err = self.call('/api/podcast/script', {'text': DOC, 'minutes': 5}, token)
         self.assertEqual(code, 429)
         self.assertIn('1 podcast script for today', err['error'])
 
@@ -231,31 +231,42 @@ class PodcastHTTPTest(ts.ServerTestCase):
             raise podcast.ModelError('The script writer is busy.')
         server._scripts = podcast.ScriptJobs(writer=boom)
         token = self.keys.token(sub='carol')
-        _, job = self.call('/api/podcast/script', {'text': DOC}, token)
+        _, job = self.call('/api/podcast/script', {'text': DOC, 'minutes': 5}, token)
         _, job = self.finish(job['id'], token)
         self.assertEqual(job, {'id': job['id'], 'status': 'error', 'error': 'The script writer is busy.'})
         server._scripts = podcast.ScriptJobs(writer=lambda req: podcast.check_script(script(), req['hosts']))
-        code, _ = self.call('/api/podcast/script', {'text': DOC}, token)
+        code, _ = self.call('/api/podcast/script', {'text': DOC, 'minutes': 5}, token)
         self.assertEqual(code, 202)
 
     def test_guests_must_sign_in_and_bad_requests_are_400(self):
         code, err = self.call('/api/podcast/script', {'text': DOC})
-        self.assertEqual((code, err['error']), (403, 'Sign in to make podcasts.'))
+        self.assertEqual(code, 403)
+        self.assertEqual(err, {'error': 'Sign in to make podcasts. A Voxa Lite account is free.', 'signin': True})
         code, err = self.call('/api/podcast/script', {'text': 'short'}, self.keys.token(sub='dave'))
         self.assertEqual(code, 400)
         self.assertIn('some text', err['error'])
         self.assertEqual(self.written, [])
 
-    def test_paid_accounts_get_more(self):
+    def test_paid_accounts_get_more_and_longer_episodes(self):
         token = self.keys.token(sub='erin', app_metadata={'tier': 'paid'})
         for expected in (202, 202, 429):
-            code, _ = self.call('/api/podcast/script', {'text': DOC}, token)
+            code, _ = self.call('/api/podcast/script', {'text': DOC, 'minutes': 20}, token)
             self.assertEqual(code, expected)
+
+    def test_free_episodes_are_capped_at_the_plans_length(self):
+        token = self.keys.token(sub='fay')
+        code, err = self.call('/api/podcast/script', {'text': DOC, 'minutes': 10}, token)
+        self.assertEqual(code, 403)
+        self.assertIn('Voxa Lite episodes are up to 5 minutes', err['error'])
+        self.assertEqual(self.written, [])  # and nothing was charged: a 5-minute one still works
+        code, _ = self.call('/api/podcast/script', {'text': DOC, 'minutes': 5}, token)
+        self.assertEqual(code, 202)
 
     def test_config_and_page(self):
         _, config = self.call('/api/config')
         self.assertEqual(config['podcast']['daily'], {'guest': 0, 'free': 1, 'paid': 2})
         self.assertEqual(config['podcast']['minutes'], [5, 10, 20])
+        self.assertEqual(config['podcast']['max_minutes'], {'free': 5, 'paid': 20, 'guest': 5})
         code, headers, page = self.req('/podcast')
         self.assertEqual(code, 200)
         self.assertEqual(headers['Cross-Origin-Embedder-Policy'], 'require-corp')

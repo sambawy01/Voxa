@@ -566,14 +566,14 @@ class TokenVerifierTest(unittest.TestCase):
 
 
 class AccountsHTTPTest(ServerTestCase):
-    """Sign-in turned on: guests 50 a day, free accounts 100, paid unlimited."""
+    """Sign-in turned on: visitors must sign in; Lite accounts get 100 a day, Studio 1000."""
 
     def setUp(self):
         super().setUp()
         self.keys = getattr(AccountsHTTPTest, '_keys', None) or Keys()
         AccountsHTTPTest._keys = self.keys
         server._auth = server.TokenVerifier(URL, fetch_jwks=lambda: self.keys.jwks)
-        server._quota = server.Quota(':memory:', {'guest': 50, 'free': 100, 'paid': 0})
+        server._quota = server.Quota(':memory:', {'guest': 100, 'free': 100, 'paid': 1000})
 
     def tearDown(self):
         server._auth = None
@@ -599,20 +599,33 @@ class AccountsHTTPTest(ServerTestCase):
         self.assertEqual(body['account'], {'email': 'alice@example.com', 'tier': 'free'})
         self.assertEqual(body['quota']['limit'], 100)
 
-    def test_guest_gets_the_smaller_allowance(self):
+    def test_visitors_must_sign_in_once_accounts_exist(self):
         _, _, body = self.req('/api/quota')
-        body = json.loads(body)
-        self.assertIsNone(body['account'])
-        self.assertEqual((body['quota']['tier'], body['quota']['limit']), ('guest', 50))
-        code, _, _ = self.req('/api/tts', {'text': 'g' * 51})
-        self.assertEqual(code, 429)
+        self.assertIsNone(json.loads(body)['account'])
+        calls = len(self.gen.calls)
+        for path in ('/api/tts', '/api/jobs'):
+            code, _, body = self.req(path, {'text': 'hello'})
+            body = json.loads(body)
+            self.assertEqual(code, 403, path)
+            self.assertTrue(body['signin'])
+            self.assertIn('Voxa Lite account is free', body['error'])
+        self.assertEqual(len(self.gen.calls), calls)
+        # Previews stay open to everyone: they are how visitors judge the voices.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            saved, server.DATA_DIR = server.DATA_DIR, tmp
+            try:
+                self.assertEqual(self.req('/api/preview/harper')[0], 200)
+            finally:
+                server.DATA_DIR = saved
 
-    def test_paid_account_is_unlimited(self):
+    def test_paid_account_gets_the_larger_daily_allowance(self):
         token = self.keys.token(sub='bob', app_metadata={'tier': 'paid'})
         code, _, body = self.bearer('/api/tts', {'text': 'p' * 400}, token)
         self.assertEqual(code, 200)
         _, _, body = self.bearer('/api/quota', token=token)
-        self.assertEqual(json.loads(body)['quota'], {'tier': 'paid', 'unlimited': True})
+        quota = json.loads(body)['quota']
+        self.assertEqual((quota['tier'], quota['limit'], quota['remaining']), ('paid', 1000, 600))
 
     def test_bad_or_expired_token_is_401_not_guest(self):
         for token in (self.keys.token(exp=time.time() - 600), 'junk'):
@@ -631,7 +644,9 @@ class AccountsHTTPTest(ServerTestCase):
             server.SUPABASE_URL, server.SUPABASE_ANON_KEY = '', ''
         body = json.loads(body)
         self.assertEqual(body['auth'], {'url': URL, 'anon_key': 'public-anon-key'})
-        self.assertEqual(body['limits']['guest'], server.GUEST_DAILY_CHARS)
+        self.assertEqual(body['limits'], {'guest': server.FREE_DAILY_CHARS, 'free': server.FREE_DAILY_CHARS,
+                                          'paid': server.PAID_DAILY_CHARS})
+        self.assertEqual(body['tiers'], {'free': 'Voxa Lite', 'paid': 'Voxa Studio'})
 
 
 class LiteFilesTest(ServerTestCase):

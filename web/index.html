@@ -50,7 +50,7 @@
 </div></header>
 <main class="wrap">
 <form class="signin card glow" id="signin" hidden>
-  <label for="email">Sign in for 4,000 free characters a day</label>
+  <label for="email">Sign in free · Voxa Lite: unlimited on-device voices, plus {{FREE_DAILY}} Studio characters a day</label>
   <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
   <div class="row">
     <button class="small accent" id="signin-email" type="submit">Email me a sign-in link</button>
@@ -273,7 +273,7 @@ let SIGNED_IN=false;
 function showPlan(){
   const b=CONFIG.billing, tier=QUOTA&&QUOTA.tier;
   $('#upgrade').hidden=!(b&&SIGNED_IN&&tier==='free');
-  $('#upgrade').textContent=b&&b.price_label?`Upgrade · ${b.price_label}`:'Upgrade';
+  $('#upgrade').textContent=b&&b.price_label?`Voxa Studio · ${b.price_label}`:'Upgrade to Voxa Studio';
   $('#manage').hidden=!(b&&SIGNED_IN&&tier==='paid');
 }
 async function goBilling(path, btn){
@@ -297,7 +297,7 @@ async function welcomeBack(){
   for(let i=0;i<8;i++){
     await SB.auth.refreshSession().catch(()=>{});
     const q=await loadQuota();
-    if(q&&q.tier==='paid'){ st.className='status'; st.textContent='You are on the paid plan: no daily limit. Thank you!'; return; }
+    if(q&&q.tier==='paid'){ st.className='status'; st.textContent=`Welcome to Voxa Studio: ${(CONFIG.limits.paid||0).toLocaleString()} Studio characters a day. Thank you!`; return; }
     await sleep(2500);
   }
   st.className='status'; st.textContent='Payment received. Your plan can take a minute to switch on; reload the page shortly.';
@@ -369,18 +369,18 @@ let QUOTA=null;
 function showQuota(q){
   if(q!==undefined) QUOTA=q;
   const el=$('#quota');
-  $('#tier').textContent=QUOTA&&QUOTA.tier==='paid'?'Paid':'';
+  $('#tier').textContent=!QUOTA||QUOTA.tier==='guest'?'':QUOTA.tier==='paid'?'Studio':'Lite';
   showPlan();
   if(!QUOTA){el.textContent='';return;}
   if(QUOTA.unlimited){el.className='hint';el.textContent='No daily limit on your plan.';return;}
   const left=QUOTA.remaining.toLocaleString(), lim=QUOTA.limit.toLocaleString();
-  const free=(CONFIG.limits.free||0).toLocaleString();
-  const upsell=QUOTA.tier==='guest'&&SB?` Sign in for ${free} a day.`
-    :QUOTA.tier==='free'&&CONFIG.billing&&SIGNED_IN?' Upgrade for no daily limit.':'';
+  const paid=(CONFIG.limits.paid||0).toLocaleString(), names=CONFIG.tiers||{free:'Voxa Lite',paid:'Voxa Studio'};
+  const upsell=QUOTA.tier==='guest'&&SB?` Sign in free for ${names.free}.`
+    :QUOTA.tier==='free'&&CONFIG.billing&&SIGNED_IN?` ${names.paid} has ${paid} a day.`:'';
   el.className=QUOTA.remaining?'hint':'hint over';
   el.textContent=QUOTA.remaining
-    ? `${left} of ${lim} free characters left today.${upsell||' Replaying something you already made is free.'}`
-    : `You've used today's ${lim} free characters. They reset at midnight UTC.${upsell}`;
+    ? `${left} of ${lim} Studio characters left today.${upsell||' On-device voices have no limit; replays are free.'}`
+    : `You've used today's ${lim} Studio characters. They reset at midnight UTC. On-device voices have no limit.${upsell}`;
 }
 // Requests can overlap (sign-in, a token refresh, a finished job); only the newest one's
 // answer may be shown, or an older token's allowance could overwrite the current one.
@@ -495,7 +495,8 @@ async function generate(newTake){
     st.textContent=`Done in ${((performance.now()-t0)/1000).toFixed(1)}s`+(job.cache==='hit'?' · from cache':'');
   }catch(e){
     if(!lite) loadQuota();  // a failed generation is refunded
-    st.className=e.name==='AbortError'?'status':'status err'; st.textContent=(e.name==='AbortError'?'':'Error: ')+friendly(e);
+    st.className=e.name==='AbortError'?'status':'status err'; st.textContent=(e.name==='AbortError'||e.status===403?'':'Error: ')+friendly(e);
+    if(e.status===403&&SB){ $('#signin').hidden=false; $('#signin').scrollIntoView({behavior:'smooth',block:'center'}); }
   }finally{btn.disabled=false;$('#newtake').disabled=false;$('#cancel').hidden=true;bar.hidden=true;ctrl=null;}
 }
 $('#go').addEventListener('click',()=>generate(false));

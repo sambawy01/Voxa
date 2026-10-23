@@ -1,84 +1,67 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Voxa Audiobooks</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='none' stroke='%237aa2ff' stroke-width='2'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%237aa2ff'/%3E%3C/svg%3E">
-<style>
-:root{--bg:#0f1115;--panel:#171b22;--panel2:#1e2430;--line:#2b3341;--ink:#e9edf4;--dim:#9aa5b5;--accent:#7aa2ff;--good:#6fe3b4;--bad:#ff8a8a}
-*{box-sizing:border-box}
-body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#1b2333 0%,var(--bg) 60%);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
-.wrap{max-width:820px;margin:0 auto;padding:28px max(16px,env(safe-area-inset-right)) 70px max(16px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:16px}
-.brand{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-.brand a{color:var(--dim);text-decoration:none;font-size:14px}.brand a:hover{color:var(--ink)}
-h1{font-size:24px;margin:0}
-h2{font-size:16px;margin:0}
-p{margin:0}
-.dim{color:var(--dim);font-size:14px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:12px}
-.pick{display:flex;flex-direction:column;gap:10px;align-items:flex-start}
-input[type=file]{font:inherit;color:var(--dim);max-width:100%}
-input[type=file]::file-selector-button{background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:10px 16px;font:inherit;font-weight:650;margin-right:12px;cursor:pointer}
-.status{font-size:14px;color:var(--accent);min-height:20px}
-.status.err{color:var(--bad)}
-.summary{font-size:15px}
-.summary b{font-variant-numeric:tabular-nums}
+<title>Voxa Audiobooks · any book, read aloud</title>
+{{HEAD}}<style>
+.pick{display:flex;flex-direction:column;gap:12px;align-items:flex-start}
+.summary{font-size:15px;color:var(--ink-2)}
+.summary b{font-variant-numeric:tabular-nums;color:var(--ink)}
 .tools{display:flex;gap:8px;flex-wrap:wrap}
-button.small{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:6px 13px;font:inherit;font-size:13px;cursor:pointer}
-button.small:hover{border-color:var(--accent)}
-button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-ol.chapters{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
-.chapter{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center}
-.chapter.off{opacity:.55}
-.chapter input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent)}
-.chapter input.title{width:100%;min-width:0;background:transparent;color:var(--ink);border:1px solid transparent;border-radius:8px;padding:5px 7px;font:inherit;font-weight:600}
-.chapter input.title:hover,.chapter input.title:focus{border-color:var(--line)}
+ol.chapters{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.chapter{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 14px;display:grid;grid-template-columns:auto 1fr;gap:6px 12px;align-items:center;transition:border-color .2s,opacity .2s}
+.chapter:hover{border-color:var(--line-2)}
+.chapter.off{opacity:.5}
+.chapter input.title{background:transparent;border:1px solid transparent;padding:6px 8px;font-weight:700;font-size:15.5px;min-width:0}
+.chapter input.title:hover,.chapter input.title:focus{border-color:var(--line-2);background:var(--field)}
 .chapter .meta{grid-column:2;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--dim);font-variant-numeric:tabular-nums;padding-left:8px}
-.chapter .meta button{background:none;border:0;color:var(--accent);font:inherit;font-size:12.5px;padding:0;cursor:pointer}
-.chapter textarea{grid-column:1/-1;width:100%;min-height:200px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;font-size:14px;resize:vertical}
-.chapter textarea[hidden]{display:none}
-.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
-.controls label{display:flex;flex-direction:column;gap:6px;font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim)}
-.controls label[hidden]{display:none}
-select{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;text-transform:none;letter-spacing:0}
-.row{display:flex;gap:8px;flex-wrap:wrap}
-.row[hidden]{display:none}
-button.primary{flex:1 1 200px;background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:680;cursor:pointer}
-button.primary:disabled{opacity:.45;cursor:default}
-button.ghost{flex:1 1 120px;background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit;cursor:pointer}
-button[hidden]{display:none}
-.bar{height:6px;background:var(--panel2);border-radius:6px;overflow:hidden}
-.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
-ol.outputs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
-ol.outputs li{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
-ol.outputs .head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
-ol.outputs .state{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
-ol.outputs .state.ready{color:var(--good)}
-ol.outputs audio{width:100%}
-a.dl{color:var(--accent);font-size:14px;font-weight:600;text-decoration:none}
-.note{font-size:14px;color:var(--dim)}
-.hear{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.hearnote{font-size:12.5px;color:var(--dim)}
+.chapter .meta button{background:none;border:0;color:var(--accent);font:inherit;font-weight:700;padding:0;cursor:pointer}
+.chapter textarea{grid-column:1/-1;min-height:220px;font-size:14.5px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
+.controls label{display:flex;flex-direction:column;gap:8px}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row button.primary{flex:1 1 220px}
+.row button.ghost{flex:1 1 160px}
+ol.outputs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+ol.outputs li{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+ol.outputs .head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+ol.outputs .state{font-size:12px;font-weight:700;color:var(--ink-2);font-variant-numeric:tabular-nums;padding:3px 10px;border-radius:99px;background:var(--surface-2);border:1px solid var(--line)}
+ol.outputs .state.ready{color:#a7f3d0;background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.3)}
+.genline{display:flex;align-items:center;gap:12px;min-height:34px}
+.genline .status{flex:1}
+.wave-host:has(#pause:not([hidden])) .wave i{animation-play-state:running;opacity:1}
 </style></head>
-<body><div class="wrap">
-<div class="brand"><h1>Voxa audiobooks</h1><a href="/">← Back to Voxa</a></div>
-<p class="dim">Open a PDF or a text file. Voxa finds the chapters and removes page headers, footers and page numbers. Check the text before any audio is made.</p>
+<body data-page="book">
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+</div></header>
+<main class="wrap narrow">
+<section class="hero">
+  <span class="eyebrow"><span class="dot"></span>Audiobooks</span>
+  <h1 class="display sm">Turn any book into <span class="grad-text">an audiobook.</span></h1>
+  <p class="lead">Open a PDF or a text file. Voxa finds the chapters and removes page headers, footers and page numbers. You check the text before any audio is made.</p>
+  <div class="pills">
+    <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h13"/></svg>Chapters found for you</span>
+    <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>One MP3 with chapter marks</span>
+    <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>Saved as it goes</span>
+  </div>
+</section>
 
 <section class="card" id="savedbox" hidden>
-  <h2>Continue a saved book</h2>
+  <div class="card-head"><span class="ico mint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg></span>
+    <div><h2>Continue a saved book</h2><p class="sub">Saved on this device</p></div></div>
   <ol class="outputs" id="saved"></ol>
 </section>
 
-<section class="card">
+<section class="card glow">
+  <div class="card-head"><span class="step">1</span><div><h2>Your book</h2><p class="sub">A PDF or a text file</p></div></div>
   <div class="pick">
-    <label for="file"><h2>Your book</h2></label>
-    <input id="file" type="file" accept=".pdf,.txt,application/pdf,text/plain">
-    <p class="dim">PDFs need real text. Scanned pages (photos of a book) have no text to read.</p>
+    <input id="file" type="file" accept=".pdf,.txt,application/pdf,text/plain" aria-label="Choose a PDF or text file">
+    <p class="dim" style="font-size:13.5px">PDFs need real text. Scanned pages (photos of a book) have no text to read.</p>
   </div>
   <p class="status" id="status" role="status"></p>
 </section>
 
 <section class="card" id="review" hidden>
-  <h2 id="booktitle">Chapters</h2>
+  <div class="card-head"><span class="step">2</span><div><h2 id="booktitle">Chapters</h2><p class="sub">Untick what you don't want read; tap a chapter's text to edit it</p></div></div>
   <p class="summary" id="summary"></p>
   <div class="tools">
     <button class="small" id="all" type="button">Include all</button>
@@ -87,8 +70,8 @@ a.dl{color:var(--accent);font-size:14px;font-weight:600;text-decoration:none}
   <ol class="chapters" id="chapters"></ol>
 </section>
 
-<section class="card" id="make" hidden>
-  <h2>Voice and audio</h2>
+<section class="card wave-host" id="make" hidden>
+  <div class="card-head"><span class="step">3</span><div><h2>Voice and audio</h2><p class="sub">Pick a voice, hear it, then make the book</p></div></div>
   <div class="controls">
     <label>Language<select id="lang"></select></label>
     <label>Voice<select id="voice"></select></label>
@@ -102,7 +85,10 @@ a.dl{color:var(--accent);font-size:14px;font-weight:600;text-decoration:none}
     <button class="ghost" id="pause" type="button" hidden>Pause</button>
   </div>
   <div class="bar" id="bar"><i></i></div>
-  <p class="status" id="genstatus" role="status"></p>
+  <div class="genline">
+    <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <p class="status" id="genstatus" role="status"></p>
+  </div>
   <ol class="outputs" id="outputs"></ol>
   <div class="row" id="wholebook" hidden>
     <button class="ghost" id="onefile" type="button">Whole book: one MP3 with chapter marks</button>
@@ -111,8 +97,9 @@ a.dl{color:var(--accent);font-size:14px;font-weight:600;text-decoration:none}
   <p class="note" id="wholenote"></p>
   <div class="row"><button class="small" id="forget" type="button" hidden>Delete saved audio for this book</button></div>
 </section>
-<p class="dim" style="font-size:12.5px">Your book stays on this device: it is read here with pdf.js (Apache-2.0) and saved in this browser. MP3 files are made here with lamejs (LGPL-3.0). Studio voices send each part's text to Voxa to be spoken. <a href="/credits" style="color:var(--accent)">Credits</a></p>
-</div>
+<p class="small-print">Your book stays on this device: it is read here with pdf.js (Apache-2.0) and saved in this browser. MP3 files are made here with lamejs (LGPL-3.0). Studio voices send each part's text to Voxa to be spoken. <a href="/credits">Credits</a></p>
+</main>
+{{FOOTER}}
 
 <script type="module">
 import * as pdfjs from '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.min.mjs';

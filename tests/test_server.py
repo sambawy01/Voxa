@@ -749,3 +749,28 @@ class CreditsTest(ServerTestCase):
         for kokoro in ('jf_gongitsune', 'jf_tebukuro', 'jf_nezumi', 'jm_kumo', 'ff_siwis'):
             name = server.VOICE_BY_ID[server.KOKORO_ALIASES[kokoro]]['name']
             self.assertIn(name.encode(), body, kokoro)
+
+
+class DesignTest(ServerTestCase):
+    """Every page shares one stylesheet, top bar and footer, with every placeholder filled."""
+
+    def test_pages_share_the_design_system(self):
+        version = server.web_values()['CSS_VERSION'].encode()
+        code, headers, css = self.req('/voxa.css')
+        self.assertEqual(code, 200)
+        self.assertTrue(headers['Content-Type'].startswith('text/css'))
+        self.assertIn(b'.topbar', css)
+        for path, name in server.WEB_PAGES.items():
+            if not name.endswith('.html'):
+                continue
+            with self.subTest(path=path):
+                code, _, page = self.req(path)
+                self.assertEqual(code, 200)
+                self.assertNotIn(b'{{', page)
+                self.assertIn(b'/voxa.css?v=' + version, page)
+                self.assertIn(b'class="topbar"', page)
+                self.assertIn(b'class="tabs"', page)
+                self.assertIn(b'class="footer"', page)
+        # The current page's tab is the highlighted one.
+        _, _, book = self.req('/book')
+        self.assertIn(b'<body data-page="book">', book)

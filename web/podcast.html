@@ -1,89 +1,76 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Voxa Podcasts</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='none' stroke='%237aa2ff' stroke-width='2'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%237aa2ff'/%3E%3C/svg%3E">
-<style>
-:root{--bg:#0f1115;--panel:#171b22;--panel2:#1e2430;--line:#2b3341;--ink:#e9edf4;--dim:#9aa5b5;--accent:#7aa2ff;--good:#6fe3b4;--bad:#ff8a8a;--a:#ffb3d1;--b:#9fd4ff}
-*{box-sizing:border-box}
-body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#1b2333 0%,var(--bg) 60%);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
-.wrap{max-width:820px;margin:0 auto;padding:28px max(16px,env(safe-area-inset-right)) 70px max(16px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:16px}
-.brand{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-.brand a{color:var(--dim);text-decoration:none;font-size:14px}.brand a:hover{color:var(--ink)}
-h1{font-size:24px;margin:0}
-h2{font-size:16px;margin:0}
-p{margin:0}
-.dim{color:var(--dim);font-size:14px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:12px}
-.card[hidden]{display:none}
-input[type=file]{font:inherit;color:var(--dim);max-width:100%}
-input[type=file]::file-selector-button{background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:10px 16px;font:inherit;font-weight:650;margin-right:12px;cursor:pointer}
-.status{font-size:14px;color:var(--accent);min-height:20px}
-.status.err{color:var(--bad)}
-textarea,input[type=text]{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;font-size:14px}
-textarea{resize:vertical}
-details summary{cursor:pointer;color:var(--dim);font-size:14px}
-.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
-.controls label,.host label{display:flex;flex-direction:column;gap:6px;font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim)}
-.controls label[hidden]{display:none}
-.hosts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
-.host{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px}
-.host h3{margin:0;font-size:14px}
-.host.a h3{color:var(--a)}.host.b h3{color:var(--b)}
-select{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;text-transform:none;letter-spacing:0;width:100%}
-.host select,.host input{text-transform:none;letter-spacing:0}
-.row{display:flex;gap:8px;flex-wrap:wrap}
-.row[hidden]{display:none}
-button.primary{flex:1 1 200px;background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:680;cursor:pointer}
-button.primary:disabled{opacity:.45;cursor:default}
-button.ghost{flex:1 1 120px;background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit;cursor:pointer}
-button.small{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:6px 13px;font:inherit;font-size:13px;cursor:pointer}
-button[hidden]{display:none}
-button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.hear{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.hearnote{font-size:12.5px;color:var(--dim)}
-.privacy{font-size:13px;color:var(--dim);border-left:3px solid var(--line);padding-left:10px}
-input.eptitle{font-size:18px;font-weight:650}
-ol.chapters{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
-.chapter{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
-.chapter input{font-weight:600}
-.chapter textarea{min-height:220px;line-height:1.6}
+<title>Voxa Podcasts · your document, as a conversation</title>
+{{HEAD}}<style>
+details summary{cursor:pointer;color:var(--accent);font-weight:650;font-size:14px}
+details[open] summary{margin-bottom:10px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
+.controls label,.host label{display:flex;flex-direction:column;gap:8px}
+.hosts{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+.host{position:relative;border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px;border:1px solid var(--line);overflow:hidden}
+.host.a{background:linear-gradient(160deg,rgba(244,114,182,.14),rgba(255,255,255,.02) 55%);border-color:rgba(244,114,182,.3)}
+.host.b{background:linear-gradient(160deg,rgba(34,211,238,.14),rgba(255,255,255,.02) 55%);border-color:rgba(34,211,238,.3)}
+.host h3{display:flex;align-items:center;gap:10px;font-size:15px}
+.host h3 .av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font:800 13px var(--font-display);color:#fff}
+.host.a h3 .av{background:linear-gradient(135deg,#f472b6,#8b5cf6)}
+.host.b h3 .av{background:linear-gradient(135deg,#22d3ee,#6366f1)}
+.privacy{font-size:13px;color:var(--dim);border-left:3px solid rgba(251,191,36,.6);padding:4px 0 4px 12px;background:linear-gradient(90deg,rgba(251,191,36,.07),transparent)}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row button.primary{flex:1 1 220px}
+.row button.ghost{flex:1 1 140px}
+input.eptitle{font:800 clamp(20px,3vw,26px) var(--font-display);letter-spacing:-.02em;padding:12px 14px}
+ol.chapters{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.chapter{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.chapter input{font-weight:700}
+.chapter textarea{min-height:230px;line-height:1.7;font-size:14.5px}
 .chapter .meta{font-size:12.5px;color:var(--dim)}
-.bar{height:6px;background:var(--panel2);border-radius:6px;overflow:hidden}
-.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
-audio{width:100%}
-a.dl{color:var(--accent);font-size:14px;font-weight:600;text-decoration:none}
-.note{font-size:14px;color:var(--dim)}
-ol.saved{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
-ol.saved li{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+#result{display:flex;flex-direction:column;gap:10px}
+ol.saved{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+ol.saved li{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.genline{display:flex;align-items:center;gap:12px;min-height:34px}
+.genline .status{flex:1}
+.wave-host:has(#pause:not([hidden])) .wave i,.wave-host:has(#write:disabled) .wave i{animation-play-state:running;opacity:1}
 </style></head>
-<body><div class="wrap">
-<div class="brand"><h1>Voxa podcasts</h1><a href="/">← Back to Voxa</a></div>
-<p class="dim">Share a presentation, report or article. Two hosts talk it through: the ideas, the reasoning behind them and what they mean. You read and edit the script before any audio is made.</p>
+<body data-page="podcast">
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+</div></header>
+<main class="wrap narrow">
+<section class="hero">
+  <span class="eyebrow"><span class="dot"></span>AI podcasts</span>
+  <h1 class="display sm">Your document, <span class="grad-text">as a podcast.</span></h1>
+  <p class="lead">Share a presentation, report or article. Two hosts talk it through: the ideas, the reasoning behind them and what they mean. You read and edit the script before any audio is made.</p>
+  <div class="pills">
+    <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>PDF, PowerPoint or text</span>
+    <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.8"/><path d="M16 14.2a5.5 5.5 0 0 1 5.5 5.8"/></svg>Two hosts, your focus</span>
+    <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>Nine languages</span>
+  </div>
+</section>
 
 <section class="card" id="off" hidden>
-  <h2>Not available yet</h2>
-  <p class="dim">Podcasts are not switched on for this site yet. <a href="/book" style="color:var(--accent)">Audiobooks</a> work already.</p>
+  <div class="card-head"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+    <div><h2>Coming soon</h2><p class="sub">Podcasts are not switched on for this site yet. <a href="/book">Audiobooks</a> work already.</p></div></div>
 </section>
 
 <section class="card" id="savedbox" hidden>
-  <h2>Your podcasts on this device</h2>
+  <div class="card-head"><span class="ico mint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg></span>
+    <div><h2>Your podcasts on this device</h2></div></div>
   <ol class="saved" id="saved"></ol>
 </section>
 
-<section class="card" id="source">
-  <label for="file"><h2>1. Your document</h2></label>
-  <input id="file" type="file" accept=".pdf,.pptx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/markdown">
-  <p class="dim">PDF, PowerPoint (.pptx) or text. Keynote and Google Slides can export a PDF or .pptx. Speaker notes in a .pptx are used too.</p>
+<section class="card glow" id="source">
+  <div class="card-head"><span class="step">1</span><div><h2>Your document</h2><p class="sub">PDF, PowerPoint (.pptx) or text. Speaker notes count too.</p></div></div>
+  <input id="file" type="file" aria-label="Choose a PDF, PowerPoint or text file" accept=".pdf,.pptx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/markdown">
+  <p class="dim" style="font-size:13.5px">Keynote and Google Slides can export a PDF or .pptx.</p>
   <details id="pastebox"><summary>Or paste text</summary>
     <textarea id="paste" rows="8" placeholder="Paste the text of an article, report or deck here"></textarea>
   </details>
   <p class="status" id="status" role="status"></p>
 </section>
 
-<section class="card" id="setup" hidden>
-  <h2>2. The episode</h2>
-  <label for="focus" class="dim">Focus (optional): what should the hosts dig into?</label>
+<section class="card wave-host" id="setup" hidden>
+  <div class="card-head"><span class="step">2</span><div><h2>The episode</h2><p class="sub">Set the focus, the length and your two hosts</p></div></div>
+  <label for="focus">Focus <span class="dim" style="text-transform:none;letter-spacing:0;font-weight:500">· optional: what should the hosts dig into?</span></label>
   <textarea id="focus" rows="3" maxlength="1000" placeholder="For example: the business model and the biggest risks. Explain it for investors who know nothing about the field."></textarea>
   <div class="controls">
     <label>Length<select id="minutes"><option value="5">About 5 minutes</option><option value="10" selected>About 10 minutes</option><option value="20">About 20 minutes</option></select></label>
@@ -95,11 +82,11 @@ ol.saved li{background:var(--panel2);border:1px solid var(--line);border-radius:
       <option value="mixed" selected>A woman and a man</option><option value="women">Two women</option><option value="men">Two men</option></select></label>
   </div>
   <div class="hosts">
-    <div class="host a"><h3>First host</h3>
+    <div class="host a"><h3><span class="av">A</span>First host</h3>
       <label>Voice<select id="voiceA"></select></label>
       <div class="hear"><button class="small" id="hearA" type="button">▶ Hear this voice</button><span class="hearnote" id="hearnoteA" role="status"></span></div>
       <label>Name<input id="nameA" type="text" maxlength="40"></label></div>
-    <div class="host b"><h3>Second host</h3>
+    <div class="host b"><h3><span class="av">B</span>Second host</h3>
       <label>Voice<select id="voiceB"></select></label>
       <div class="hear"><button class="small" id="hearB" type="button">▶ Hear this voice</button><span class="hearnote" id="hearnoteB" role="status"></span></div>
       <label>Name<input id="nameB" type="text" maxlength="40"></label></div>
@@ -108,20 +95,22 @@ ol.saved li{background:var(--panel2);border:1px solid var(--line);border-radius:
   <p class="privacy">To write the script, the document's text and your focus are sent to DeepSeek, an AI service whose servers are in China. They are not kept by Voxa. Don't use documents you are not allowed to share.</p>
   <div class="row"><button class="primary" id="write" type="button">Write the script</button></div>
   <p class="note" id="allowance"></p>
-  <p class="status" id="writestatus" role="status"></p>
+  <div class="genline">
+    <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <p class="status" id="writestatus" role="status"></p>
+  </div>
 </section>
 
 <section class="card" id="scriptbox" hidden>
-  <h2>3. The script</h2>
+  <div class="card-head"><span class="step">3</span><div><h2>The script</h2><p class="sub">Edit anything. One turn per paragraph, starting with the host's name and a colon.</p></div></div>
   <input class="eptitle" id="eptitle" type="text" aria-label="Episode title">
   <p class="dim" id="epsummary"></p>
-  <p class="note">Edit anything. Keep one turn per paragraph, starting with the host's name and a colon.</p>
   <ol class="chapters" id="chapters"></ol>
   <p class="note" id="scriptstats"></p>
 </section>
 
-<section class="card" id="make" hidden>
-  <h2>4. The audio</h2>
+<section class="card wave-host" id="make" hidden>
+  <div class="card-head"><span class="step">4</span><div><h2>The audio</h2><p class="sub">Both voices, one MP3 with chapter marks</p></div></div>
   <div class="controls">
     <label id="exprbox" hidden>On-device expressiveness<select id="expr"></select></label>
   </div>
@@ -131,11 +120,15 @@ ol.saved li{background:var(--panel2);border:1px solid var(--line);border-radius:
     <button class="ghost" id="pause" type="button" hidden>Pause</button>
   </div>
   <div class="bar" id="bar"><i></i></div>
-  <p class="status" id="genstatus" role="status"></p>
+  <div class="genline">
+    <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <p class="status" id="genstatus" role="status"></p>
+  </div>
   <div id="result"></div>
 </section>
-<p class="dim" style="font-size:12.5px">Your document is read on this device (pdf.js, Apache-2.0). Scripts are written by DeepSeek. MP3 files are made here with lamejs (LGPL-3.0). Studio voices send each line to Voxa to be spoken; on-device voices never leave this device. <a href="/credits" style="color:var(--accent)">Credits</a></p>
-</div>
+<p class="small-print">Your document is read on this device (pdf.js, Apache-2.0). Scripts are written by DeepSeek. MP3 files are made here with lamejs (LGPL-3.0). Studio voices send each line to Voxa to be spoken; on-device voices never leave this device. <a href="/credits">Credits</a></p>
+</main>
+{{FOOTER}}
 
 <script type="module">
 import * as pdfjs from '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.min.mjs';

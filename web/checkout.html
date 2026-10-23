@@ -1,25 +1,30 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Voxa Checkout</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='none' stroke='%237aa2ff' stroke-width='2'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%237aa2ff'/%3E%3C/svg%3E">
-<style>
-:root{--bg:#0f1115;--panel:#171b22;--line:#2b3341;--ink:#e9edf4;--dim:#9aa5b5;--accent:#7aa2ff;--bad:#ff8a8a}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
-.wrap{max-width:560px;margin:0 auto;padding:40px max(16px,env(safe-area-inset-right)) 60px max(16px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:14px}
-h1{font-size:22px;margin:0}
-p{margin:0}
-a{color:var(--accent)}
-.dim{color:var(--dim);font-size:14px}
-.err{color:var(--bad)}
+{{HEAD}}<style>
+#status{font-size:16px;color:var(--ink-2)}
+#status.err{color:var(--bad)}
+.lock{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:13.5px}
+.lock svg{width:18px;height:18px;color:var(--mint);flex:none}
 </style></head>
-<body><div class="wrap">
-<h1>Voxa paid plan</h1>
-<p id="status">Opening the secure checkout…</p>
-<p class="dim">Payments are handled by Paddle, our reseller and merchant of record. Your card details never reach Voxa. See <a href="/pricing">pricing</a>, <a href="/terms">terms</a> and <a href="/refunds">refunds</a>.</p>
-<p><a href="/">← Back to Voxa</a></p>
-</div>
+<body data-page="checkout">
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+</div></header>
+<main class="wrap narrow">
+<section class="hero center">
+  <span class="eyebrow"><span class="dot"></span>Secure checkout</span>
+  <h1 class="display sm">Voxa <span class="grad-text">unlimited</span></h1>
+</section>
+<section class="card glow" style="max-width:560px;width:100%;margin:0 auto">
+  <div class="wave live" aria-hidden="true" style="justify-content:center"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <p id="status" style="text-align:center">Opening the secure checkout…</p>
+  <p class="lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+    <span>Payments are handled by Paddle, our reseller and merchant of record. Your card details never reach Voxa. See <a href="/pricing">pricing</a>, <a href="/terms">terms</a> and <a href="/refunds">refunds</a>.</span></p>
+  <a class="btn-ghost" href="/">← Back to Voxa</a>
+</section>
+</main>
+{{FOOTER}}
 <script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
 <script>
 // This page is not cross-origin isolated (Paddle's checkout frame could not load otherwise).

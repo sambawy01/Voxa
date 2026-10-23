@@ -42,6 +42,7 @@ import urllib.request
 import uuid
 
 import billing
+import podcast
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -73,6 +74,12 @@ SYNC_TIMEOUT = 300
 GUEST_DAILY_CHARS = int(os.environ.get('VOXA_GUEST_DAILY_CHARS', '1000'))
 FREE_DAILY_CHARS = int(os.environ.get('VOXA_FREE_DAILY_CHARS', '4000'))
 PAID_DAILY_CHARS = int(os.environ.get('VOXA_PAID_DAILY_CHARS', '0'))
+# Podcast scripts per tier per day. Each one is a paid DeepSeek call, so here 0 means none.
+PODCAST_DAILY = {'guest': int(os.environ.get('VOXA_PODCAST_DAILY_GUEST', '0')),
+                 'free': int(os.environ.get('VOXA_PODCAST_DAILY_FREE', '1')),
+                 'paid': int(os.environ.get('VOXA_PODCAST_DAILY_PAID', '20'))}
+# Document text for a podcast script is far bigger than a speech request.
+MAX_PODCAST_BODY = 1024 * 1024
 # Sign-in (Supabase). SUPABASE_URL and the public anon key turn accounts on; the page uses
 # them to sign people in. Tokens signed with the project's asymmetric keys are checked
 # against its published JWKS; SUPABASE_JWT_SECRET covers projects on the older shared secret.
@@ -104,14 +111,17 @@ ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
 # Pages and scripts served from web/, all cross-origin isolated. {{NAME}} placeholders in them
 # are filled from web_values().
 WEB_PAGES = {'/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
-             '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html'}
+             '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html',
+             '/podcast': 'podcast.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js'}
 
 
 def web_values():
-    with open(os.path.join(WEB_DIR, 'book.js'), 'rb') as f:
-        book_version = hashlib.sha256(f.read()).hexdigest()[:12]
+    def version(name):
+        with open(os.path.join(WEB_DIR, name), 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()[:12]
     return {'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,
-            'LAMEJS_VERSION': LAMEJS_VERSION, 'BOOK_VERSION': book_version}
+            'LAMEJS_VERSION': LAMEJS_VERSION, 'BOOK_VERSION': version('book.js'),
+            'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js')}
 
 LANG_LABELS = {
     'a': 'English (US)',
@@ -182,7 +192,7 @@ def load_lite(path=CATALOGUE_PATH, studio_ids=()):
         'model': lite['model'],
         'expressiveness': lite['expressiveness'],
         'voices': {lang: [{'id': v['id'], 'name': v['name'], 'description': v['description'],
-                           'url': base + v['file']}
+                           'gender': v['gender'], 'url': base + v['file']}
                           for v in lite['voices'] if v['lang'] == lang]
                    for lang in ('a', 'b')},
     }
@@ -195,6 +205,27 @@ VOICE_BY_ID = {v['id']: v for v in CATALOGUE}
 KOKORO_ALIASES = {v['source']: v['id'] for v in CATALOGUE if isinstance(v['source'], str)}
 # Voxa voice ids per language; the first is the language's default.
 VOICES = {lang: [v['id'] for v in CATALOGUE if v['lang'] == lang] for lang in LANG_LABELS}
+
+# Voice previews: one fixed line per language, so each Studio voice is generated at most once
+# and kept on disk. Free for everyone, since nobody can choose the text. Names are left out
+# where the script is not Latin, so the pronunciation stays clean.
+PREVIEW_LINES = {
+    'a': "Hi, I'm {name}. This is how your words will sound in my voice.",
+    'b': "Hello, I'm {name}. This is how your words will sound in my voice.",
+    'e': 'Hola, soy {name}. Así sonarán tus palabras con mi voz.',
+    'f': 'Bonjour, je suis {name}. Voici comment vos mots sonneront avec ma voix.',
+    'h': 'नमस्ते! आपके शब्द मेरी आवाज़ में कुछ ऐसे सुनाई देंगे।',
+    'i': 'Ciao, sono {name}. Ecco come suoneranno le tue parole con la mia voce.',
+    'j': 'こんにちは。あなたの言葉は、私の声でこんなふうに聞こえます。',
+    'p': 'Olá, eu sou {name}. É assim que as suas palavras vão soar na minha voz.',
+    'z': '你好！你的文字用我的声音读出来，就是这样的。',
+}
+PREVIEW_WAIT = 90
+
+
+def preview_text(voice_id):
+    v = VOICE_BY_ID[voice_id]
+    return PREVIEW_LINES[v['lang']].format(name=v['name'])
 LITE = load_lite(studio_ids=VOICE_BY_ID)
 
 _shared_model = None
@@ -542,11 +573,14 @@ class Quota:
     can share one office or carrier address.
     """
 
-    def __init__(self, path, limits):
+    def __init__(self, path, limits, table='usage'):
+        if not table.isidentifier():
+            raise ValueError(table)
         self.limits = dict(limits)
+        self.table = table
         self._lock = threading.Lock()
         self._db = sqlite3.connect(path, check_same_thread=False)
-        self._db.execute('CREATE TABLE IF NOT EXISTS usage ('
+        self._db.execute(f'CREATE TABLE IF NOT EXISTS {table} ('
                          'day TEXT, subject TEXT, chars INTEGER NOT NULL, '
                          'PRIMARY KEY (day, subject))')
         self._db.commit()
@@ -571,7 +605,7 @@ class Quota:
                 (f'ip:{who.ip}', limit * IP_DAILY_FACTOR)]
 
     def _used(self, day, subject):
-        row = self._db.execute('SELECT chars FROM usage WHERE day = ? AND subject = ?',
+        row = self._db.execute(f'SELECT chars FROM {self.table} WHERE day = ? AND subject = ?',
                                (day, subject)).fetchone()
         return row[0] if row else 0
 
@@ -601,13 +635,13 @@ class Quota:
             if n > status['remaining']:
                 raise QuotaExceeded(status, n)
             self._add(day, keys, n)
-            self._db.execute('DELETE FROM usage WHERE day < ?', (day,))
+            self._db.execute(f'DELETE FROM {self.table} WHERE day < ?', (day,))
             self._db.commit()
 
         def refund():
             with self._lock:
                 for subject in keys:
-                    self._db.execute('UPDATE usage SET chars = MAX(0, chars - ?) '
+                    self._db.execute(f'UPDATE {self.table} SET chars = MAX(0, chars - ?) '
                                      'WHERE day = ? AND subject = ?', (n, day, subject))
                 self._db.commit()
         return refund
@@ -615,7 +649,7 @@ class Quota:
     def _add(self, day, keys, n):
         for subject in keys:
             self._db.execute(
-                'INSERT INTO usage (day, subject, chars) VALUES (?, ?, ?) '
+                f'INSERT INTO {self.table} (day, subject, chars) VALUES (?, ?, ?) '
                 'ON CONFLICT (day, subject) DO UPDATE SET chars = chars + excluded.chars',
                 (day, subject, n))
 
@@ -627,16 +661,25 @@ def tier_limits():
     return {'guest': guest, 'free': FREE_DAILY_CHARS, 'paid': PAID_DAILY_CHARS}
 
 
-def open_quota():
+def podcast_limits():
+    """Podcast scripts per tier per day; as with characters, guests get the free allowance
+    until sign-in is configured."""
+    return {**PODCAST_DAILY, 'guest': PODCAST_DAILY['guest'] if _auth else PODCAST_DAILY['free']}
+
+
+def open_quota(limits=None, table='usage'):
+    limits = tier_limits() if limits is None else limits
     path = os.path.join(DATA_DIR, 'voxa.sqlite3')
     try:
-        return Quota(path, tier_limits())
+        return Quota(path, limits, table)
     except sqlite3.Error as e:
         log.warning('cannot open %s (%s); daily limits will reset on restart', path, e)
-        return Quota(':memory:', tier_limits())
+        return Quota(':memory:', limits, table)
 
 
 _quota = None  # opened in main(), so importing this module touches no files
+_podcast_quota = None  # scripts per day, in the same file
+_scripts = podcast.ScriptJobs()
 
 
 class Job:
@@ -850,6 +893,9 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .meta{display:flex;justify-content:space-between;color:var(--dim);font-size:12px;margin-top:7px;font-variant-numeric:tabular-nums}
 .meta .over,.hint.over{color:var(--bad)}
 .hint{color:var(--dim);font-size:12px;margin:6px 0 0;min-height:18px}
+.hear{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:2px 0 10px}
+.hear .hint{margin:0;min-height:0}
+.hear button[hidden]{display:none}
 .val{color:var(--good);font-variant-numeric:tabular-nums;font-size:13px}
 button.primary{width:100%;margin-top:18px;background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:680;cursor:pointer}
 button.primary:disabled{opacity:.45;cursor:default}
@@ -892,7 +938,8 @@ audio[hidden]{display:none}
   <p id="signin-msg" role="status"></p>
 </form>
 <p class="tagline">Text to speech. Nine languages, real voices. Generated on a server, so it sounds the same on every device.
-<a href="/book" style="color:var(--accent)">Turn a PDF into an audiobook →</a></p>
+<a href="/book" style="color:var(--accent)">Turn a PDF into an audiobook →</a>
+<a href="/podcast" style="color:var(--accent)">Turn a document into a podcast →</a></p>
 <div class="grid">
   <section class="card">
     <label for="text">Your script</label>
@@ -916,6 +963,7 @@ audio[hidden]{display:none}
     <label for="voice">Voice</label>
     <select id="voice"></select>
     <p class="hint" id="voicenote"></p>
+    <div class="hear"><button class="small" id="hear" type="button">▶ Hear this voice</button><span class="hint" id="hearnote" role="status"></span></div>
     <div id="litebox" hidden>
       <label for="expr">Expressiveness</label>
       <select id="expr"></select>
@@ -980,6 +1028,15 @@ function describeVoice(){
 }
 langSel.addEventListener('change',refreshVoices);
 voiceSel.addEventListener('change',describeVoice);
+// "Hear this voice": the shared preview button (web/preview.js). On-device voices speak the
+// preview line here with the same engine and settings as a real take.
+import('/preview.js').then(P=>{
+  P.attachPreview($('#hear'), $('#hearnote'), ()=>{
+    const id=voiceSel.value, lite=LITE_BY_ID[id], v=lite||(CAT[langSel.value]||[]).find(x=>x.id===id);
+    return v?{...v, lite:!!lite, key:$('#expr').value}:null;
+  }, async(v,note)=>(await generateLite(P.PREVIEW_LINE(v.name), v.id, note)).blob);
+  langSel.addEventListener('change',P.stopPreview); voiceSel.addEventListener('change',P.stopPreview);
+}).catch(()=>{ $('#hear').hidden=true; });
 $('#speed').addEventListener('input',e=>$('#speedv').textContent=(+e.target.value).toFixed(2)+'×');
 function upd(){const t=$('#text').value;const c=$('#count');c.textContent=`${t.length} / ${MAX} characters`;c.className=t.length>MAX?'over':'';$('#est').textContent=t.length?`≈ ${Math.ceil(t.length/14)}s of audio`:'';}
 $('#text').addEventListener('input',upd);upd();
@@ -1297,6 +1354,37 @@ class Handler(BaseHTTPRequestHandler):
             'Content-Disposition': f'attachment; filename="voxa-{job.key[:8]}.wav"',
         })
 
+    def _send_preview(self, voice_id):
+        """A Studio voice saying its preview line: from disk, or generated once (uncharged)."""
+        if voice_id not in VOICE_BY_ID:
+            return self._send(404, {'error': 'unknown voice'})
+        text = preview_text(voice_id)
+        lang = VOICE_BY_ID[voice_id]['lang']
+        digest = hashlib.sha256(text.encode()).hexdigest()[:10]
+        folder = os.path.join(DATA_DIR, 'previews')
+        path = os.path.join(folder, f'{voice_id}-{digest}.wav')
+        headers = {'Cache-Control': 'public, max-age=86400', 'Cross-Origin-Resource-Policy': 'same-origin'}
+        if os.path.isfile(path):
+            with open(path, 'rb') as f:
+                return self._send(200, f.read(), 'audio/wav', headers)
+        # The text is fixed, so a preview is never charged; it goes to the CPU queue.
+        job = _jobs.submit(text, lang, voice_id, 1.0)
+        if not job.done.wait(PREVIEW_WAIT) or job.status != 'done':
+            return self._send(503, {'error': 'The preview is not ready. Please try again in a moment.'},
+                              extra={'Retry-After': '10'})
+        audio = _cache.get(job.key)
+        if audio is None:
+            return self._send(503, {'error': 'The preview is not ready. Please try again.'})
+        try:
+            os.makedirs(folder, exist_ok=True)
+            tmp = f'{path}.{uuid.uuid4().hex}.tmp'
+            with open(tmp, 'wb') as f:
+                f.write(audio)
+            os.replace(tmp, path)
+        except OSError as e:
+            log.warning('cannot keep preview %s: %s', path, e)
+        return self._send(200, audio, 'audio/wav', headers)
+
     def _send_static(self, rel):
         """A file under static/, by extension allow-list, never outside the directory."""
         root = os.path.realpath(STATIC_DIR)
@@ -1371,6 +1459,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             self._get()
+        except Busy:
+            self._send(503, {'error': 'The server is busy. Please try again in a minute.'},
+                       extra={'Retry-After': '30'})
         except AuthError as e:
             self._send_auth_error(e)
         except Exception:
@@ -1421,7 +1512,17 @@ class Handler(BaseHTTPRequestHandler):
         if p == '/api/config':
             auth = {'url': SUPABASE_URL, 'anon_key': SUPABASE_ANON_KEY} if _auth else None
             paying = {'price_label': billing.PRICE_LABEL} if _auth and billing.enabled(SUPABASE_URL) else None
-            return self._send(200, {'auth': auth, 'limits': tier_limits(), 'billing': paying})
+            pods = {'daily': podcast_limits(), 'minutes': sorted(podcast.LENGTHS),
+                    'tones': list(podcast.TONES), 'max_text': podcast.MAX_SOURCE} if podcast.enabled() else None
+            return self._send(200, {'auth': auth, 'limits': tier_limits(), 'billing': paying,
+                                    'podcast': pods})
+        if p.startswith('/api/podcast/script/'):
+            if not podcast.enabled():
+                return self._send(404, {'error': 'podcasts are not set up'})
+            job = _scripts.get(p.rsplit('/', 1)[-1], self._owner(self._identity()))
+            if job is None:
+                return self._send(404, {'error': 'script not found; the server may have restarted'})
+            return self._send(200, job.to_json(), extra={'Cache-Control': 'no-store'})
         if p.startswith('/api/jobs/'):
             job = _jobs.get(p.rsplit('/', 1)[-1])
             if job is None:
@@ -1438,6 +1539,8 @@ class Handler(BaseHTTPRequestHandler):
                 'Content-Disposition': f'attachment; filename="voxa-{key[:8]}.wav"',
                 'Cache-Control': 'private, max-age=3600',
             })
+        if p.startswith('/api/preview/'):
+            return self._send_preview(p.rsplit('/', 1)[-1])
         if p == '/health':
             return self._send(200, {
                 'ok': True,
@@ -1506,10 +1609,54 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(502, {'error': str(e)})
         return self._send(404, {'error': 'not found'})
 
+    @staticmethod
+    def _owner(who):
+        return f'u:{who.user}' if who.user else f'v:{who.visitor}' if who.visitor else f'a:{who.ip}'
+
+    def _podcast_script(self):
+        """Start writing a podcast script from a document's text; the page polls for it."""
+        if not podcast.enabled():
+            return self._send(404, {'error': 'podcasts are not set up'})
+        who = self._identity()
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            raise BadRequest('bad Content-Length')
+        if n > MAX_PODCAST_BODY:
+            self.close_connection = True
+            raise BadRequest('The document is too long. Try fewer pages.')
+        try:
+            req = podcast.parse_request(json.loads(self.rfile.read(n) or b'{}'))
+        except (ValueError, UnicodeDecodeError) as e:  # podcast.BadRequest is a ValueError
+            raise BadRequest(str(e) if isinstance(e, podcast.BadRequest) else f'bad json: {e}')
+        limits = podcast_limits()
+        if not limits.get(who.tier):
+            msg = ('Sign in to make podcasts.' if who.tier == 'guest'
+                   else 'Podcasts are part of the paid plan.')
+            return self._send(403, {'error': msg})
+        try:
+            refund = _podcast_quota.charge(who, 1) if _podcast_quota else (lambda: None)
+        except QuotaExceeded as e:
+            hours = max(1, round((e.status['resets_at'] - time.time()) / 3600))
+            word = 'script' if e.status['limit'] == 1 else 'scripts'
+            return self._send(429, {'error': f'You have made your {e.status["limit"]} podcast {word} '
+                                             f'for today. More in about {hours} h (midnight UTC).'},
+                              extra={'Retry-After': str(hours * 3600)})
+        try:
+            job = _scripts.submit(req, self._owner(who), refund)
+        except podcast.Busy:
+            refund()
+            raise Busy()
+        log.info('podcast script %s: %s chars, %s min, %s', job.id, len(req['text']),
+                 req['minutes'], req['lang'])
+        return self._send(202, job.to_json())
+
     def _post(self):
         p = urlparse(self.path).path
         if p.startswith('/api/billing/'):
             return self._billing(p)
+        if p == '/api/podcast/script':
+            return self._podcast_script()
         if p == '/api/jobs':
             job, who = self._submit()
             out = job_json(job)
@@ -1531,12 +1678,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global _auth, _quota, _jobs
+    global _auth, _quota, _podcast_quota, _jobs
     if SUPABASE_URL and SUPABASE_ANON_KEY:
         _auth = TokenVerifier(SUPABASE_URL, SUPABASE_JWT_SECRET)
         log.info('sign-in enabled via %s', SUPABASE_URL)
     _quota = open_quota()
     log.info('daily characters per tier (0 = no limit): %s', _quota.limits)
+    if podcast.enabled():
+        _podcast_quota = open_quota(podcast_limits(), 'podcast_usage')
+        log.info('podcasts on (%s); scripts per day per tier: %s', podcast.MODEL, _podcast_quota.limits)
     if GPU_URL and GPU_TOKEN:
         _jobs = JobRouter(_jobs, JobQueue(generate_remote, workers=GPU_WORKERS, name='gpu'))
         log.info('paid jobs go to the GPU service at %s', GPU_URL)

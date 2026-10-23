@@ -41,6 +41,7 @@ ol.chapters{list-style:none;margin:0;padding:0;display:flex;flex-direction:colum
 .controls label[hidden]{display:none}
 select{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;text-transform:none;letter-spacing:0}
 .row{display:flex;gap:8px;flex-wrap:wrap}
+.row[hidden]{display:none}
 button.primary{flex:1 1 200px;background:var(--accent);color:#08101f;border:0;border-radius:10px;padding:13px 18px;font:inherit;font-weight:680;cursor:pointer}
 button.primary:disabled{opacity:.45;cursor:default}
 button.ghost{flex:1 1 120px;background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit;cursor:pointer}
@@ -55,6 +56,8 @@ ol.outputs .state.ready{color:var(--good)}
 ol.outputs audio{width:100%}
 a.dl{color:var(--accent);font-size:14px;font-weight:600;text-decoration:none}
 .note{font-size:14px;color:var(--dim)}
+.hear{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.hearnote{font-size:12.5px;color:var(--dim)}
 </style></head>
 <body><div class="wrap">
 <div class="brand"><h1>Voxa audiobooks</h1><a href="/">← Back to Voxa</a></div>
@@ -92,6 +95,7 @@ a.dl{color:var(--accent);font-size:14px;font-weight:600;text-decoration:none}
     <label id="exprbox" hidden>Expressiveness<select id="expr"></select></label>
     <label>File format<select id="format"><option value="mp3" selected>MP3 (smaller)</option><option value="wav">WAV (lossless)</option></select></label>
   </div>
+  <div class="hear"><button class="small" id="hear" type="button">▶ Hear this voice</button><span class="hearnote" id="hearnote" role="status"></span></div>
   <p class="note" id="costnote"></p>
   <div class="row">
     <button class="primary" id="start" type="button">Make the audiobook</button>
@@ -115,6 +119,7 @@ import * as pdfjs from '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.min.mjs';
 import { readPdf, paragraphsFromText, findChapters, estimateSeconds, formatDuration, planChunks, bookKey,
   openStore, saveChunk, loadChunk, savedChunkKeys, saveBook, listBooks, deleteBook, parseWav, encodeWav,
   floatToInt16, joinPcm, SAMPLE_RATE, bookMp3, zipStore } from '/book.js?v={{BOOK_VERSION}}';
+import { attachPreview, stopPreview, PREVIEW_LINE } from '/preview.js?v={{PREVIEW_VERSION}}';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.worker.min.mjs';
 const PDF_OPTIONS = { cMapUrl: '/static/pdfjs-{{PDFJS_VERSION}}/cmaps/', cMapPacked: true };
@@ -260,8 +265,18 @@ async function setupMake(restore) {
     $('#lang').replaceChildren(...Object.entries(l.languages).map(([k, lab]) => el('option', { value: k, textContent: lab })));
     $('#expr').replaceChildren(...((v.lite && v.lite.expressiveness) || []).map(e =>
       el('option', { value: e.temperature, textContent: e.name, selected: !!e.default })));
-    $('#lang').onchange = () => { fillVoices(); updatePlan(); };
-    $('#voice').onchange = () => { $('#exprbox').hidden = !isLite(); updatePlan(); };
+    $('#lang').onchange = () => { stopPreview(); fillVoices(); updatePlan(); };
+    $('#voice').onchange = () => { stopPreview(); $('#exprbox').hidden = !isLite(); updatePlan(); };
+    attachPreview($('#hear'), $('#hearnote'), () => {
+      const v = voiceInfo($('#voice').value);
+      return v && { ...v, lite: isLite(), key: $('#expr').value };
+    }, async (v, note) => {
+      const tts = await liteEngine(note);
+      if (!LITE_ADDED.has(v.id)) { await tts.addVoice(v.id, v.url); LITE_ADDED.add(v.id); }
+      note.textContent = 'Speaking…';
+      const pcm = floatToInt16(await tts.synth(PREVIEW_LINE(v.name), { voice: v.id, temperature: +$('#expr').value, seed: LITE_SEED }));
+      return new Blob([encodeWav(pcm, SAMPLE_RATE)], { type: 'audio/wav' });
+    });
     $('#expr').onchange = () => updatePlan();
     setupAccount();
   }
@@ -461,7 +476,7 @@ async function makePart(c, s, signal, st) {
 async function start() {
   const st = $('#genstatus'), s = settings(), key = currentKey, plan = planChunks(BOOK.chapters);
   running = true; controller = new AbortController();
-  $('#start').hidden = true; $('#pause').hidden = false; ['#lang', '#voice', '#expr', '#file'].forEach(x => $(x).disabled = true);
+  $('#start').hidden = true; $('#pause').hidden = false; ['#lang', '#voice', '#expr', '#file', '#hear'].forEach(x => $(x).disabled = true);
   st.className = 'status'; st.textContent = 'Starting…';
   let wake = navigator.wakeLock ? await navigator.wakeLock.request('screen').catch(() => null) : null;
   await setupAccount();
@@ -511,7 +526,7 @@ async function start() {
     running = false; controller = null; if (wake) wake.release().catch(() => {});
     // Rebuild the list and its files first, so the buttons come back with everything in place.
     await updatePlan();  // also attaches every finished chapter's file
-    $('#pause').hidden = true; ['#lang', '#voice', '#expr', '#file'].forEach(x => $(x).disabled = false);
+    $('#pause').hidden = true; ['#lang', '#voice', '#expr', '#file', '#hear'].forEach(x => $(x).disabled = false);
     listSaved();
   }
 }

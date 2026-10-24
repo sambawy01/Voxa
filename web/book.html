@@ -507,7 +507,7 @@ async function start() {
   } catch (e) {
     st.className = 'status' + (e.name === 'AbortError' ? '' : ' err');
     const kept = `${saved.size} of ${plan.length} parts are saved on this device`;
-    st.textContent = e instanceof QuotaReached ? `Paused at today's limit. ${kept}; come back after midnight UTC to continue${canSignIn ? ', or sign in for more' : canUpgrade ? ', or upgrade on the main page for no daily limit' : ''}, or pick an English on-device voice.`
+    st.textContent = e instanceof QuotaReached ? `Paused at today's limit. ${kept}; come back after midnight UTC to continue${canSignIn ? ', or sign in for more' : canUpgrade ? ', or upgrade to Voxa Studio on the main page for more' : ''}, or pick an English on-device voice.`
       : e.name === 'AbortError' ? `Paused. ${kept}.` : `Stopped: ${e.message}. ${kept}; press Continue to try again.`;
   } finally {
     running = false; controller = null; if (wake) wake.release().catch(() => {});

@@ -242,7 +242,7 @@ class PagesTest(ServerTestCase):
         self.assertNotIn('Cross-Origin-Embedder-Policy', headers)
         self.assertIn(b'https://cdn.paddle.com/paddle/v2/paddle.js', page)
         for path, needle in (('/terms', b'Paddle.com is the Merchant of Record for all our orders'),
-                             ('/refunds', b'within 14 days'), ('/privacy', b'Paddle'), ('/pricing', b'Paid plan')):
+                             ('/refunds', b'within 14 days'), ('/privacy', b'Paddle'), ('/pricing', b'Voxa Studio')):
             code, headers, page = self.req(path)
             self.assertEqual(code, 200, path)
             self.assertIn(needle, page, path)

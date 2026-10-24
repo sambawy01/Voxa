@@ -22,6 +22,13 @@ PACKAGES = [
                      '+p/Sb/6z4Uf/1Cw==',
         'keep': r'[^/].*\.(js|wasm)',
     },
+    {   # Voxa Lite: onnxruntime-web runs Hojo TTS Light (web/hojo-worker.js). MIT. Only the
+        # WebAssembly build, with SIMD and threads.
+        'name': 'onnxruntime-web', 'version': '1.23.2', 'dir': 'onnxruntime-web-1.23.2',
+        'integrity': 'sha512-T09JUtMn+CZLk3mFwqiH0lgQf+4S7+oYHHtk6uhaYAAJI95bTcKi5bOOZYwORXfS/RLZCjDDEXGWIuOCAFlEjg==',
+        'keep': r'dist/(ort\.wasm\.min\.mjs|ort-wasm-simd-threaded\.(mjs|wasm))',
+        'flatten': 'dist/',
+    },
     {   # Audiobooks: PDF text extraction. Apache-2.0. Character maps cover CJK and other
         # PDFs whose fonts map glyphs through a CMap.
         'name': 'pdfjs-dist', 'version': '4.4.168', 'dir': 'pdfjs-4.4.168',
@@ -52,7 +59,7 @@ def fetch(pkg, root):
             rel = os.path.normpath(member.name[len('package/'):])
             if rel.startswith('..') or os.path.isabs(rel) or not re.fullmatch(pkg['keep'], rel):
                 continue
-            target = os.path.join(dest, rel)
+            target = os.path.join(dest, rel.removeprefix(pkg.get('flatten', '')))
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with tar.extractfile(member) as src, open(target, 'wb') as out:
                 out.write(src.read())

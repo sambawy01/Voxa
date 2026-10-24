@@ -639,7 +639,7 @@
    "default": false
   }
  ],
- "_lite_comment": "Voxa Lite voices: Phonon 31m (English) runs in the browser, so the server never generates these. file is the voice in gradium/phonon-voices, pinned to revision. Names are drafts; the shortlist favours the catalogue's calm, even-toned voices for long listening.",
+ "_lite_comment": "Voxa Lite voices run in the browser, so the server never generates these. engine 'phonon' (the default): Phonon 31m by Gradium, English only; file is the voice in gradium/phonon-voices, pinned to revision. engine 'hojo': Hojo TTS Light 40M by HojoAI, English and Chinese; source is the voice id in its voice bank (scripts/build_hojo.py). Names are Voxa's own. Hojo publishes no accent or age, so those are left out; hojo_en_u_01 is listed as neutral.",
  "lite": {
   "model": "hf://gradium/phonon-31m-en@8c64b55ec301728e2d1695bfea87a08a267d0c2d",
   "voices_repo": "gradium/phonon-voices",
@@ -648,18 +648,21 @@
    {
     "id": "steady",
     "name": "Steady",
-    "temperature": 0.15
+    "temperature": 0.15,
+    "hojo_temperature": 0.6
    },
    {
     "id": "natural",
     "name": "Natural",
     "temperature": 0.3,
-    "default": true
+    "default": true,
+    "hojo_temperature": 0.8
    },
    {
     "id": "expressive",
     "name": "Expressive",
-    "temperature": 0.5
+    "temperature": 0.5,
+    "hojo_temperature": 0.95
    }
   ],
   "voices": [
@@ -742,6 +745,141 @@
     "age": "Middle-aged",
     "file": "voices/YyKcxPG7iIgS3jsK.safetensors",
     "catalogue_name": "Hugh"
+   },
+   {
+    "id": "ivy",
+    "name": "Ivy",
+    "lang": "a",
+    "gender": "female",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_f_01"
+   },
+   {
+    "id": "clara",
+    "name": "Clara",
+    "lang": "a",
+    "gender": "female",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_f_02"
+   },
+   {
+    "id": "elise",
+    "name": "Elise",
+    "lang": "a",
+    "gender": "female",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_f_03"
+   },
+   {
+    "id": "hazel",
+    "name": "Hazel",
+    "lang": "a",
+    "gender": "female",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_f_04"
+   },
+   {
+    "id": "lydia",
+    "name": "Lydia",
+    "lang": "a",
+    "gender": "female",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_f_05"
+   },
+   {
+    "id": "margot",
+    "name": "Margot",
+    "lang": "a",
+    "gender": "female",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_f_06"
+   },
+   {
+    "id": "tessa",
+    "name": "Tessa",
+    "lang": "a",
+    "gender": "female",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_f_07"
+   },
+   {
+    "id": "theo",
+    "name": "Theo",
+    "lang": "a",
+    "gender": "male",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_m_01"
+   },
+   {
+    "id": "jonah",
+    "name": "Jonah",
+    "lang": "a",
+    "gender": "male",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_m_02"
+   },
+   {
+    "id": "silas",
+    "name": "Silas",
+    "lang": "a",
+    "gender": "male",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_m_03"
+   },
+   {
+    "id": "declan",
+    "name": "Declan",
+    "lang": "a",
+    "gender": "male",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_m_04"
+   },
+   {
+    "id": "elliot",
+    "name": "Elliot",
+    "lang": "a",
+    "gender": "male",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_m_05"
+   },
+   {
+    "id": "sage",
+    "name": "Sage",
+    "lang": "a",
+    "gender": "neutral",
+    "accent": "English",
+    "engine": "hojo",
+    "source": "hojo_en_u_01"
+   },
+   {
+    "id": "ling",
+    "name": "Ling",
+    "lang": "z",
+    "gender": "female",
+    "accent": "Mandarin",
+    "engine": "hojo",
+    "source": "hojo_zh_f_01"
+   },
+   {
+    "id": "xia",
+    "name": "Xia",
+    "lang": "z",
+    "gender": "female",
+    "accent": "Mandarin",
+    "engine": "hojo",
+    "source": "hojo_zh_f_02"
    }
   ]
  }

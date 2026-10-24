@@ -107,6 +107,7 @@ import { readPdf, paragraphsFromText, findChapters, estimateSeconds, formatDurat
   openStore, saveChunk, loadChunk, savedChunkKeys, saveBook, listBooks, deleteBook, parseWav, encodeWav,
   floatToInt16, joinPcm, SAMPLE_RATE, bookMp3, zipStore } from '/book.js?v={{BOOK_VERSION}}';
 import { attachPreview, stopPreview, PREVIEW_LINE } from '/preview.js?v={{PREVIEW_VERSION}}';
+import { createLite } from '/lite.js?v={{LITE_VERSION}}';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.worker.min.mjs';
 const PDF_OPTIONS = { cMapUrl: '/static/pdfjs-{{PDFJS_VERSION}}/cmaps/', cMapPacked: true };
@@ -188,7 +189,7 @@ async function open(file) {
 
 $('#file').addEventListener('change', e => { if (e.target.files[0]) open(e.target.files[0]); });
 // --- Making the audio ------------------------------------------------------------------------
-// On-device voices (Phonon, English) are free and unlimited; Studio voices (Kokoro on the server)
+// On-device voices (Phonon or Hojo; English and Chinese) are free and unlimited; Studio voices (Kokoro on the server)
 // use the daily allowance. Every finished part is saved on this device straight away, so a
 // closed tab, a lost connection or a used-up allowance only ever pauses the book.
 
@@ -232,7 +233,7 @@ function fillVoices(selected) {
   const k = $('#lang').value, lite = liteVoices(), studio = VOICES.catalogue[k] || [];
   const opt = v => el('option', { value: v.id, textContent: v.name + (v.signature ? ' ✦' : ''), selected: v.id === selected });
   const groups = [];
-  // On-device first for English: whole books cost nothing and never hit a daily limit.
+  // On-device first: whole books cost nothing and never hit a daily limit.
   if (lite.length) groups.push(el('optgroup', { label: 'On this device · free, no daily limit' }, ...lite.map(opt)));
   groups.push(el('optgroup', { label: 'Studio voices' }, ...studio.map(opt)));
   $('#voice').replaceChildren(...groups);
@@ -258,10 +259,8 @@ async function setupMake(restore) {
       const v = voiceInfo($('#voice').value);
       return v && { ...v, lite: isLite(), key: $('#expr').value };
     }, async (v, note) => {
-      const tts = await liteEngine(note);
-      if (!LITE_ADDED.has(v.id)) { await tts.addVoice(v.id, v.url); LITE_ADDED.add(v.id); }
-      note.textContent = 'Speaking…';
-      const pcm = floatToInt16(await tts.synth(PREVIEW_LINE(v.name), { voice: v.id, temperature: +$('#expr').value, seed: LITE_SEED }));
+      const status = t => { note.textContent = t; };
+      const pcm = floatToInt16(await LITE.synth(v, PREVIEW_LINE(v.name, v.lang), { temperature: +$('#expr').value, seed: LITE_SEED, status }));
       return new Blob([encodeWav(pcm, SAMPLE_RATE)], { type: 'audio/wav' });
     });
     $('#expr').onchange = () => updatePlan();
@@ -299,7 +298,7 @@ async function updatePlan() {
       const fits = leftChars <= q.remaining;
       note.textContent = `This needs ${leftChars.toLocaleString()} characters of Studio voice; you have ${q.remaining.toLocaleString()} left today. ` +
         (fits ? '' : `Voxa makes what fits, saves it, and continues when you come back after midnight UTC. `) +
-        (liteVoices().length ? 'English on-device voices have no limit.' : '');
+        (liteVoices().length ? 'On-device voices have no limit.' : '');
     }
   }
   $('#start').disabled = !plan.length;
@@ -421,27 +420,15 @@ async function wholeBook(kind) {
   note.replaceChildren(link);
 }
 
-// On-device engine, loaded once (~65 MB the first time, then from the browser cache).
-let LITE_TTS = null;
-const LITE_ADDED = new Set();
-async function liteEngine(st) {
-  if (LITE_TTS) return LITE_TTS;
-  const { PhononTTS } = await import(`/static/phonon-${VOICES.phonon_version}/index.js`);
-  const seen = {};
-  LITE_TTS = await PhononTTS.load({ lang: 'en', model: VOICES.lite.model, onProgress: ({ file, loaded, cached }) => {
-    seen[file] = loaded || 0;
-    st.textContent = cached ? 'Loading the on-device voice…' : `Downloading the on-device voice (once)… ${(Object.values(seen).reduce((a, b) => a + b, 0) / 1e6).toFixed(0)} MB of about 65`;
-  } });
-  return LITE_TTS;
-}
+// On-device engines (web/lite.js), each loaded the first time one of its voices speaks.
+const LITE = createLite(() => VOICES);
 
 class QuotaReached extends Error {}
 
 async function makePart(c, s, signal, st) {
   if (s.engine === 'lite') {
-    const tts = await liteEngine(st);
-    if (!LITE_ADDED.has(s.voice)) { await tts.addVoice(s.voice, voiceInfo(s.voice).url); LITE_ADDED.add(s.voice); }
-    return floatToInt16(await tts.synth(c.text, { voice: s.voice, temperature: s.temperature, seed: s.seed, signal }));
+    const status = t => { st.textContent = t; };
+    return floatToInt16(await LITE.synth(voiceInfo(s.voice), c.text, { temperature: s.temperature, seed: s.seed, signal, status }));
   }
   let r = await api('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
     body: JSON.stringify({ text: c.text, lang: s.lang, voice: s.voice, speed: s.speed }) });

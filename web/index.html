@@ -165,7 +165,7 @@
 <section class="card flat">
   <div class="card-head"><span class="ico mint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>
     <div><h2>About the voices</h2></div></div>
-  <p class="note">Studio voices run Kokoro-82M (Apache 2.0) on our servers: one set of weights serves all nine languages, and repeated phrases come back instantly. On-device voices run Phonon 31m by Gradium (Apache 2.0) in your browser, so they cost nothing and work offline once loaded. Voice names are Voxa's own. <a href="/credits">Credits</a></p>
+  <p class="note">Studio voices run Kokoro-82M (Apache 2.0) on our servers: one set of weights serves all nine languages, and repeated phrases come back instantly. On-device voices run in your browser, so they cost nothing and work offline once loaded: Phonon 31m by Gradium (Apache 2.0) for English, and Hojo TTS Light by HojoAI (Apache 2.0) for English and Chinese. Voice names are Voxa's own. <a href="/credits">Credits</a></p>
 </section>
 </main>
 {{FOOTER}}
@@ -205,7 +205,7 @@ function refreshVoices(){
 function describeVoice(){
   const id=voiceSel.value, v=LITE_BY_ID[id]||(CAT[langSel.value]||[]).find(x=>x.id===id);
   $('#voicenote').textContent=v?v.description:'';
-  // Phonon has expressiveness and takes but no pacing control; Kokoro the other way round.
+  // On-device voices have expressiveness and takes but no pacing control; Kokoro the other way round.
   $('#litebox').hidden=!isLite(id); $('#pacebox').hidden=isLite(id); $('#newtake').hidden=true;
 }
 langSel.addEventListener('change',refreshVoices);
@@ -216,7 +216,7 @@ import('/preview.js').then(P=>{
   P.attachPreview($('#hear'), $('#hearnote'), ()=>{
     const id=voiceSel.value, lite=LITE_BY_ID[id], v=lite||(CAT[langSel.value]||[]).find(x=>x.id===id);
     return v?{...v, lite:!!lite, key:$('#expr').value}:null;
-  }, async(v,note)=>(await generateLite(P.PREVIEW_LINE(v.name), v.id, note)).blob);
+  }, async(v,note)=>(await generateLite(P.PREVIEW_LINE(v.name, v.lang), v.id, note)).blob);
   langSel.addEventListener('change',P.stopPreview); voiceSel.addEventListener('change',P.stopPreview);
 }).catch(()=>{ $('#hear').hidden=true; });
 $('#speed').addEventListener('input',e=>$('#speedv').textContent=(+e.target.value).toFixed(2)+'×');
@@ -421,38 +421,27 @@ function showAudio(blob, fileUrl){
   }
 }
 
-// Voxa Lite: Phonon generates on this device, so it is free and unlimited and never touches
-// the server. The package (~4 MB) and the model (~65 MB) load on first use, then come from
-// the browser's cache.
-let LITE_TTS=null, LITE_LOADING=null, LITE_SEED=4242424242424242;
-const LITE_VOICES_LOADED=new Set(), LITE_CACHE=new Map();
-async function liteEngine(st){
-  if(LITE_TTS) return LITE_TTS;
-  if(!LITE_LOADING){
-    LITE_LOADING=(async()=>{
-      const {PhononTTS}=await import(`/static/phonon-${PHONON_VERSION}/index.js`);
-      const seen={};
-      return PhononTTS.load({lang:'en', model:LITE.model, onProgress:({file,loaded,cached})=>{
-        seen[file]=loaded||0;
-        const mb=Object.values(seen).reduce((a,b)=>a+b,0)/1e6;
-        st.textContent=cached?'Loading the on-device voice…':`Downloading the on-device voice (once)… ${mb.toFixed(0)} MB of about 65`;
-      }});
-    })().catch(e=>{LITE_LOADING=null;throw e;});
-  }
-  LITE_TTS=await LITE_LOADING;
-  return LITE_TTS;
-}
+// Voxa Lite: on-device voices (web/lite.js: Phonon or Hojo) are free and unlimited and never
+// touch the server. Each engine loads on first use, then comes from the browser's cache.
+let LITE_ENGINES=null, LITE_SEED=4242424242424242;
+const LITE_CACHE=new Map();
 async function generateLite(text, voiceId, st, signal){
   const v=LITE_BY_ID[voiceId], temperature=+$('#expr').value;
   const key=[text,voiceId,temperature,LITE_SEED].join('|');
   if(LITE_CACHE.has(key)) return {blob:LITE_CACHE.get(key), cached:true};
   st.textContent='Starting the on-device voice…';
-  let tts;
-  try{ tts=await liteEngine(st); }
-  catch(e){ throw new Error("This device can't run on-device voices ("+e.message+'). Choose a Studio voice instead.'); }
-  if(!LITE_VOICES_LOADED.has(voiceId)){ await tts.addVoice(voiceId, v.url); LITE_VOICES_LOADED.add(voiceId); }
-  st.textContent='Generating on this device…';
-  const blob=await tts.synthWav(text,{voice:voiceId, temperature, seed:LITE_SEED, signal});
+  const [{createLite}, {encodeWav, floatToInt16, SAMPLE_RATE}]=await Promise.all([import('/lite.js?v={{LITE_VERSION}}'), import('/book.js?v={{BOOK_VERSION}}')]);
+  LITE_ENGINES||=createLite(()=>({lite:LITE, phonon_version:PHONON_VERSION}));
+  let audio;
+  try{
+    audio=await LITE_ENGINES.synth(v, text, {temperature, seed:LITE_SEED, signal, status:t=>{
+      st.textContent=t.startsWith('Loading')||t.startsWith('Downloading')?t:'Generating on this device…';
+    }});
+  }catch(e){
+    if(e.name==='AbortError') throw e;
+    throw new Error("This device can't run on-device voices ("+e.message+'). Choose a Studio voice instead.');
+  }
+  const blob=new Blob([encodeWav(floatToInt16(audio), SAMPLE_RATE)], {type:'audio/wav'});
   if(LITE_CACHE.size>20) LITE_CACHE.delete(LITE_CACHE.keys().next().value);
   LITE_CACHE.set(key, blob);
   return {blob, cached:false};
@@ -463,7 +452,7 @@ async function generate(newTake){
   if(!text){st.className='status';st.textContent='Type something first.';return;}
   if(text.length>MAX){st.className='status err';st.textContent=`That script is ${text.length} characters; the limit is ${MAX}.`;return;}
   const btn=$('#go'), bar=$('#bar'), fill=$('#bar i'), lite=isLite(voiceSel.value);
-  // A new take reads the same line differently: Phonon's output depends on its seed.
+  // A new take reads the same line differently: on-device output depends on its seed.
   if(newTake) LITE_SEED=Math.floor(Math.random()*2**48);
   btn.disabled=true; $('#newtake').disabled=true; $('#cancel').hidden=false; $('#player').hidden=true; $('#download').hidden=true; $('#playerlink').hidden=true;
   ctrl=new AbortController();

@@ -1,0 +1,68 @@
+name: Voice comparison (Modal)
+
+# Runs gpu/compare.py: the same paragraph in ten languages from each candidate engine on a
+# Modal L4, and saves the clips and timings to the tts-compare-results branch. Needs the
+# MODAL_TOKEN_ID and MODAL_TOKEN_SECRET repository secrets; without them it stops with a notice.
+on:
+  push:
+    branches: [feat/tts-compare]
+    paths: [gpu/compare.py, .github/workflows/compare.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: tts-compare
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - name: Check the secrets
+        id: check
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
+            echo "::notice::Not running: add the MODAL_TOKEN_ID and MODAL_TOKEN_SECRET repository secrets, then re-run."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.ready == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.ready == 'true'
+        with:
+          python-version: '3.11'
+
+      - name: Install the Modal client
+        if: steps.check.outputs.ready == 'true'
+        run: pip install modal==1.6.2
+
+      - name: Generate the clips
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          modal run gpu/compare.py 2>&1 | tee compare.log
+          { echo "## Voice comparison"; echo; echo '```'; grep -E '^(chatterbox|qwen|kokoro) ' compare.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.check.outputs.ready == 'true'
+        with:
+          name: tts-compare
+          path: out/compare
+
+      - name: Save to the results branch
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          cd out/compare
+          git init -q -b tts-compare-results
+          git add .
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "Voice comparison from ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" tts-compare-results

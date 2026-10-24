@@ -701,15 +701,50 @@ class LiteCatalogueTest(ServerTestCase):
     def test_lite_voices_are_offered_pinned_and_never_synthesised_by_the_server(self):
         _, headers, body = self.req('/api/voices')
         lite = json.loads(body)['lite']
-        self.assertEqual([len(lite['voices'][k]) for k in ('a', 'b')], [4, 4])
-        for v in lite['voices']['a'] + lite['voices']['b']:
+        voices = [v for k in ('a', 'b', 'z') for v in lite['voices'][k]]
+        phonon = [v for v in voices if v['engine'] == 'phonon']
+        hojo = [v for v in voices if v['engine'] == 'hojo']
+        self.assertEqual(len(phonon), 8)
+        self.assertEqual(sorted(v['source'] for v in hojo),
+                         [f'hojo_en_f_0{i}' for i in range(1, 8)] + [f'hojo_en_m_0{i}' for i in range(1, 6)]
+                         + ['hojo_en_u_01', 'hojo_zh_f_01', 'hojo_zh_f_02'])
+        self.assertEqual([v['source'] for v in lite['voices']['z']], ['hojo_zh_f_01', 'hojo_zh_f_02'])
+        for v in phonon:
             self.assertRegex(v['url'], r'^https://huggingface\.co/gradium/phonon-voices/resolve/[0-9a-f]{40}/voices/')
+        for v in voices:
             self.assertTrue(v['description'].endswith('On this device'))
             with self.subTest(v['id']):  # the server refuses Lite voices for Studio jobs
-                code, _, _ = self.req('/api/tts', {'text': 'x', 'lang': 'a', 'voice': v['id']})
+                code, _, _ = self.req('/api/tts', {'text': 'x', 'lang': v['lang'], 'voice': v['id']})
                 self.assertEqual(code, 400)
         self.assertIn('@', lite['model'])  # model pinned to a commit
         self.assertEqual([e['temperature'] for e in lite['expressiveness']], [0.15, 0.3, 0.5])
+        self.assertTrue(all(0 < e['hojo_temperature'] <= 1 for e in lite['expressiveness']))
+
+    def test_hojo_scripts_and_model_files_are_served_isolated(self):
+        code, headers, js = self.req('/hojo-worker.js')
+        self.assertEqual(code, 200)
+        self.assertEqual(headers['Cross-Origin-Embedder-Policy'], 'require-corp')
+        self.assertNotIn(b'{{', js)
+        self.assertIn(f'/static/{server.HOJO_DIR}/'.encode(), js)
+        self.assertIn(f'/static/onnxruntime-web-{server.ORT_VERSION}/'.encode(), js)
+        for path in ('/lite.js', '/hojo-text.js'):
+            code, headers, _ = self.req(path)
+            self.assertEqual(code, 200)
+            self.assertTrue(headers['Content-Type'].startswith('text/javascript'))
+        # Model files are streamed from static/ with the same long-lived, isolated headers.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, 'm'))
+            with open(os.path.join(tmp, 'm', 'llm.onnx'), 'wb') as f:
+                f.write(b'x' * 3_000_000)
+            old, server.STATIC_DIR = server.STATIC_DIR, tmp
+            try:
+                code, headers, body = self.req('/static/m/llm.onnx')
+            finally:
+                server.STATIC_DIR = old
+        self.assertEqual((code, len(body), headers['Content-Length']), (200, 3_000_000, '3000000'))
+        self.assertIn('immutable', headers['Cache-Control'])
+        self.assertEqual(headers['Cross-Origin-Resource-Policy'], 'same-origin')
 
     def test_main_page_is_isolated_for_threads(self):
         _, headers, _ = self.req('/')
@@ -725,6 +760,9 @@ class LiteCatalogueTest(ServerTestCase):
         cases = {
             'differ from Studio': ([dict(voice, id='harper')], base),
             'English only': ([dict(voice, lang='f')], base),
+            'Chinese \\(z\\) only': ([dict(voice, engine='hojo', source='hojo_en_f_01', lang='z')], base),
+            'Hojo speaks': ([dict(voice, engine='hojo', source='hojo_ja_f_01')], base),
+            'unknown engine': ([dict(voice, engine='other')], base),
             'unexpected file path': ([dict(voice, file='../../etc/passwd')], base),
             'default': ([voice], dict(base, expressiveness=[{'id': 'n', 'name': 'N', 'temperature': 0.3}])),
         }
@@ -755,7 +793,7 @@ class CreditsTest(ServerTestCase):
     def test_credits_name_every_model_and_attribution(self):
         code, _, body = self.req('/credits')
         self.assertEqual(code, 200)
-        for needle in (b'Kokoro-82M', b'Phonon 31m', b'koniwa', b'SIWIS', b'lamejs', b'LGPL-3.0', b'pdf.js',
+        for needle in (b'Kokoro-82M', b'Phonon 31m', b'Hojo TTS Light 40M', b'onnxruntime-web', b'koniwa', b'SIWIS', b'lamejs', b'LGPL-3.0', b'pdf.js',
                        b'/static/lamejs-1.2.1/lame.min.js'):
             self.assertIn(needle, body)
         _, _, page = self.req('/')

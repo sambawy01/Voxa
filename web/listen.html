@@ -145,7 +145,7 @@ details[open] summary{margin-bottom:10px}
   </details>
   <p class="safety">Driving? Set this up before you go, and use Siri so your eyes and hands stay on the road.</p>
 </section>
-<p class="small-print">Studio voices send the text to Voxa to be spoken and use the daily allowance. On-device voices (English) read on this device for free. Links in the text are read as "link", and quoted replies in emails are skipped.</p>
+<p class="small-print">Studio voices send the text to Voxa to be spoken and use the daily allowance. On-device voices (English and Chinese) read on this device for free. Links in the text are read as "link", and quoted replies in emails are skipped.</p>
 </main>
 {{FOOTER}}
 
@@ -153,6 +153,7 @@ details[open] summary{margin-bottom:10px}
 import { readerPlan, detectLang, incomingText, shortDuration } from '/listen.js?v={{LISTEN_VERSION}}';
 import { parseWav, encodeWav, floatToInt16, SAMPLE_RATE, CHARS_PER_SECOND } from '/book.js';
 import { attachPreview, stopPreview, PREVIEW_LINE } from '/preview.js?v={{PREVIEW_VERSION}}';
+import { createLite } from '/lite.js?v={{LITE_VERSION}}';
 
 const $ = s => document.querySelector(s);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -212,7 +213,7 @@ async function setupVoices() {
 
 function fillVoices() {
   const lang = $('#lang').value, all = voicesFor(lang);
-  const opt = v => Object.assign(document.createElement('option'), { value: v.id, textContent: `${v.name} · ${v.gender === 'male' ? 'man' : 'woman'}` });
+  const opt = v => Object.assign(document.createElement('option'), { value: v.id, textContent: `${v.name} · ${v.gender === 'male' ? 'man' : v.gender === 'female' ? 'woman' : 'neutral'}` });
   const group = (label, list) => { const g = document.createElement('optgroup'); g.label = label; g.append(...list.map(opt)); return g; };
   const studio = all.filter(v => !v.lite), lite = all.filter(v => v.lite);
   // Studio first: it starts fastest and keeps reading with the screen locked, which matters in a car.
@@ -231,30 +232,19 @@ function voiceNote() {
 
 function settings() {
   const v = voice(), lang = $('#lang').value;
-  return v.lite ? { engine: 'lite', lang, voice: v.id, url: v.url, temperature: 0.3, seed: LITE_SEED }
+  return v.lite ? { engine: 'lite', lang, voice: v.id, temperature: 0.3, seed: LITE_SEED }
     : { engine: 'studio', lang, voice: v.id, speed: 1 };
 }
 
 // --- Making each part's audio -----------------------------------------------------------------------
 class QuotaReached extends Error {}
-let LITE_TTS = null;
-const LITE_ADDED = new Set();
-async function liteEngine(st) {
-  if (LITE_TTS) return LITE_TTS;
-  const { PhononTTS } = await import(`/static/phonon-${VOICES.phonon_version}/index.js`);
-  const seen = {};
-  LITE_TTS = await PhononTTS.load({ lang: 'en', model: VOICES.lite.model, onProgress: ({ file, loaded, cached }) => {
-    seen[file] = loaded || 0;
-    st.textContent = cached ? 'Loading the on-device voice…' : `Downloading the on-device voice (once)… ${(Object.values(seen).reduce((a, b) => a + b, 0) / 1e6).toFixed(0)} MB of about 65`;
-  } });
-  return LITE_TTS;
-}
+// On-device engines (web/lite.js), each loaded the first time one of its voices speaks.
+const LITE = createLite(() => VOICES);
 
 async function makePart(text, s) {
   if (s.engine === 'lite') {
-    const tts = await liteEngine($('#status'));
-    if (!LITE_ADDED.has(s.voice)) { await tts.addVoice(s.voice, s.url); LITE_ADDED.add(s.voice); }
-    const pcm = floatToInt16(await tts.synth(text, { voice: s.voice, temperature: s.temperature, seed: s.seed }));
+    const status = t => { $('#status').textContent = t; };
+    const pcm = floatToInt16(await LITE.synth(voicesFor(s.lang).find(v => v.id === s.voice), text, { temperature: s.temperature, seed: s.seed, status }));
     return URL.createObjectURL(new Blob([encodeWav(pcm, SAMPLE_RATE)], { type: 'audio/wav' }));
   }
   for (let attempt = 0; ; attempt++) {
@@ -323,7 +313,7 @@ async function playFrom(i) {
     if (my !== seq) return;
     playing = false; render();
     if (e.name === 'NotAllowedError') setStatus('Tap ▶ to start listening.');
-    else if (e instanceof QuotaReached) setStatus(e.message + (liteFor($('#lang').value).length ? ' English on-device voices have no daily limit.' : ''), 'err');
+    else if (e instanceof QuotaReached) setStatus(e.message + (liteFor($('#lang').value).length ? ' On-device voices have no daily limit.' : ''), 'err');
     else setStatus('Stopped: ' + e.message + '. Tap ▶ to try again.', 'err');
   }
 }
@@ -461,10 +451,8 @@ $('#voice').onchange = () => { stopPreview(); settingsChanged(); };
 $('#speed').onchange = () => { PREFS.speed = +$('#speed').value; savePrefs(); audio.playbackRate = PREFS.speed; render(); };
 $('#hear').addEventListener('click', () => { if (playing) pause(); });
 attachPreview($('#hear'), $('#hearnote'), () => voice(), async (v, note) => {
-  const tts = await liteEngine(note);
-  if (!LITE_ADDED.has(v.id)) { await tts.addVoice(v.id, v.url); LITE_ADDED.add(v.id); }
-  note.textContent = 'Speaking…';
-  return new Blob([encodeWav(floatToInt16(await tts.synth(PREVIEW_LINE(v.name), { voice: v.id, temperature: 0.3, seed: LITE_SEED })), SAMPLE_RATE)], { type: 'audio/wav' });
+  const status = t => { note.textContent = t; };
+  return new Blob([encodeWav(floatToInt16(await LITE.synth(v, PREVIEW_LINE(v.name, v.lang), { temperature: 0.3, seed: LITE_SEED, status })), SAMPLE_RATE)], { type: 'audio/wav' });
 });
 
 // The bookmark and the Shortcut point at wherever this page is served.

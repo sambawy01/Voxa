@@ -1,0 +1,206 @@
+{
+ "texts": {
+  "en": "Every morning, the old bookshop on the corner opens its doors at nine. The owner makes a cup of tea, sorts the new arrivals, and reads the first page of each one aloud, just to hear how it sounds.",
+  "ar": "كل صباح، تفتح المكتبة القديمة في زاوية الشارع أبوابها في التاسعة. تُعِدّ صاحبتها كوبًا من الشاي، وترتّب الكتب الجديدة، ثم تقرأ الصفحة الأولى من كل كتاب بصوت عالٍ، فقط لتسمع كيف يبدو.",
+  "de": "Jeden Morgen öffnet die alte Buchhandlung an der Ecke um neun Uhr ihre Türen. Die Besitzerin kocht sich eine Tasse Tee, sortiert die Neuzugänge und liest von jedem Buch die erste Seite laut vor, nur um zu hören, wie sie klingt.",
+  "ja": "毎朝、角にある古い本屋は九時に店を開けます。店主はお茶を一杯いれて、新しく届いた本を並べ、どの本も最初のページを声に出して読みます。どんな響きがするのか、聞いてみたいからです。",
+  "zh": "每天早上九点，街角那家老书店准时开门。店主先给自己泡一杯茶，整理新到的书，然后把每本书的第一页大声读出来，只是想听听它听起来是什么样子。",
+  "es": "Cada mañana, la vieja librería de la esquina abre sus puertas a las nueve. La dueña se prepara una taza de té, ordena los libros nuevos y lee en voz alta la primera página de cada uno, solo para oír cómo suena.",
+  "fr": "Chaque matin, la vieille librairie du coin ouvre ses portes à neuf heures. La propriétaire se prépare une tasse de thé, trie les nouveautés et lit à voix haute la première page de chacune, juste pour entendre comment elle sonne.",
+  "hi": "हर सुबह, कोने की पुरानी किताबों की दुकान नौ बजे अपने दरवाज़े खोलती है। मालकिन एक कप चाय बनाती हैं, नई आई किताबें सजाती हैं, और हर किताब का पहला पन्ना ज़ोर से पढ़ती हैं, बस यह सुनने के लिए कि वह कैसा लगता है।",
+  "ko": "매일 아침, 모퉁이의 오래된 서점은 아홉 시에 문을 엽니다. 주인은 차 한 잔을 우리고, 새로 들어온 책들을 정리한 뒤, 책마다 첫 페이지를 소리 내어 읽습니다. 어떤 소리가 나는지 듣고 싶어서요.",
+  "ru": "Каждое утро старый книжный магазин на углу открывает свои двери в девять. Хозяйка заваривает себе чашку чая, разбирает новые поступления и читает вслух первую страницу каждой книги, просто чтобы услышать, как она звучит."
+ },
+ "rows": [
+  {
+   "engine": "supertonic",
+   "engine_name": "Supertonic 3",
+   "lang": "en",
+   "where": "device",
+   "gen_seconds": 5.16,
+   "audio_seconds": 12.61,
+   "voice": "F1",
+   "file": "supertonic-en.mp3"
+  },
+  {
+   "engine": "supertonic",
+   "engine_name": "Supertonic 3",
+   "lang": "ar",
+   "where": "device",
+   "gen_seconds": 7.12,
+   "audio_seconds": 18.04,
+   "voice": "F1",
+   "file": "supertonic-ar.mp3"
+  },
+  {
+   "engine": "supertonic",
+   "engine_name": "Supertonic 3",
+   "lang": "de",
+   "where": "device",
+   "gen_seconds": 6.07,
+   "audio_seconds": 14.7,
+   "voice": "F1",
+   "file": "supertonic-de.mp3"
+  },
+  {
+   "engine": "supertonic",
+   "engine_name": "Supertonic 3",
+   "lang": "ja",
+   "where": "device",
+   "gen_seconds": 6.35,
+   "audio_seconds": 16.3,
+   "voice": "F1",
+   "file": "supertonic-ja.mp3"
+  },
+  {
+   "engine": "supertonic",
+   "engine_name": "Supertonic 3",
+   "lang": "es",
+   "where": "device",
+   "gen_seconds": 5.96,
+   "audio_seconds": 14.91,
+   "voice": "F1",
+   "file": "supertonic-es.mp3"
+  },
+  {
+   "engine": "supertonic",
+   "engine_name": "Supertonic 3",
+   "lang": "fr",
+   "where": "device",
+   "gen_seconds": 5.94,
+   "audio_seconds": 14.98,
+   "voice": "F1",
+   "file": "supertonic-fr.mp3"
+  },
+  {
+   "engine": "supertonic",
+   "engine_name": "Supertonic 3",
+   "lang": "hi",
+   "where": "device",
+   "gen_seconds": 6.01,
+   "audio_seconds": 15.6,
+   "voice": "F1",
+   "file": "supertonic-hi.mp3"
+  },
+  {
+   "engine": "supertonic",
+   "engine_name": "Supertonic 3",
+   "lang": "ko",
+   "where": "device",
+   "gen_seconds": 6.0,
+   "audio_seconds": 15.26,
+   "voice": "F1",
+   "file": "supertonic-ko.mp3"
+  },
+  {
+   "engine": "supertonic",
+   "engine_name": "Supertonic 3",
+   "lang": "ru",
+   "where": "device",
+   "gen_seconds": 6.36,
+   "audio_seconds": 16.02,
+   "voice": "F1",
+   "file": "supertonic-ru.mp3"
+  },
+  {
+   "engine": "pocket",
+   "engine_name": "Pocket TTS",
+   "lang": "en",
+   "where": "device",
+   "gen_seconds": 4.03,
+   "audio_seconds": 10.32,
+   "voice": "alba",
+   "file": "pocket-en.mp3"
+  },
+  {
+   "engine": "pocket",
+   "engine_name": "Pocket TTS",
+   "lang": "de",
+   "where": "device",
+   "gen_seconds": 4.32,
+   "audio_seconds": 12.32,
+   "voice": "juergen",
+   "file": "pocket-de.mp3"
+  },
+  {
+   "engine": "pocket",
+   "engine_name": "Pocket TTS",
+   "lang": "es",
+   "where": "device",
+   "gen_seconds": 4.79,
+   "audio_seconds": 13.92,
+   "voice": "lola",
+   "file": "pocket-es.mp3"
+  },
+  {
+   "engine": "pocket",
+   "engine_name": "Pocket TTS",
+   "lang": "fr",
+   "where": "device",
+   "gen_seconds": 4.06,
+   "audio_seconds": 10.88,
+   "voice": "estelle",
+   "file": "pocket-fr.mp3"
+  },
+  {
+   "engine": "pocket_hd",
+   "engine_name": "Pocket TTS HD",
+   "lang": "en",
+   "where": "device",
+   "gen_seconds": 14.68,
+   "audio_seconds": 13.28,
+   "voice": "alba",
+   "file": "pocket_hd-en.mp3"
+  },
+  {
+   "engine": "pocket_hd",
+   "engine_name": "Pocket TTS HD",
+   "lang": "de",
+   "where": "device",
+   "gen_seconds": 13.53,
+   "audio_seconds": 12.0,
+   "voice": "juergen",
+   "file": "pocket_hd-de.mp3"
+  },
+  {
+   "engine": "pocket_hd",
+   "engine_name": "Pocket TTS HD",
+   "lang": "es",
+   "where": "device",
+   "gen_seconds": 14.74,
+   "audio_seconds": 13.84,
+   "voice": "lola",
+   "file": "pocket_hd-es.mp3"
+  },
+  {
+   "engine": "pocket_hd",
+   "engine_name": "Pocket TTS HD",
+   "lang": "fr",
+   "where": "device",
+   "gen_seconds": 12.02,
+   "audio_seconds": 10.64,
+   "voice": "estelle",
+   "file": "pocket_hd-fr.mp3"
+  },
+  {
+   "engine": "hojo",
+   "engine_name": "Hojo TTS Light 40M",
+   "lang": "en",
+   "where": "device",
+   "gen_seconds": 6.49,
+   "audio_seconds": 13.22,
+   "voice": "hojo_en_f_01",
+   "file": "hojo-en.mp3"
+  },
+  {
+   "engine": "hojo",
+   "engine_name": "Hojo TTS Light 40M",
+   "lang": "zh",
+   "where": "device",
+   "gen_seconds": 6.63,
+   "audio_seconds": 13.7,
+   "voice": "hojo_zh_f_01",
+   "file": "hojo-zh.mp3"
+  }
+ ]
+}

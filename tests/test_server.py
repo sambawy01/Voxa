@@ -566,14 +566,14 @@ class TokenVerifierTest(unittest.TestCase):
 
 
 class AccountsHTTPTest(ServerTestCase):
-    """Sign-in turned on: guests 50 a day, free accounts 100, paid unlimited."""
+    """Sign-in turned on: visitors must sign in; Lite accounts get 100 a day, Studio 1000."""
 
     def setUp(self):
         super().setUp()
         self.keys = getattr(AccountsHTTPTest, '_keys', None) or Keys()
         AccountsHTTPTest._keys = self.keys
         server._auth = server.TokenVerifier(URL, fetch_jwks=lambda: self.keys.jwks)
-        server._quota = server.Quota(':memory:', {'guest': 50, 'free': 100, 'paid': 0})
+        server._quota = server.Quota(':memory:', {'guest': 100, 'free': 100, 'paid': 1000})
 
     def tearDown(self):
         server._auth = None
@@ -599,20 +599,33 @@ class AccountsHTTPTest(ServerTestCase):
         self.assertEqual(body['account'], {'email': 'alice@example.com', 'tier': 'free'})
         self.assertEqual(body['quota']['limit'], 100)
 
-    def test_guest_gets_the_smaller_allowance(self):
+    def test_visitors_must_sign_in_once_accounts_exist(self):
         _, _, body = self.req('/api/quota')
-        body = json.loads(body)
-        self.assertIsNone(body['account'])
-        self.assertEqual((body['quota']['tier'], body['quota']['limit']), ('guest', 50))
-        code, _, _ = self.req('/api/tts', {'text': 'g' * 51})
-        self.assertEqual(code, 429)
+        self.assertIsNone(json.loads(body)['account'])
+        calls = len(self.gen.calls)
+        for path in ('/api/tts', '/api/jobs'):
+            code, _, body = self.req(path, {'text': 'hello'})
+            body = json.loads(body)
+            self.assertEqual(code, 403, path)
+            self.assertTrue(body['signin'])
+            self.assertIn('Voxa Lite account is free', body['error'])
+        self.assertEqual(len(self.gen.calls), calls)
+        # Previews stay open to everyone: they are how visitors judge the voices.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            saved, server.DATA_DIR = server.DATA_DIR, tmp
+            try:
+                self.assertEqual(self.req('/api/preview/harper')[0], 200)
+            finally:
+                server.DATA_DIR = saved
 
-    def test_paid_account_is_unlimited(self):
+    def test_paid_account_gets_the_larger_daily_allowance(self):
         token = self.keys.token(sub='bob', app_metadata={'tier': 'paid'})
         code, _, body = self.bearer('/api/tts', {'text': 'p' * 400}, token)
         self.assertEqual(code, 200)
         _, _, body = self.bearer('/api/quota', token=token)
-        self.assertEqual(json.loads(body)['quota'], {'tier': 'paid', 'unlimited': True})
+        quota = json.loads(body)['quota']
+        self.assertEqual((quota['tier'], quota['limit'], quota['remaining']), ('paid', 1000, 600))
 
     def test_bad_or_expired_token_is_401_not_guest(self):
         for token in (self.keys.token(exp=time.time() - 600), 'junk'):
@@ -631,7 +644,9 @@ class AccountsHTTPTest(ServerTestCase):
             server.SUPABASE_URL, server.SUPABASE_ANON_KEY = '', ''
         body = json.loads(body)
         self.assertEqual(body['auth'], {'url': URL, 'anon_key': 'public-anon-key'})
-        self.assertEqual(body['limits']['guest'], server.GUEST_DAILY_CHARS)
+        self.assertEqual(body['limits'], {'guest': server.FREE_DAILY_CHARS, 'free': server.FREE_DAILY_CHARS,
+                                          'paid': server.PAID_DAILY_CHARS})
+        self.assertEqual(body['tiers'], {'free': 'Voxa Lite', 'paid': 'Voxa Studio'})
 
 
 class LiteFilesTest(ServerTestCase):
@@ -686,15 +701,50 @@ class LiteCatalogueTest(ServerTestCase):
     def test_lite_voices_are_offered_pinned_and_never_synthesised_by_the_server(self):
         _, headers, body = self.req('/api/voices')
         lite = json.loads(body)['lite']
-        self.assertEqual([len(lite['voices'][k]) for k in ('a', 'b')], [4, 4])
-        for v in lite['voices']['a'] + lite['voices']['b']:
+        voices = [v for k in ('a', 'b', 'z') for v in lite['voices'][k]]
+        phonon = [v for v in voices if v['engine'] == 'phonon']
+        hojo = [v for v in voices if v['engine'] == 'hojo']
+        self.assertEqual(len(phonon), 8)
+        self.assertEqual(sorted(v['source'] for v in hojo),
+                         [f'hojo_en_f_0{i}' for i in range(1, 8)] + [f'hojo_en_m_0{i}' for i in range(1, 6)]
+                         + ['hojo_en_u_01', 'hojo_zh_f_01', 'hojo_zh_f_02'])
+        self.assertEqual([v['source'] for v in lite['voices']['z']], ['hojo_zh_f_01', 'hojo_zh_f_02'])
+        for v in phonon:
             self.assertRegex(v['url'], r'^https://huggingface\.co/gradium/phonon-voices/resolve/[0-9a-f]{40}/voices/')
+        for v in voices:
             self.assertTrue(v['description'].endswith('On this device'))
             with self.subTest(v['id']):  # the server refuses Lite voices for Studio jobs
-                code, _, _ = self.req('/api/tts', {'text': 'x', 'lang': 'a', 'voice': v['id']})
+                code, _, _ = self.req('/api/tts', {'text': 'x', 'lang': v['lang'], 'voice': v['id']})
                 self.assertEqual(code, 400)
         self.assertIn('@', lite['model'])  # model pinned to a commit
         self.assertEqual([e['temperature'] for e in lite['expressiveness']], [0.15, 0.3, 0.5])
+        self.assertTrue(all(0 < e['hojo_temperature'] <= 1 for e in lite['expressiveness']))
+
+    def test_hojo_scripts_and_model_files_are_served_isolated(self):
+        code, headers, js = self.req('/hojo-worker.js')
+        self.assertEqual(code, 200)
+        self.assertEqual(headers['Cross-Origin-Embedder-Policy'], 'require-corp')
+        self.assertNotIn(b'{{', js)
+        self.assertIn(f'/static/{server.HOJO_DIR}/'.encode(), js)
+        self.assertIn(f'/static/onnxruntime-web-{server.ORT_VERSION}/'.encode(), js)
+        for path in ('/lite.js', '/hojo-text.js'):
+            code, headers, _ = self.req(path)
+            self.assertEqual(code, 200)
+            self.assertTrue(headers['Content-Type'].startswith('text/javascript'))
+        # Model files are streamed from static/ with the same long-lived, isolated headers.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, 'm'))
+            with open(os.path.join(tmp, 'm', 'llm.onnx'), 'wb') as f:
+                f.write(b'x' * 3_000_000)
+            old, server.STATIC_DIR = server.STATIC_DIR, tmp
+            try:
+                code, headers, body = self.req('/static/m/llm.onnx')
+            finally:
+                server.STATIC_DIR = old
+        self.assertEqual((code, len(body), headers['Content-Length']), (200, 3_000_000, '3000000'))
+        self.assertIn('immutable', headers['Cache-Control'])
+        self.assertEqual(headers['Cross-Origin-Resource-Policy'], 'same-origin')
 
     def test_main_page_is_isolated_for_threads(self):
         _, headers, _ = self.req('/')
@@ -710,6 +760,9 @@ class LiteCatalogueTest(ServerTestCase):
         cases = {
             'differ from Studio': ([dict(voice, id='harper')], base),
             'English only': ([dict(voice, lang='f')], base),
+            'Chinese \\(z\\) only': ([dict(voice, engine='hojo', source='hojo_en_f_01', lang='z')], base),
+            'Hojo speaks': ([dict(voice, engine='hojo', source='hojo_ja_f_01')], base),
+            'unknown engine': ([dict(voice, engine='other')], base),
             'unexpected file path': ([dict(voice, file='../../etc/passwd')], base),
             'default': ([voice], dict(base, expressiveness=[{'id': 'n', 'name': 'N', 'temperature': 0.3}])),
         }
@@ -740,7 +793,7 @@ class CreditsTest(ServerTestCase):
     def test_credits_name_every_model_and_attribution(self):
         code, _, body = self.req('/credits')
         self.assertEqual(code, 200)
-        for needle in (b'Kokoro-82M', b'Phonon 31m', b'koniwa', b'SIWIS', b'lamejs', b'LGPL-3.0', b'pdf.js',
+        for needle in (b'Kokoro-82M', b'Phonon 31m', b'Hojo TTS Light 40M', b'onnxruntime-web', b'koniwa', b'SIWIS', b'lamejs', b'LGPL-3.0', b'pdf.js',
                        b'/static/lamejs-1.2.1/lame.min.js'):
             self.assertIn(needle, body)
         _, _, page = self.req('/')

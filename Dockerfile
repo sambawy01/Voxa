@@ -1,4 +1,12 @@
 # Voxa — server-side Kokoro TTS.
+
+# Hojo TTS Light, repacked for the browser (scripts/build_hojo.py), in a stage of its own so
+# the conversion tools stay out of the final image.
+FROM python:3.11-slim AS hojo
+RUN pip install --no-cache-dir numpy==2.3.5 onnx==1.23.2 onnxruntime==1.21.1
+COPY scripts/build_hojo.py /tmp/build_hojo.py
+RUN python /tmp/build_hojo.py /out
+
 # The model, all 54 voices and every language's G2P data are baked into the image, so
 # the running server never fetches from Hugging Face (which rate-limits anonymous pulls).
 FROM python:3.11-slim
@@ -39,10 +47,12 @@ m = KModel(repo_id='hexgrad/Kokoro-82M').eval(); \
  for l, v in [('a','af_heart'),('b','bf_emma'),('e','ef_dora'),('f','ff_siwis'),('h','hf_alpha'), \
               ('i','if_sara'),('j','jf_alpha'),('p','pf_dora'),('z','zf_xiaobei')]]"
 
-# Browser packages (Phonon for Voxa Lite, pdf.js for audiobooks), version- and hash-pinned,
+# Browser packages (Phonon and onnxruntime-web for Voxa Lite, pdf.js for audiobooks), version- and hash-pinned,
 # served by the app itself.
 COPY scripts/fetch_vendor.py /tmp/fetch_vendor.py
 RUN python /tmp/fetch_vendor.py /app/static && rm /tmp/fetch_vendor.py
+# The on-device Hojo voices' model files (~126 MB), served from static/ like the packages.
+COPY --from=hojo /out /app/static
 
 # Everything is local now; fail fast rather than reach the network at runtime.
 ENV HF_HUB_OFFLINE=1

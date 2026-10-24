@@ -50,7 +50,7 @@
 </div></header>
 <main class="wrap">
 <form class="signin card glow" id="signin" hidden>
-  <label for="email">Sign in for 4,000 free characters a day</label>
+  <label for="email">Sign in free · Voxa Lite: unlimited on-device voices, plus {{FREE_DAILY}} Studio characters a day</label>
   <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
   <div class="row">
     <button class="small accent" id="signin-email" type="submit">Email me a sign-in link</button>
@@ -165,7 +165,7 @@
 <section class="card flat">
   <div class="card-head"><span class="ico mint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>
     <div><h2>About the voices</h2></div></div>
-  <p class="note">Studio voices run Kokoro-82M (Apache 2.0) on our servers: one set of weights serves all nine languages, and repeated phrases come back instantly. On-device voices run Phonon 31m by Gradium (Apache 2.0) in your browser, so they cost nothing and work offline once loaded. Voice names are Voxa's own. <a href="/credits">Credits</a></p>
+  <p class="note">Studio voices run Kokoro-82M (Apache 2.0) on our servers: one set of weights serves all nine languages, and repeated phrases come back instantly. On-device voices run in your browser, so they cost nothing and work offline once loaded: Phonon 31m by Gradium (Apache 2.0) for English, and Hojo TTS Light by HojoAI (Apache 2.0) for English and Chinese. Voice names are Voxa's own. <a href="/credits">Credits</a></p>
 </section>
 </main>
 {{FOOTER}}
@@ -205,7 +205,7 @@ function refreshVoices(){
 function describeVoice(){
   const id=voiceSel.value, v=LITE_BY_ID[id]||(CAT[langSel.value]||[]).find(x=>x.id===id);
   $('#voicenote').textContent=v?v.description:'';
-  // Phonon has expressiveness and takes but no pacing control; Kokoro the other way round.
+  // On-device voices have expressiveness and takes but no pacing control; Kokoro the other way round.
   $('#litebox').hidden=!isLite(id); $('#pacebox').hidden=isLite(id); $('#newtake').hidden=true;
 }
 langSel.addEventListener('change',refreshVoices);
@@ -216,7 +216,7 @@ import('/preview.js').then(P=>{
   P.attachPreview($('#hear'), $('#hearnote'), ()=>{
     const id=voiceSel.value, lite=LITE_BY_ID[id], v=lite||(CAT[langSel.value]||[]).find(x=>x.id===id);
     return v?{...v, lite:!!lite, key:$('#expr').value}:null;
-  }, async(v,note)=>(await generateLite(P.PREVIEW_LINE(v.name), v.id, note)).blob);
+  }, async(v,note)=>(await generateLite(P.PREVIEW_LINE(v.name, v.lang), v.id, note)).blob);
   langSel.addEventListener('change',P.stopPreview); voiceSel.addEventListener('change',P.stopPreview);
 }).catch(()=>{ $('#hear').hidden=true; });
 $('#speed').addEventListener('input',e=>$('#speedv').textContent=(+e.target.value).toFixed(2)+'×');
@@ -273,7 +273,7 @@ let SIGNED_IN=false;
 function showPlan(){
   const b=CONFIG.billing, tier=QUOTA&&QUOTA.tier;
   $('#upgrade').hidden=!(b&&SIGNED_IN&&tier==='free');
-  $('#upgrade').textContent=b&&b.price_label?`Upgrade · ${b.price_label}`:'Upgrade';
+  $('#upgrade').textContent=b&&b.price_label?`Voxa Studio · ${b.price_label}`:'Upgrade to Voxa Studio';
   $('#manage').hidden=!(b&&SIGNED_IN&&tier==='paid');
 }
 async function goBilling(path, btn){
@@ -297,7 +297,7 @@ async function welcomeBack(){
   for(let i=0;i<8;i++){
     await SB.auth.refreshSession().catch(()=>{});
     const q=await loadQuota();
-    if(q&&q.tier==='paid'){ st.className='status'; st.textContent='You are on the paid plan: no daily limit. Thank you!'; return; }
+    if(q&&q.tier==='paid'){ st.className='status'; st.textContent=`Welcome to Voxa Studio: ${(CONFIG.limits.paid||0).toLocaleString()} Studio characters a day. Thank you!`; return; }
     await sleep(2500);
   }
   st.className='status'; st.textContent='Payment received. Your plan can take a minute to switch on; reload the page shortly.';
@@ -369,18 +369,18 @@ let QUOTA=null;
 function showQuota(q){
   if(q!==undefined) QUOTA=q;
   const el=$('#quota');
-  $('#tier').textContent=QUOTA&&QUOTA.tier==='paid'?'Paid':'';
+  $('#tier').textContent=!QUOTA||QUOTA.tier==='guest'?'':QUOTA.tier==='paid'?'Studio':'Lite';
   showPlan();
   if(!QUOTA){el.textContent='';return;}
   if(QUOTA.unlimited){el.className='hint';el.textContent='No daily limit on your plan.';return;}
   const left=QUOTA.remaining.toLocaleString(), lim=QUOTA.limit.toLocaleString();
-  const free=(CONFIG.limits.free||0).toLocaleString();
-  const upsell=QUOTA.tier==='guest'&&SB?` Sign in for ${free} a day.`
-    :QUOTA.tier==='free'&&CONFIG.billing&&SIGNED_IN?' Upgrade for no daily limit.':'';
+  const paid=(CONFIG.limits.paid||0).toLocaleString(), names=CONFIG.tiers||{free:'Voxa Lite',paid:'Voxa Studio'};
+  const upsell=QUOTA.tier==='guest'&&SB?` Sign in free for ${names.free}.`
+    :QUOTA.tier==='free'&&CONFIG.billing&&SIGNED_IN?` ${names.paid} has ${paid} a day.`:'';
   el.className=QUOTA.remaining?'hint':'hint over';
   el.textContent=QUOTA.remaining
-    ? `${left} of ${lim} free characters left today.${upsell||' Replaying something you already made is free.'}`
-    : `You've used today's ${lim} free characters. They reset at midnight UTC.${upsell}`;
+    ? `${left} of ${lim} Studio characters left today.${upsell||' On-device voices have no limit; replays are free.'}`
+    : `You've used today's ${lim} Studio characters. They reset at midnight UTC. On-device voices have no limit.${upsell}`;
 }
 // Requests can overlap (sign-in, a token refresh, a finished job); only the newest one's
 // answer may be shown, or an older token's allowance could overwrite the current one.
@@ -421,38 +421,27 @@ function showAudio(blob, fileUrl){
   }
 }
 
-// Voxa Lite: Phonon generates on this device, so it is free and unlimited and never touches
-// the server. The package (~4 MB) and the model (~65 MB) load on first use, then come from
-// the browser's cache.
-let LITE_TTS=null, LITE_LOADING=null, LITE_SEED=4242424242424242;
-const LITE_VOICES_LOADED=new Set(), LITE_CACHE=new Map();
-async function liteEngine(st){
-  if(LITE_TTS) return LITE_TTS;
-  if(!LITE_LOADING){
-    LITE_LOADING=(async()=>{
-      const {PhononTTS}=await import(`/static/phonon-${PHONON_VERSION}/index.js`);
-      const seen={};
-      return PhononTTS.load({lang:'en', model:LITE.model, onProgress:({file,loaded,cached})=>{
-        seen[file]=loaded||0;
-        const mb=Object.values(seen).reduce((a,b)=>a+b,0)/1e6;
-        st.textContent=cached?'Loading the on-device voice…':`Downloading the on-device voice (once)… ${mb.toFixed(0)} MB of about 65`;
-      }});
-    })().catch(e=>{LITE_LOADING=null;throw e;});
-  }
-  LITE_TTS=await LITE_LOADING;
-  return LITE_TTS;
-}
+// Voxa Lite: on-device voices (web/lite.js: Phonon or Hojo) are free and unlimited and never
+// touch the server. Each engine loads on first use, then comes from the browser's cache.
+let LITE_ENGINES=null, LITE_SEED=4242424242424242;
+const LITE_CACHE=new Map();
 async function generateLite(text, voiceId, st, signal){
   const v=LITE_BY_ID[voiceId], temperature=+$('#expr').value;
   const key=[text,voiceId,temperature,LITE_SEED].join('|');
   if(LITE_CACHE.has(key)) return {blob:LITE_CACHE.get(key), cached:true};
   st.textContent='Starting the on-device voice…';
-  let tts;
-  try{ tts=await liteEngine(st); }
-  catch(e){ throw new Error("This device can't run on-device voices ("+e.message+'). Choose a Studio voice instead.'); }
-  if(!LITE_VOICES_LOADED.has(voiceId)){ await tts.addVoice(voiceId, v.url); LITE_VOICES_LOADED.add(voiceId); }
-  st.textContent='Generating on this device…';
-  const blob=await tts.synthWav(text,{voice:voiceId, temperature, seed:LITE_SEED, signal});
+  const [{createLite}, {encodeWav, floatToInt16, SAMPLE_RATE}]=await Promise.all([import('/lite.js?v={{LITE_VERSION}}'), import('/book.js?v={{BOOK_VERSION}}')]);
+  LITE_ENGINES||=createLite(()=>({lite:LITE, phonon_version:PHONON_VERSION}));
+  let audio;
+  try{
+    audio=await LITE_ENGINES.synth(v, text, {temperature, seed:LITE_SEED, signal, status:t=>{
+      st.textContent=t.startsWith('Loading')||t.startsWith('Downloading')?t:'Generating on this device…';
+    }});
+  }catch(e){
+    if(e.name==='AbortError') throw e;
+    throw new Error("This device can't run on-device voices ("+e.message+'). Choose a Studio voice instead.');
+  }
+  const blob=new Blob([encodeWav(floatToInt16(audio), SAMPLE_RATE)], {type:'audio/wav'});
   if(LITE_CACHE.size>20) LITE_CACHE.delete(LITE_CACHE.keys().next().value);
   LITE_CACHE.set(key, blob);
   return {blob, cached:false};
@@ -463,7 +452,7 @@ async function generate(newTake){
   if(!text){st.className='status';st.textContent='Type something first.';return;}
   if(text.length>MAX){st.className='status err';st.textContent=`That script is ${text.length} characters; the limit is ${MAX}.`;return;}
   const btn=$('#go'), bar=$('#bar'), fill=$('#bar i'), lite=isLite(voiceSel.value);
-  // A new take reads the same line differently: Phonon's output depends on its seed.
+  // A new take reads the same line differently: on-device output depends on its seed.
   if(newTake) LITE_SEED=Math.floor(Math.random()*2**48);
   btn.disabled=true; $('#newtake').disabled=true; $('#cancel').hidden=false; $('#player').hidden=true; $('#download').hidden=true; $('#playerlink').hidden=true;
   ctrl=new AbortController();
@@ -495,7 +484,8 @@ async function generate(newTake){
     st.textContent=`Done in ${((performance.now()-t0)/1000).toFixed(1)}s`+(job.cache==='hit'?' · from cache':'');
   }catch(e){
     if(!lite) loadQuota();  // a failed generation is refunded
-    st.className=e.name==='AbortError'?'status':'status err'; st.textContent=(e.name==='AbortError'?'':'Error: ')+friendly(e);
+    st.className=e.name==='AbortError'?'status':'status err'; st.textContent=(e.name==='AbortError'||e.status===403?'':'Error: ')+friendly(e);
+    if(e.status===403&&SB){ $('#signin').hidden=false; $('#signin').scrollIntoView({behavior:'smooth',block:'center'}); }
   }finally{btn.disabled=false;$('#newtake').disabled=false;$('#cancel').hidden=true;bar.hidden=true;ctrl=null;}
 }
 $('#go').addEventListener('click',()=>generate(false));

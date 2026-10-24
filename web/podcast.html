@@ -135,6 +135,7 @@ import * as pdfjs from '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.min.mjs';
 import { paragraphsFromText, formatDuration, estimateSeconds, openStore, saveChunk, loadChunk, savedChunkKeys,
   saveBook, listBooks, deleteBook, parseWav, encodeWav, floatToInt16, SAMPLE_RATE, bookMp3 } from '/book.js';
 import { attachPreview, stopPreview, PREVIEW_LINE } from '/preview.js?v={{PREVIEW_VERSION}}';
+import { createLite } from '/lite.js?v={{LITE_VERSION}}';
 import { pdfText, pptxText, limitText, chapterToText, textToLines, scriptChars, planParts, joinTurns, MAX_TEXT } from '/podcast.js?v={{PODCAST_VERSION}}';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.worker.min.mjs';
@@ -250,10 +251,8 @@ async function setupVoices() {
 }
 
 async function speakOnDevice(v, note) {
-  const tts = await liteEngine(note);
-  if (!LITE_ADDED.has(v.id)) { await tts.addVoice(v.id, v.url); LITE_ADDED.add(v.id); }
-  note.textContent = 'Speaking…';
-  const pcm = floatToInt16(await tts.synth(PREVIEW_LINE(v.name), { voice: v.id, temperature: +$('#expr').value, seed: LITE_SEED }));
+  const status = t => { note.textContent = t; };
+  const pcm = floatToInt16(await LITE.synth(v, PREVIEW_LINE(v.name, v.lang), { temperature: +$('#expr').value, seed: LITE_SEED, status }));
   return new Blob([encodeWav(pcm, SAMPLE_RATE)], { type: 'audio/wav' });
 }
 
@@ -273,13 +272,13 @@ function fillVoices(sel = {}) {
   const lists = { A: listFor('A'), B: listFor('B') };
   const groups = all => {
     const lite = all.filter(v => v.lite), studio = all.filter(v => !v.lite);
-    const opt = v => el('option', { value: v.id, textContent: `${v.name} · ${v.gender === 'male' ? 'man' : 'woman'}` });
+    const opt = v => el('option', { value: v.id, textContent: `${v.name} · ${v.gender === 'male' ? 'man' : v.gender === 'female' ? 'woman' : 'neutral'}` });
     const out = [];
     if (lite.length) out.push(el('optgroup', { label: 'On this device · free, no daily limit' }, ...lite.map(opt)));
     out.push(el('optgroup', { label: 'Studio voices' }, ...studio.map(opt)));
     return out;
   };
-  // Defaults: the first fitting voice, on-device first in English since they cost nothing,
+  // Defaults: the first fitting voice, on-device first since they cost nothing,
   // and two different voices whenever the language has them.
   const pick = (list, not) => (list.find(v => v.id !== not) || list[0]).id;
   const a = sel.A || pick(lists.A), b = sel.B || pick(lists.B, a);
@@ -320,14 +319,19 @@ function hostVoices() {
 
 async function showAllowance() {
   await setupAccount();
-  const p = CONFIG.podcast;
+  const p = CONFIG.podcast, names = CONFIG.tiers || { free: 'Voxa Lite', paid: 'Voxa Studio' };
   $('#off').hidden = !!p; $('#source').hidden = !p;
   if (!p) return;
-  const signedIn = !!(await token());
-  const tier = signedIn ? null : 'guest';
-  if (tier === 'guest' && !p.daily.guest) $('#allowance').textContent = 'Sign in on the main page to make podcasts.';
-  else if (tier === 'guest') $('#allowance').textContent = `You can write ${p.daily.guest} script${p.daily.guest === 1 ? '' : 's'} a day.`;
-  else $('#allowance').textContent = `Free accounts: ${p.daily.free || 'no'} script${p.daily.free === 1 ? '' : 's'} a day. Paid: ${p.daily.paid} a day.`;
+  const q = await api('/api/quota', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}));
+  const tier = q.account ? q.account.tier : 'guest';
+  const longest = (p.max_minutes || {})[tier] || 20;
+  // Episode lengths beyond this plan's longest are shown but cannot be chosen.
+  for (const o of $('#minutes').options) o.disabled = +o.value > longest;
+  if ($('#minutes').selectedOptions[0]?.disabled) $('#minutes').value = String(Math.max(...[...$('#minutes').options].filter(o => !o.disabled).map(o => +o.value)));
+  const scripts = n => `${n} script${n === 1 ? '' : 's'} a day`;
+  if (tier === 'guest' && CONFIG.auth) $('#allowance').textContent = `Sign in free for ${names.free} to make podcasts: ${scripts(p.daily.free)}, up to ${p.max_minutes.free} minutes.`;
+  else if (tier === 'paid') $('#allowance').textContent = `${names.paid}: ${scripts(p.daily.paid)}, up to ${p.max_minutes.paid} minutes.`;
+  else $('#allowance').textContent = `${names.free}: ${scripts(p.daily.free)}, up to ${p.max_minutes.free} minutes. ${names.paid}: ${scripts(p.daily.paid)}, up to ${p.max_minutes.paid} minutes.`;
 }
 
 // --- Writing the script ----------------------------------------------------------------------------
@@ -441,26 +445,15 @@ async function refreshMake() {
   else { shown = null; $('#result').replaceChildren(); }
 }
 
-let LITE_TTS = null;
-const LITE_ADDED = new Set();
-async function liteEngine(st) {
-  if (LITE_TTS) return LITE_TTS;
-  const { PhononTTS } = await import(`/static/phonon-${VOICES.phonon_version}/index.js`);
-  const seen = {};
-  LITE_TTS = await PhononTTS.load({ lang: 'en', model: VOICES.lite.model, onProgress: ({ file, loaded, cached }) => {
-    seen[file] = loaded || 0;
-    st.textContent = cached ? 'Loading the on-device voice…' : `Downloading the on-device voice (once)… ${(Object.values(seen).reduce((a, b) => a + b, 0) / 1e6).toFixed(0)} MB of about 65`;
-  } });
-  return LITE_TTS;
-}
+// On-device engines (web/lite.js), each loaded the first time one of its voices speaks.
+const LITE = createLite(() => VOICES);
 
 class QuotaReached extends Error {}
 
 async function makePart(text, s, signal, st) {
   if (s.engine === 'lite') {
-    const tts = await liteEngine(st);
-    if (!LITE_ADDED.has(s.voice)) { await tts.addVoice(s.voice, voiceById(s.lang, s.voice).url); LITE_ADDED.add(s.voice); }
-    return floatToInt16(await tts.synth(text, { voice: s.voice, temperature: s.temperature, seed: s.seed, signal }));
+    const status = t => { st.textContent = t; };
+    return floatToInt16(await LITE.synth(voiceById(s.lang, s.voice), text, { temperature: s.temperature, seed: s.seed, signal, status }));
   }
   let r = await api('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
     body: JSON.stringify({ text, lang: s.lang, voice: s.voice, speed: s.speed }) });
@@ -514,7 +507,7 @@ async function start() {
   } catch (e) {
     const kept = `${saved.size} of ${plan.length} parts are saved on this device`;
     st.className = 'status' + (e.name === 'AbortError' ? '' : ' err');
-    st.textContent = e instanceof QuotaReached ? `Paused at today's limit. ${kept}; come back after midnight UTC, or choose on-device voices (English).`
+    st.textContent = e instanceof QuotaReached ? `Paused at today's limit. ${kept}; come back after midnight UTC, or choose on-device voices (English or Chinese).`
       : e.name === 'AbortError' ? `Paused. ${kept}.` : `Stopped: ${e.message}. ${kept}; press Continue to try again.`;
   } finally {
     running = false; controller = null; if (wake) wake.release().catch(() => {});

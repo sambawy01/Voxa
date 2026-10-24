@@ -1,7 +1,7 @@
 # Turning on accounts (Supabase)
 
 Accounts are built and tested; they switch on when the server has a Supabase project to
-check sign-in tokens against. Until then everyone is a guest with 4,000 characters a day.
+check sign-in tokens against. Until then everyone is a guest with Voxa Lite's 1,500 Studio characters a day; once it is on, visitors must sign in (free) to generate.
 
 ## 1. Create the project
 
@@ -39,7 +39,7 @@ shows **Sign in**.
 ## 3. Check it
 
 1. Open the site, tap **Sign in**, enter your email, open the link on the same device.
-2. The header shows your email, and the allowance reads "4,000 of 4,000".
+2. The header shows your email, and the allowance reads "1,500 of 1,500".
 3. `fly logs` shows `sign-in enabled via https://<project-ref>.supabase.co` at startup.
 
 ## Making an account paid

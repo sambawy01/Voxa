@@ -2,7 +2,9 @@
 // time across the page. Studio voices play the server's preview line (GET /api/preview/<id>,
 // made once per voice and free); on-device voices speak the same kind of line in the browser.
 
-export const PREVIEW_LINE = name => `Hi, I'm ${name}. This is how your words will sound in my voice.`;
+// The same lines the server uses for Studio previews (PREVIEW_LINES in server.py).
+export const PREVIEW_LINE = (name, lang) => lang === 'z' ? '你好！你的文字用我的声音读出来，就是这样的。'
+  : `Hi, I'm ${name}. This is how your words will sound in my voice.`;
 // A tiny silent WAV, played inside the tap: iPhones only let a page play sound that a tap
 // started, and a clip that arrives after an await would otherwise stay silent.
 const SILENCE = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQIAAAAAAA==';

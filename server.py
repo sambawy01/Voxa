@@ -36,6 +36,7 @@ import math
 import os
 import queue
 import re
+import shutil
 import sqlite3
 import threading
 import time
@@ -70,15 +71,20 @@ MAX_PENDING = 16
 JOB_TTL = 30 * 60
 # How long the synchronous /api/tts endpoint waits for its job.
 SYNC_TIMEOUT = 300
-# Daily characters per tier; 0 means no limit. Cached replays are free; only new
-# generation counts. Guests are visitors who are not signed in.
-GUEST_DAILY_CHARS = int(os.environ.get('VOXA_GUEST_DAILY_CHARS', '1000'))
-FREE_DAILY_CHARS = int(os.environ.get('VOXA_FREE_DAILY_CHARS', '4000'))
-PAID_DAILY_CHARS = int(os.environ.get('VOXA_PAID_DAILY_CHARS', '0'))
-# Podcast scripts per tier per day. Each one is a paid DeepSeek call, so here 0 means none.
+# Two plans, both with an account: Voxa Lite (free) and Voxa Studio (paid). On-device voices
+# are unlimited on both; these are the daily Studio-voice characters (0 would mean no limit).
+# Cached replays are free; only new generation counts. Once sign-in is configured, visitors
+# who are not signed in can only hear voice previews; until then they get Lite's allowance.
+TIERS = {'free': 'Voxa Lite', 'paid': 'Voxa Studio'}
+FREE_DAILY_CHARS = int(os.environ.get('VOXA_FREE_DAILY_CHARS', '1500'))
+PAID_DAILY_CHARS = int(os.environ.get('VOXA_PAID_DAILY_CHARS', '10000'))
+# Podcast scripts per tier per day (each is a paid DeepSeek call, so here 0 means none), and
+# the longest episode each tier may ask for.
 PODCAST_DAILY = {'guest': int(os.environ.get('VOXA_PODCAST_DAILY_GUEST', '0')),
                  'free': int(os.environ.get('VOXA_PODCAST_DAILY_FREE', '1')),
                  'paid': int(os.environ.get('VOXA_PODCAST_DAILY_PAID', '20'))}
+PODCAST_MAX_MINUTES = {'free': int(os.environ.get('VOXA_PODCAST_MINUTES_FREE', '5')),
+                       'paid': int(os.environ.get('VOXA_PODCAST_MINUTES_PAID', '20'))}
 # Document text for a podcast script is far bigger than a speech request.
 MAX_PODCAST_BODY = 1024 * 1024
 # Sign-in (Supabase). SUPABASE_URL and the public anon key turn accounts on; the page uses
@@ -105,11 +111,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, 'static')
 WEB_DIR = os.path.join(HERE, 'web')
 PHONON_VERSION = '0.4.1'
+# Hojo TTS Light, the other on-device engine: repacked for the browser by scripts/build_hojo.py
+# into static/HOJO_DIR, and run with onnxruntime-web (fetched by scripts/fetch_vendor.py).
+HOJO_DIR = 'hojo-40m-c3cf21c'
+ORT_VERSION = '1.23.2'
+LITE_LANGS = ('a', 'b', 'z')
 PDFJS_VERSION = '4.4.168'
 LAMEJS_VERSION = '1.2.1'
 STATIC_TYPES = {'.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
                 '.wasm': 'application/wasm', '.bcmap': 'application/octet-stream',
-                '.json': 'application/json', '.css': 'text/css; charset=utf-8'}
+                '.json': 'application/json', '.css': 'text/css; charset=utf-8',
+                '.onnx': 'application/octet-stream', '.bin': 'application/octet-stream'}
 ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
              'Cross-Origin-Embedder-Policy': 'require-corp'}
 # Pages and scripts served from web/, all cross-origin isolated. {{NAME}} placeholders in them
@@ -121,7 +133,8 @@ WEB_PAGES = {'/': 'index.html', '/voxa.css': 'voxa.css', '/checkout': 'checkout.
              '/privacy': 'privacy.html', '/refunds': 'refunds.html', '/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
              '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html',
              '/podcast': 'podcast.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
-             '/listen': 'listen.html', '/listen.js': 'listen.js', '/manifest.webmanifest': 'manifest.webmanifest'}
+             '/listen': 'listen.html', '/listen.js': 'listen.js', '/manifest.webmanifest': 'manifest.webmanifest',
+             '/lite.js': 'lite.js', '/hojo-text.js': 'hojo-text.js', '/hojo-worker.js': 'hojo-worker.js'}
 # Binary files from web/: the app icons for home screens.
 WEB_FILES = {'/apple-touch-icon.png': 'icons/apple-touch-icon.png', '/icons/icon-192.png': 'icons/icon-192.png',
              '/icons/icon-512.png': 'icons/icon-512.png'}
@@ -141,7 +154,11 @@ def web_values():
             'CSS_VERSION': version('voxa.css'), 'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,
             'LAMEJS_VERSION': LAMEJS_VERSION, 'BOOK_VERSION': version('book.js'),
             'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js'),
-            'LISTEN_VERSION': version('listen.js'),
+            'LISTEN_VERSION': version('listen.js'), 'LITE_VERSION': version('lite.js'),
+            'HOJO_DIR': HOJO_DIR, 'ORT_VERSION': ORT_VERSION,
+            'FREE_DAILY': f'{FREE_DAILY_CHARS:,}', 'PAID_DAILY': f'{PAID_DAILY_CHARS:,}',
+            'PODCAST_MINUTES_FREE': str(PODCAST_MAX_MINUTES['free']),
+            'PODCAST_MINUTES_PAID': str(PODCAST_MAX_MINUTES['paid']),
             'OPERATOR': html.escape(OPERATOR), 'CONTACT_EMAIL': html.escape(CONTACT_EMAIL),
             'PRICE_LABEL': html.escape(billing.PRICE_LABEL or 'see the price at checkout')}
 
@@ -191,8 +208,12 @@ def load_catalogue(path=CATALOGUE_PATH):
     return voices
 
 
+HOJO_SOURCE = re.compile(r'hojo_(en|zh)_[fmu]_\d\d')
+
+
 def load_lite(path=CATALOGUE_PATH, studio_ids=()):
-    """The Voxa Lite section of voices.json: Phonon voices the browser runs itself."""
+    """The Voxa Lite section of voices.json: voices the browser runs itself, with Phonon
+    (English) or Hojo (English and Chinese)."""
     with open(path, encoding='utf-8') as f:
         lite = json.load(f).get('lite')
     if not lite:
@@ -200,23 +221,33 @@ def load_lite(path=CATALOGUE_PATH, studio_ids=()):
     ids = [v['id'] for v in lite['voices']]
     if len(set(ids)) != len(ids) or set(ids) & set(studio_ids):
         raise ValueError('Lite voice ids must be unique and differ from Studio voice ids')
+    base = f'https://huggingface.co/{lite["voices_repo"]}/resolve/{lite["revision"]}/'
+    out = {lang: [] for lang in LITE_LANGS}
     for v in lite['voices']:
-        if v['lang'] not in ('a', 'b'):
-            raise ValueError(f'Lite voice {v["id"]!r}: Phonon 31m speaks English only')
-        if not re.fullmatch(r'voices/[A-Za-z0-9_-]+\.safetensors', v['file']):
-            raise ValueError(f'Lite voice {v["id"]!r} has an unexpected file path')
-        v['description'] = ' · '.join([v['gender'].capitalize(), v['accent'], v['age'],
-                                       'On this device'])
+        engine = v.get('engine', 'phonon')
+        entry = {'id': v['id'], 'name': v['name'], 'gender': v['gender'], 'lang': v['lang'], 'engine': engine,
+                 'description': ' · '.join([v['gender'].capitalize(), v['accent'], *([v['age']] if v.get('age') else []),
+                                            'On this device'])}
+        if engine == 'phonon':
+            if v['lang'] not in ('a', 'b'):
+                raise ValueError(f'Lite voice {v["id"]!r}: Phonon 31m speaks English only')
+            if not re.fullmatch(r'voices/[A-Za-z0-9_-]+\.safetensors', v['file']):
+                raise ValueError(f'Lite voice {v["id"]!r} has an unexpected file path')
+            entry['url'] = base + v['file']
+        elif engine == 'hojo':
+            m = HOJO_SOURCE.fullmatch(v.get('source', ''))
+            if not m or (m.group(1) == 'zh') != (v['lang'] == 'z') or v['lang'] not in LITE_LANGS:
+                raise ValueError(f'Lite voice {v["id"]!r}: Hojo speaks English (a, b) and Chinese (z) only')
+            entry['source'] = v['source']
+        else:
+            raise ValueError(f'Lite voice {v["id"]!r}: unknown engine {engine!r}')
+        out[v['lang']].append(entry)
     if not any(e.get('default') for e in lite['expressiveness']):
         raise ValueError('one expressiveness preset must be the default')
-    base = f'https://huggingface.co/{lite["voices_repo"]}/resolve/{lite["revision"]}/'
     return {
         'model': lite['model'],
         'expressiveness': lite['expressiveness'],
-        'voices': {lang: [{'id': v['id'], 'name': v['name'], 'description': v['description'],
-                           'gender': v['gender'], 'url': base + v['file']}
-                          for v in lite['voices'] if v['lang'] == lang]
-                   for lang in ('a', 'b')},
+        'voices': out,
     }
 
 
@@ -450,6 +481,13 @@ class AuthError(Exception):
     """A sign-in token we cannot accept."""
 
 
+class SignInRequired(Exception):
+    """Sign-in is configured and this request came from a visitor who is not signed in."""
+
+    def __init__(self, what='use Voxa'):
+        super().__init__(f'Sign in to {what}. A Voxa Lite account is free.')
+
+
 def _b64url(text):
     return base64.urlsafe_b64decode(text + '=' * (-len(text) % 4))
 
@@ -679,10 +717,9 @@ class Quota:
 
 
 def tier_limits():
-    """Daily characters per tier. Until sign-in is configured nobody can have an account,
-    so guests get the free allowance rather than a smaller one."""
-    guest = GUEST_DAILY_CHARS if _auth else FREE_DAILY_CHARS
-    return {'guest': guest, 'free': FREE_DAILY_CHARS, 'paid': PAID_DAILY_CHARS}
+    """Daily Studio characters per tier. Guests only generate while sign-in is not configured
+    (nobody can have an account yet), and then they get Voxa Lite's allowance."""
+    return {'guest': FREE_DAILY_CHARS, 'free': FREE_DAILY_CHARS, 'paid': PAID_DAILY_CHARS}
 
 
 def podcast_limits():
@@ -950,13 +987,18 @@ class Handler(BaseHTTPRequestHandler):
         ctype = STATIC_TYPES.get(os.path.splitext(full)[1])
         if not full.startswith(root + os.sep) or not ctype or not os.path.isfile(full):
             return self._send(404, {'error': 'not found'})
-        with open(full, 'rb') as f:
-            body = f.read()
         # Paths carry the package version, so a file never changes under its URL. Workers
         # take their isolation from their own script's headers, so these carry it too.
-        return self._send(200, body, ctype, {
-            'Cache-Control': 'public, max-age=31536000, immutable',
-            'Cross-Origin-Resource-Policy': 'same-origin', **ISOLATION})
+        # Streamed, since the on-device model files are tens of megabytes each.
+        with open(full, 'rb') as f:
+            self.send_response(200)
+            self.send_header('Content-Type', ctype)
+            self.send_header('Content-Length', str(os.fstat(f.fileno()).st_size))
+            for k, v in {'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=31536000, immutable',
+                         'Cross-Origin-Resource-Policy': 'same-origin', **ISOLATION}.items():
+                self.send_header(k, v)
+            self.end_headers()
+            shutil.copyfileobj(f, self.wfile, 1 << 20)
 
     def _send_auth_error(self, e):
         log.info('rejected sign-in token: %s', e)
@@ -994,6 +1036,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _submit(self):
         who = self._identity()
+        if _auth and not who.user:
+            raise SignInRequired('generate speech')
         charge = (lambda n: _quota.charge(who, n)) if _quota else None
         job = _jobs.submit(*self._read_request(), charge=charge, who=who)
         return job, who
@@ -1036,6 +1080,9 @@ class Handler(BaseHTTPRequestHandler):
                        extra={'Retry-After': '30'})
         except AuthError as e:
             self._send_auth_error(e)
+        except SignInRequired as e:
+            # The page opens its sign-in box on `signin`; the message stands on its own too.
+            self._send(403, {'error': str(e), 'signin': True})
         except QuotaExceeded as e:
             self._send(429, {'error': str(e), 'quota': e.status},
                        extra={'Retry-After': str(max(1, int(e.status['resets_at'] - time.time())))})
@@ -1078,9 +1125,10 @@ class Handler(BaseHTTPRequestHandler):
                 'token': billing.PADDLE_CLIENT_TOKEN, 'environment': 'sandbox' if billing.sandbox() else 'production'}}
                 if _auth and billing.enabled(SUPABASE_URL) else None)
             pods = {'daily': podcast_limits(), 'minutes': sorted(podcast.LENGTHS),
+                    'max_minutes': {**PODCAST_MAX_MINUTES, 'guest': PODCAST_MAX_MINUTES['free']},
                     'tones': list(podcast.TONES), 'max_text': podcast.MAX_SOURCE} if podcast.enabled() else None
-            return self._send(200, {'auth': auth, 'limits': tier_limits(), 'billing': paying,
-                                    'podcast': pods})
+            return self._send(200, {'auth': auth, 'limits': tier_limits(), 'tiers': TIERS,
+                                    'billing': paying, 'podcast': pods})
         if p.startswith('/api/podcast/script/'):
             if not podcast.enabled():
                 return self._send(404, {'error': 'podcasts are not set up'})
@@ -1194,11 +1242,16 @@ class Handler(BaseHTTPRequestHandler):
             req = podcast.parse_request(json.loads(self.rfile.read(n) or b'{}'))
         except (ValueError, UnicodeDecodeError) as e:  # podcast.BadRequest is a ValueError
             raise BadRequest(str(e) if isinstance(e, podcast.BadRequest) else f'bad json: {e}')
+        if _auth and not who.user:
+            raise SignInRequired('make podcasts')
         limits = podcast_limits()
         if not limits.get(who.tier):
-            msg = ('Sign in to make podcasts.' if who.tier == 'guest'
-                   else 'Podcasts are part of the paid plan.')
-            return self._send(403, {'error': msg})
+            return self._send(403, {'error': f'Podcasts are part of {TIERS["paid"]}.'})
+        longest = PODCAST_MAX_MINUTES.get(who.tier, PODCAST_MAX_MINUTES['free'])
+        if req['minutes'] > longest:
+            return self._send(403, {'error': f'{TIERS.get(who.tier, TIERS["free"])} episodes are up to '
+                                             f'{longest} minutes. {TIERS["paid"]} goes up to '
+                                             f'{PODCAST_MAX_MINUTES["paid"]}.'})
         try:
             refund = _podcast_quota.charge(who, 1) if _podcast_quota else (lambda: None)
         except QuotaExceeded as e:

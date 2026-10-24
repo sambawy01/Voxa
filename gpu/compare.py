@@ -2,9 +2,12 @@
 
     modal run gpu/compare.py                 # writes out/compare/*.mp3 and results.json
 
-Candidates are the multilingual models whose weights allow commercial use:
-Chatterbox Multilingual (MIT) and Qwen3-TTS (Apache 2.0), with Kokoro, Voxa's current
-engine, as the baseline where it has the language. Each engine runs in its own image on an
+Candidates are the models whose weights allow commercial use: VoxCPM2 (Apache 2.0),
+Chatterbox Multilingual (MIT) and Qwen3-TTS (Apache 2.0), Dia2 (Apache 2.0) for two-host
+podcasts, and an Egyptian Arabic fine-tune of Chatterbox, with Kokoro, Voxa's current engine,
+as the baseline where it has the language. gpu/compare_device.py adds the on-device engines.
+
+    modal run gpu/compare.py --engines voxcpm,dia2   # a subset Each engine runs in its own image on an
 L4, because their pinned torch and transformers versions do not agree. One warm-up line is
 spoken first so the timings leave out loading and compiling.
 """
@@ -43,6 +46,17 @@ TEXTS = {
           'услышать, как она звучит.',
 }
 
+# Texts for one engine each: Egyptian colloquial Arabic, and a two-host podcast exchange.
+EXTRA_TEXTS = {
+    'ar-eg': 'كل يوم الصبح، المكتبة القديمة اللي على الناصية بتفتح بابها الساعة تسعة. صاحبتها بتعمل لنفسها '
+             'كوباية شاي، وبترتب الكتب الجديدة، وبعدين بتقرا أول صفحة من كل كتاب بصوت عالي، بس علشان تسمع شكلها عامل إزاي.',
+    'en-podcast': '[S1] So every morning she opens the shop at nine, makes a cup of tea, and reads the first page '
+                  'of every new book out loud. [S2] Out loud? To nobody? [S1] To nobody! She says she wants to hear '
+                  'how it sounds. [S2] (laughs) Honestly, that might be the best quality check I have ever heard of.',
+}
+ALL_TEXTS = {**TEXTS, **EXTRA_TEXTS}
+VOXCPM_VOICE = '(A warm, clear adult female narrator, calm and natural)'
+
 # Qwen3-TTS takes language names and has nine named speakers; any of them can speak any of
 # its languages, but a native speaker sounds best where there is one.
 QWEN_LANGS = {'en': 'English', 'de': 'German', 'ja': 'Japanese', 'zh': 'Chinese', 'es': 'Spanish',
@@ -68,13 +82,13 @@ def to_mp3(samples, rate):
 
 def run_all(engine, langs, speak):
     """Speak every language with `speak(text, lang) -> (samples, rate, voice)`, timing each."""
-    speak(TEXTS['en'][:60], 'en' if 'en' in langs else langs[0])  # warm-up
+    speak(ALL_TEXTS[langs[0]][:60], langs[0])  # warm-up
     results = []
     for lang in langs:
-        row = {'engine': engine, 'lang': lang}
+        row = {'engine': engine, 'lang': lang, 'where': 'gpu'}
         try:
             start = time.perf_counter()
-            samples, rate, voice = speak(TEXTS[lang], lang)
+            samples, rate, voice = speak(ALL_TEXTS[lang], lang)
             row['gen_seconds'] = round(time.perf_counter() - start, 2)
             row['audio_seconds'] = round(len(samples) / rate, 2)
             row['voice'] = voice
@@ -96,6 +110,9 @@ kokoro_image = (
                  'fugashi', 'jaconv', 'mojimoji', 'pyopenjtalk', 'unidic-lite')
     .env({'HF_HOME': '/model'})
 )
+
+voxcpm_image = base.pip_install('voxcpm', 'soundfile', 'numpy').env({'HF_HOME': '/model'})
+dia2_image = base.pip_install('git+https://github.com/nari-labs/dia2', 'soundfile', 'numpy').env({'HF_HOME': '/model'})
 
 app = modal.App('voxa-compare')
 
@@ -162,23 +179,93 @@ def kokoro():
     return rows
 
 
+@app.function(image=voxcpm_image, gpu=GPU, timeout=1800)
+def voxcpm():
+    from voxcpm import VoxCPM
+
+    model = VoxCPM.from_pretrained('openbmb/VoxCPM2', load_denoiser=False)
+
+    def speak(text, lang):
+        # A voice designed from a description, the same in every language.
+        wav = model.generate(text=VOXCPM_VOICE + text, cfg_value=2.0, inference_timesteps=10)
+        return wav, model.tts_model.sample_rate, 'designed: warm female narrator'
+
+    rows = run_all('voxcpm', list(TEXTS), speak)
+    for row in rows:
+        row['engine_name'] = 'VoxCPM2'
+    return rows
+
+
+@app.function(image=dia2_image, gpu=GPU, timeout=1800)
+def dia2():
+    import tempfile
+
+    import soundfile as sf
+    from dia2 import Dia2, GenerationConfig, SamplingConfig
+
+    model = Dia2.from_repo('nari-labs/Dia2-2B', device='cuda', dtype='bfloat16')
+    config = GenerationConfig(cfg_scale=2.0, audio=SamplingConfig(temperature=0.8, top_k=50))
+
+    def speak(text, lang):
+        with tempfile.NamedTemporaryFile(suffix='.wav') as f:
+            model.generate(text, config=config, output_wav=f.name)
+            wav, rate = sf.read(f.name, dtype='float32')
+        return wav, rate, 'two hosts (S1, S2)'
+
+    rows = run_all('dia2', ['en-podcast'], speak)
+    for row in rows:
+        row['engine_name'] = 'Dia2 2B (podcasts)'
+    return rows
+
+
+@app.function(image=chatterbox_image, gpu=GPU, timeout=1800)
+def chatterbox_eg():
+    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+    from huggingface_hub import hf_hub_download
+    from safetensors.torch import load_file
+
+    model = ChatterboxMultilingualTTS.from_pretrained(device='cuda')
+    weights = hf_hub_download('AliAbdallah/egyptian-arabic-tts-chatterbox', 'model.safetensors')
+    model.t3.load_state_dict(load_file(weights, device='cuda'), strict=False)
+    model.t3.eval()
+
+    def speak(text, lang):
+        wav = model.generate(text, language_id='ar', exaggeration=0.5, cfg_weight=0.5, temperature=0.8)
+        return wav.squeeze().cpu().numpy(), model.sr, 'single speaker (fine-tune)'
+
+    rows = run_all('chatterbox_eg', ['ar-eg'], speak)
+    for row in rows:
+        row['engine_name'] = 'Chatterbox Egyptian Arabic (licence check pending)'
+    return rows
+
+
+ENGINES = {'voxcpm': voxcpm, 'chatterbox': chatterbox, 'qwen': qwen, 'dia2': dia2,
+           'chatterbox_eg': chatterbox_eg, 'kokoro': kokoro}
+
+
 @app.local_entrypoint()
-def main(out: str = 'out/compare'):
+def main(out: str = 'out/compare', engines: str = ','.join(ENGINES)):
     os.makedirs(out, exist_ok=True)
-    calls = {'chatterbox': chatterbox.spawn(), 'qwen': qwen.spawn(), 'kokoro': kokoro.spawn()}
+    chosen = [e.strip() for e in engines.split(',') if e.strip()]
+    calls = {name: ENGINES[name].spawn() for name in chosen}
     rows = []
     for engine, call in calls.items():
         try:
             rows += call.get()
         except Exception as e:  # an engine that will not even load still gets a line in the results
             print(engine, 'failed:', e, flush=True)
-            rows.append({'engine': engine, 'error': f'{type(e).__name__}: {e}'[:300]})
+            rows.append({'engine': engine, 'where': 'gpu', 'error': f'{type(e).__name__}: {e}'[:300]})
     for row in rows:
         mp3 = row.pop('mp3', None)
         if mp3:
             row['file'] = f"{row['engine']}-{row['lang']}.mp3"
             with open(os.path.join(out, row['file']), 'wb') as f:
                 f.write(mp3)
-    with open(os.path.join(out, 'results.json'), 'w') as f:
-        json.dump({'gpu': GPU, 'texts': TEXTS, 'rows': rows}, f, ensure_ascii=False, indent=1)
+    # Keep the other engines' rows (the on-device half, or engines run separately).
+    path = os.path.join(out, 'results.json')
+    results = json.load(open(path, encoding='utf-8')) if os.path.exists(path) else {'rows': []}
+    results.update(gpu=GPU, texts=ALL_TEXTS)
+    results['rows'] = [r for r in results['rows'] if r.get('engine') not in calls] + rows
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(results, f, ensure_ascii=False, indent=1)
     print(f'{sum("file" in r for r in rows)} clips in {out}')

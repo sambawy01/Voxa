@@ -1,13 +1,19 @@
-name: Voice comparison (Modal)
+name: Voice comparison
 
-# Runs gpu/compare.py: the same paragraph in ten languages from each candidate engine on a
-# Modal L4, and saves the clips and timings to the tts-compare-results branch. Needs the
-# MODAL_TOKEN_ID and MODAL_TOKEN_SECRET repository secrets; without them it stops with a notice.
+# The listening test: the same paragraph per language from every candidate engine, saved with
+# timings to the tts-compare-results branch.
+# - On-device engines (gpu/compare_device.py) run on the GitHub runner's CPU; no secrets needed.
+# - Studio engines (gpu/compare.py) run on a Modal L4 when the MODAL_TOKEN_ID and
+#   MODAL_TOKEN_SECRET repository secrets are set; otherwise that half is skipped with a notice.
 on:
   push:
-    branches: [feat/tts-compare]
-    paths: [gpu/compare.py, .github/workflows/compare.yml]
+    branches: [feat/compare-v2]
+    paths: [gpu/compare.py, gpu/compare_device.py, .github/workflows/compare.yml]
   workflow_dispatch:
+    inputs:
+      engines:
+        description: Studio engines to run (comma-separated), or all
+        default: all
 
 concurrency:
   group: tts-compare
@@ -19,47 +25,55 @@ permissions:
 jobs:
   compare:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 120
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
     steps:
-      - name: Check the secrets
-        id: check
-        run: |
-          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
-            echo "::notice::Not running: add the MODAL_TOKEN_ID and MODAL_TOKEN_SECRET repository secrets, then re-run."
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: actions/checkout@v4
-        if: steps.check.outputs.ready == 'true'
 
       - uses: actions/setup-python@v5
-        if: steps.check.outputs.ready == 'true'
         with:
           python-version: '3.11'
 
-      - name: Install the Modal client
-        if: steps.check.outputs.ready == 'true'
-        run: pip install modal==1.6.2
-
-      - name: Generate the clips
-        if: steps.check.outputs.ready == 'true'
+      - name: Install the on-device engines
         run: |
-          modal run gpu/compare.py 2>&1 | tee compare.log
-          { echo "## Voice comparison"; echo; echo '```'; grep -E '^(chatterbox|qwen|kokoro) ' compare.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+          pip install -q --extra-index-url https://download.pytorch.org/whl/cpu \
+            supertonic pocket-tts soundfile numpy onnx onnxruntime tokenizers huggingface_hub
+          git clone -q --depth 1 https://github.com/HojoAI/Hojo-TTS-Light.git /tmp/hojo
+
+      - name: On-device clips
+        run: HOJO_REPO=/tmp/hojo python gpu/compare_device.py out/compare 2>&1 | grep -vE 'it/s|Fetching'
+
+      - name: Studio clips (Modal)
+        continue-on-error: true
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
+            echo "::notice::Studio engines skipped: add the MODAL_TOKEN_ID and MODAL_TOKEN_SECRET repository secrets, then re-run."
+            exit 0
+          fi
+          pip install -q modal==1.6.2
+          engines="${{ inputs.engines || 'all' }}"
+          if [ "$engines" = all ]; then modal run gpu/compare.py --out out/compare
+          else modal run gpu/compare.py --out out/compare --engines "$engines"; fi
+
+      - name: Summary
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          rows = json.load(open('out/compare/results.json'))['rows']
+          print('| Engine | Language | Seconds to make | Seconds of audio | Note |\n| --- | --- | --- | --- | --- |')
+          for r in rows:
+              print(f"| {r.get('engine_name', r['engine'])} | {r.get('lang', '')} | {r.get('gen_seconds', '')} | {r.get('audio_seconds', '')} | {r.get('error', '')[:80]} |")
+          PY
 
       - uses: actions/upload-artifact@v4
-        if: steps.check.outputs.ready == 'true'
         with:
           name: tts-compare
           path: out/compare
 
       - name: Save to the results branch
-        if: steps.check.outputs.ready == 'true'
         run: |
           cd out/compare
           git init -q -b tts-compare-results

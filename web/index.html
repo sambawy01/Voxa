@@ -35,6 +35,7 @@
 .account .who{color:var(--ink-2);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:20ch}
 .account .tier{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:99px;color:#a7f3d0;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3)}
 .account .tier:empty{display:none}
+.packrow{flex-wrap:wrap;gap:8px;margin-top:6px}
 @media(max-width:520px){.account .who{display:none}}
 </style></head>
 <body data-page="studio">
@@ -50,7 +51,7 @@
 </div></header>
 <main class="wrap">
 <form class="signin card glow" id="signin" hidden>
-  <label for="email">Sign in free · Voxa Lite: unlimited on-device voices, plus {{FREE_DAILY}} Studio characters a day</label>
+  <label for="email">Sign in free · Voxa Lite: unlimited on-device voices, plus {{WELCOME_MINUTES}} minutes of Studio voices to try</label>
   <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
   <div class="row">
     <button class="small accent" id="signin-email" type="submit">Email me a sign-in link</button>
@@ -83,6 +84,7 @@
     <textarea id="text" maxlength="4000" placeholder="Type or paste what you want spoken…" aria-label="Your script"></textarea>
     <div class="meta"><span id="count">0 / 4000 characters</span><span id="est"></span></div>
     <p class="hint" id="quota"></p>
+    <div class="row packrow" id="packrow" hidden></div>
     <div class="field"><span class="label">Try a sample</span>
     <div class="chips">
       <button class="chip" data-lang="a">🇺🇸 English</button>
@@ -276,10 +278,10 @@ function showPlan(){
   $('#upgrade').textContent=b&&b.price_label?`Voxa Studio · ${b.price_label}`:'Upgrade to Voxa Studio';
   $('#manage').hidden=!(b&&SIGNED_IN&&tier==='paid');
 }
-async function goBilling(path, btn){
+async function goBilling(path, btn, body){
   btn.disabled=true;
   try{
-    const r=await api(path,{method:'POST'}), j=await r.json().catch(()=>({}));
+    const r=await api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}), j=await r.json().catch(()=>({}));
     if(!r.ok||!(j.url||j.checkout)) throw new Error(j.error||'The payment page is not available right now.');
     // Paddle's checkout opens on its own page (it cannot run inside this isolated one).
     if(j.checkout){ sessionStorage.setItem('voxa-checkout',JSON.stringify(j.checkout)); location.href='/checkout'; }
@@ -288,16 +290,35 @@ async function goBilling(path, btn){
 }
 $('#upgrade').addEventListener('click',e=>goBilling('/api/billing/checkout',e.currentTarget));
 $('#manage').addEventListener('click',e=>goBilling('/api/billing/portal',e.currentTarget));
+// HD packs: one button per pack for signed-in accounts, once payments are set up.
+function showPacks(){
+  const row=$('#packrow'), packs=(CONFIG.packs||[]);
+  row.hidden=!(SIGNED_IN&&packs.length&&QUOTA&&QUOTA.wallet!==undefined);
+  if(row.hidden||row.childElementCount) return;
+  for(const p of packs){
+    const b=document.createElement('button');
+    b.className='small'; b.type='button'; b.textContent=`+${p.minutes} HD minutes · ${p.price}`;
+    b.addEventListener('click',e=>{
+      try{ sessionStorage.setItem('voxa-wallet-before',String(QUOTA.wallet||0)); }catch(err){}
+      goBilling('/api/billing/checkout',e.currentTarget,{pack:p.id});
+    });
+    row.appendChild(b);
+  }
+}
 // Back from Paddle's checkout. The plan arrives by webhook, sometimes a few seconds after the
 // visitor does, and only reaches the sign-in token on refresh, so refresh until it shows.
 async function welcomeBack(){
-  if(!new URLSearchParams(location.search).has('upgraded')||!SB) return;
+  const params=new URLSearchParams(location.search);
+  if(!(params.has('upgraded')||params.has('pack'))||!SB) return;
   history.replaceState(null,'',location.pathname);
   const st=$('#status'); st.className='status busy'; st.textContent='Confirming your payment…';
+  let before=0;
+  try{ before=+sessionStorage.getItem('voxa-wallet-before')||0; }catch(err){}
   for(let i=0;i<8;i++){
     await SB.auth.refreshSession().catch(()=>{});
     const q=await loadQuota();
-    if(q&&q.tier==='paid'){ st.className='status'; st.textContent=`Welcome to Voxa Studio: ${(CONFIG.limits.paid||0).toLocaleString()} Studio characters a day. Thank you!`; return; }
+    if(params.has('pack')&&q&&q.wallet>before){ st.className='status'; st.textContent=`HD pack added: ${q.wallet_minutes.toLocaleString()} HD minutes in your wallet. Thank you!`; return; }
+    if(params.has('upgraded')&&q&&q.tier==='paid'){ st.className='status'; st.textContent=`Welcome to Voxa Studio: ${((CONFIG.plans||{}).hd_monthly_minutes||0).toLocaleString()} HD minutes a month and Standard voices for audiobooks and podcasts. Thank you!`; return; }
     await sleep(2500);
   }
   st.className='status'; st.textContent='Payment received. Your plan can take a minute to switch on; reload the page shortly.';
@@ -364,14 +385,30 @@ async function waitFor(job, signal, onTick){
   return job;
 }
 
-// Free tier: a daily character allowance, kept on the server. null means no limit.
+// What this visitor may still make with Studio voices, kept on the server: an account's
+// wallet and monthly minutes (plans.py), or a visitor's daily characters before sign-in exists.
 let QUOTA=null;
+const mins=n=>Math.floor(n).toLocaleString();
 function showQuota(q){
   if(q!==undefined) QUOTA=q;
   const el=$('#quota');
   $('#tier').textContent=!QUOTA||QUOTA.tier==='guest'?'':QUOTA.tier==='paid'?'Studio':'Lite';
-  showPlan();
+  showPlan(); showPacks();
   if(!QUOTA){el.textContent='';return;}
+  if(QUOTA.wallet!==undefined){
+    const cpm=QUOTA.chars_per_minute||900;
+    if(QUOTA.tier==='paid'){
+      el.className=QUOTA.standard_left?'hint':'hint over';
+      el.textContent=`This month: ${mins(QUOTA.standard_left/cpm/60)} hours of Standard voices and ${mins(QUOTA.hd_minutes_left)} HD minutes left`
+        +(QUOTA.wallet?` (${mins(QUOTA.wallet_minutes)} of them from packs).`:'.')+' On-device voices have no limit.';
+    }else{
+      el.className=QUOTA.wallet?'hint':'hint over';
+      el.textContent=QUOTA.wallet
+        ? `${mins(QUOTA.wallet_minutes)} minutes of Studio voices left in your wallet. On-device voices have no limit.`
+        : `Studio voices need an HD pack or ${(CONFIG.tiers||{}).paid||'Voxa Studio'}. On-device voices have no limit, and every voice has a free preview.`;
+    }
+    return;
+  }
   if(QUOTA.unlimited){el.className='hint';el.textContent='No daily limit on your plan.';return;}
   const left=QUOTA.remaining.toLocaleString(), lim=QUOTA.limit.toLocaleString();
   const paid=(CONFIG.limits.paid||0).toLocaleString(), names=CONFIG.tiers||{free:'Voxa Lite',paid:'Voxa Studio'};

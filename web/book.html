@@ -105,7 +105,7 @@ ol.outputs .state.ready{color:#a7f3d0;background:rgba(52,211,153,.12);border-col
 import * as pdfjs from '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.min.mjs';
 import { readPdf, paragraphsFromText, findChapters, estimateSeconds, formatDuration, planChunks, bookKey,
   openStore, saveChunk, loadChunk, savedChunkKeys, saveBook, listBooks, deleteBook, parseWav, encodeWav,
-  floatToInt16, joinPcm, SAMPLE_RATE, bookMp3, zipStore } from '/book.js?v={{BOOK_VERSION}}';
+  floatToInt16, joinPcm, SAMPLE_RATE, bookMp3, zipStore, studioLeft } from '/book.js?v={{BOOK_VERSION}}';
 import { attachPreview, stopPreview, PREVIEW_LINE } from '/preview.js?v={{PREVIEW_VERSION}}';
 import { createLite } from '/lite.js?v={{LITE_VERSION}}';
 
@@ -293,11 +293,13 @@ async function updatePlan() {
   else {
     await setupAccount();
     const q = await api('/api/quota', { cache: 'no-store' }).then(r => r.json()).then(j => j.quota).catch(() => null);
-    if (!q || q.unlimited) note.textContent = 'Studio voices on your plan have no daily limit.';
+    const s = studioLeft(q);
+    if (!s) note.textContent = 'Studio voices on your plan have no limit.';
     else {
-      const fits = leftChars <= q.remaining;
-      note.textContent = `This needs ${leftChars.toLocaleString()} characters of Studio voice; you have ${q.remaining.toLocaleString()} left today. ` +
-        (fits ? '' : `Voxa makes what fits, saves it, and continues when you come back after midnight UTC. `) +
+      const fits = leftChars <= s.left;
+      note.textContent = `This needs ${leftChars.toLocaleString()} characters of Studio voice; you have ${s.left.toLocaleString()} ${s.when}. ` +
+        (fits ? '' : s.daily ? `Voxa makes what fits, saves it, and continues when you come back after midnight UTC. `
+          : `Voxa makes what fits and saves it; an HD pack or Voxa Studio covers the rest. `) +
         (liteVoices().length ? 'On-device voices have no limit.' : '');
     }
   }
@@ -454,6 +456,18 @@ async function start() {
   st.className = 'status'; st.textContent = 'Starting…';
   let wake = navigator.wakeLock ? await navigator.wakeLock.request('screen').catch(() => null) : null;
   await setupAccount();
+  // Voxa Lite makes one new book a day; the server counts it the first time it starts
+  // (by the book's text, so changing the voice is not a new book).
+  const allowed = await api('/api/books/start', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ book: await bookKey(BOOK.chapters, {}) }) }).catch(() => null);
+  if (allowed && (allowed.status === 429 || allowed.status === 403)) {
+    const j = await allowed.json().catch(() => ({}));
+    st.className = 'status err'; st.textContent = j.error || 'You cannot start another book today.';
+    running = false; $('#start').hidden = false; $('#pause').hidden = true;
+    ['#lang', '#voice', '#expr', '#file', '#hear'].forEach(x => $(x).disabled = false);
+    if (wake) wake.release().catch(() => {});
+    return;
+  }
   await saveBook(db, key, { key, name: BOOK.name, chapters: BOOK.chapters, settings: s, parts: plan.length, saved: Date.now() });
   const saved = await savedSet(key);
   const canSignIn = !!CONFIG.auth && !(await token());

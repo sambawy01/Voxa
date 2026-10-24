@@ -195,6 +195,21 @@ export async function readPdf(pdfjs, data, onProgress = () => {}, options = {}) 
 // Both engines produce 24 kHz mono 16-bit speech; chapters are joined as raw samples.
 
 export const SAMPLE_RATE = 24000;
+
+/**
+ * What a /api/quota answer leaves for Studio voices, or null when there is no limit to show:
+ * {left: characters, when: 'today' | 'this month' | 'in your wallet', daily: bool}.
+ * Accounts use plans.py (Studio: Standard voices' monthly fair use; Lite: the wallet);
+ * visitors, before sign-in exists, a daily allowance.
+ */
+export function studioLeft(q) {
+  if (!q) return null;
+  if (q.wallet !== undefined) {
+    return q.tier === 'paid' ? { left: q.standard_left, when: 'this month', daily: false }
+      : { left: q.wallet, when: 'in your wallet', daily: false };
+  }
+  return q.unlimited ? null : { left: q.remaining, when: 'today', daily: true };
+}
 export const PAUSE_BETWEEN_CHUNKS = 0.4;  // seconds; chunks end at paragraph boundaries
 
 /** Samples from a 16-bit PCM WAV file (any chunk layout). */

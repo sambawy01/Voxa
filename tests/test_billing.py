@@ -224,6 +224,35 @@ class BillingHTTPTest(ServerTestCase):
         self.assertEqual(self.webhook({'event_id': 'e', 'event_type': 'transaction.completed', 'data': {}})[0], 200)
         self.assertEqual(self.fake.users, {})
 
+    def test_hd_packs_check_out_for_any_account_and_credit_the_wallet_once(self):
+        os.environ['PADDLE_PRICE_HD100'] = 'pri_hd100'
+        server._plans = server.plans.Plans(':memory:')
+        try:
+            _, _, body = self.req('/api/config')
+            self.assertEqual(json.loads(body)['packs'], [{'id': 'hd100', 'minutes': 100, 'price': '$4.99'}])
+            paid = self.keys.token(sub='bob', app_metadata={'tier': 'paid'})
+            code, body = self.call('/api/billing/checkout', {'pack': 'hd100'}, token=paid)
+            self.assertEqual(code, 200)  # subscribers can buy packs too
+            c = body['checkout']
+            self.assertEqual(c['price_id'], 'pri_hd100')
+            self.assertTrue(c['success_url'].endswith('/?pack=hd100'))
+            self.assertEqual(self.call('/api/billing/checkout', {'pack': 'hd300'}, token=paid)[0], 404)
+            event = {'event_type': 'transaction.completed', 'event_id': 'evt_9', 'occurred_at': '2026-10-24T10:00:00Z',
+                     'data': {'id': 'txn_9', 'subscription_id': None, 'custom_data': c['custom_data'],
+                              'items': [{'price': {'id': 'pri_hd100'}, 'quantity': 1}]}}
+            for _ in range(2):  # Paddle may deliver an event more than once
+                self.assertEqual(self.webhook(event)[0], 200)
+            self.assertEqual(server._plans._balance('bob'), 100 * server.plans.CHARS_PER_MINUTE)
+            # A subscription's own payment is not a pack, and a forged account id credits nothing.
+            renewal = dict(event, data=dict(event['data'], id='txn_10', subscription_id='sub_1'))
+            self.assertEqual(self.webhook(renewal)[0], 200)
+            forged = dict(event, data=dict(event['data'], id='txn_11', custom_data={'user_id': 'bob', 'user_sig': 'x'}))
+            self.assertEqual(self.webhook(forged)[0], 200)
+            self.assertEqual(server._plans._balance('bob'), 100 * server.plans.CHARS_PER_MINUTE)
+        finally:
+            del os.environ['PADDLE_PRICE_HD100']
+            server._plans = None
+
     def test_a_supabase_outage_asks_paddle_to_retry(self):
         self.fake.fail_supabase = True
         self.assertEqual(self.webhook(sub_event('subscription.created', user='dave'))[0], 500)

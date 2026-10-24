@@ -60,12 +60,22 @@ Copy the destination's **secret key**.
 **Business account → Payouts**: choose **Payoneer** and connect your Payoneer account.
 Paddle pays in US dollars once a month, when the balance is at least $100.
 
-## 6. The secrets
+## 6. HD packs
+
+**Catalog → Products → New product** "Voxa HD minutes", with three **one-time** prices:
+100 minutes at $4.99, 300 at $11.99 and 600 at $19.99. Copy each price id (`pri_...`). Add
+`transaction.completed` to the webhook's events (step 3): that event credits the minutes to
+the buyer's wallet, once per transaction.
+
+## 7. The secrets
 
 ```bash
 fly secrets set -a voxa-zpukmw PADDLE_API_KEY=... PADDLE_CLIENT_TOKEN=... \
-  PADDLE_PRICE_ID=pri_... PADDLE_WEBHOOK_SECRET=... SUPABASE_SERVICE_ROLE_KEY=...
+  PADDLE_PRICE_ID=pri_... PADDLE_WEBHOOK_SECRET=... SUPABASE_SERVICE_ROLE_KEY=... \
+  PADDLE_PRICE_HD100=pri_... PADDLE_PRICE_HD300=pri_... PADDLE_PRICE_HD600=pri_...
 ```
+
+Or add each one on the Fly dashboard under the app's **Secrets** page.
 
 Never put these in the repository or in a chat. `SUPABASE_SERVICE_ROLE_KEY` is under Supabase
 **Project settings → API**. It bypasses all access rules, so it lives only in Fly secrets.

@@ -38,15 +38,10 @@ that off-peak. A document at the 200,000-character limit with a 20-minute script
 
 ## Who can make podcasts
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `VOXA_PODCAST_DAILY_GUEST` | 0 | scripts per day for visitors who are not signed in |
-| `VOXA_PODCAST_DAILY_FREE` | 1 | free accounts |
-| `VOXA_PODCAST_DAILY_PAID` | 20 | paid accounts |
-
-Here, unlike the character allowance, 0 means none. Until sign-in (Supabase) is set up,
-nobody has an account, so visitors get the free accounts' number. A script that fails is
-refunded.
+The counts are in `plans.py` (`PODCAST_RULES`): Voxa Lite makes 1 script a week, up to 5
+minutes; Voxa Studio 3 a day, up to 20 minutes. Visitors who are not signed in cannot make
+podcasts once sign-in is set up; until then they count as Voxa Lite. A script that fails is
+refunded. The audio uses on-device voices, or Studio voices from the wallet and allowances.
 
 ## Switch it on
 

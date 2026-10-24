@@ -72,17 +72,24 @@ the file at startup (unique ids, one language per blend, weights adding up to 1)
 - `speed` — optional number, default 1.0, must be 0.5–2.0. Audio length and memory scale
   with 1/speed: `0.01` once took 4.6 GB and OOM-killed the machine.
 
-## Daily limits and accounts
+## Plans, the wallet and accounts
 
-Each day (UTC) a visitor may generate a number of characters; replaying cached audio is
-free and failed generations are refunded. Limits are set by environment variables, where
-`0` means no limit:
+The rules live in `plans.py`. On-device voices are unlimited for everyone. Accounts use
+Studio voices from a **wallet** (the one-time welcome credit and HD packs, which never
+expire); Voxa Studio adds a monthly HD allowance (used before the wallet) and Standard
+voices under a monthly fair-use limit. Voxa Lite makes 1 new audiobook a day and 1 podcast a
+week (up to 5 minutes); Studio has no audiobook limit and 3 podcasts a day (up to 20).
+Monthly allowances reset on the 1st (UTC). Replaying cached audio is free and failed
+generations are refunded.
 
-| Variable | Default | Who |
+| Variable | Default | Meaning |
 |---|---|---|
-| `VOXA_FREE_DAILY_CHARS` | 1500 | Voxa Lite (free accounts); also visitors while sign-in is off |
-| `VOXA_PAID_DAILY_CHARS` | 10000 | Voxa Studio (paid accounts); 0 would mean no limit |
-| `VOXA_PODCAST_MINUTES_FREE` / `_PAID` | 5 / 20 | longest podcast episode per plan |
+| `VOXA_WELCOME_CHARS` | 10000 | one-time welcome credit per account (about 11 minutes) |
+| `VOXA_WELCOME_PER_NETWORK_DAY` | 3 | welcome credits one network address may collect a day; one per device |
+| `VOXA_HD_MONTHLY_CHARS` | 300000 | HD characters a month on Voxa Studio |
+| `VOXA_STANDARD_MONTHLY_CHARS` | 3000000 | Standard-voice fair use a month on Voxa Studio |
+| `PADDLE_PRICE_HD100` / `_HD300` / `_HD600` | (none) | Paddle price ids of the HD packs; a pack is sold once its id is set |
+| `VOXA_FREE_DAILY_CHARS` | 1500 | Studio characters a day for visitors, only while sign-in is off |
 
 Sign-in uses Supabase. Setting `SUPABASE_URL` and `SUPABASE_ANON_KEY` turns it on: requests
 with `Authorization: Bearer <access token>` are counted against that account, and an

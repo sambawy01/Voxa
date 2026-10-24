@@ -151,7 +151,7 @@ details[open] summary{margin-bottom:10px}
 
 <script type="module">
 import { readerPlan, detectLang, incomingText, shortDuration } from '/listen.js?v={{LISTEN_VERSION}}';
-import { parseWav, encodeWav, floatToInt16, SAMPLE_RATE, CHARS_PER_SECOND } from '/book.js';
+import { parseWav, encodeWav, floatToInt16, SAMPLE_RATE, CHARS_PER_SECOND, studioLeft } from '/book.js';
 import { attachPreview, stopPreview, PREVIEW_LINE } from '/preview.js?v={{PREVIEW_VERSION}}';
 import { createLite } from '/lite.js?v={{LITE_VERSION}}';
 
@@ -413,9 +413,10 @@ const studioNeeded = () => voice() && !voice().lite;
 async function quotaNote() {
   await setupAccount();
   const q = await api('/api/quota', { cache: 'no-store' }).then(r => r.json()).then(j => j.quota).catch(() => null);
-  if (!q || q.unlimited || !DOC) return;
+  const s = studioLeft(q);
+  if (!s || !DOC) return;
   const need = DOC.parts.reduce((a, p) => a + p.text.length, 0);
-  if (need > q.remaining) $('#voicenote').textContent = `This text is ${need.toLocaleString()} characters and you have ${q.remaining.toLocaleString()} Studio characters left today, so Voxa will stop part-way.` +
+  if (need > s.left) $('#voicenote').textContent = `This text is ${need.toLocaleString()} characters and you have ${s.left.toLocaleString()} Studio characters ${s.when}, so Voxa will stop part-way.` +
     (liteFor($('#lang').value).length ? ' On-device voices have no limit.' : ' Sign in on the main page for more.');
 }
 

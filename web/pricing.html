@@ -21,6 +21,13 @@
 .compare td:first-child{color:var(--ink);font-weight:600}
 .compare td,.compare th{text-align:center}
 .compare td:first-child,.compare th:first-child{text-align:left}
+.packs{max-width:820px;width:100%;margin:0 auto}
+.pack-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
+.pack{display:flex;flex-direction:column;gap:6px;padding:16px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.02)}
+.pack .min{font:820 28px/1 var(--font-display);letter-spacing:-.02em}
+.pack .min small{font-size:14px;font-weight:600;color:var(--dim)}
+.pack .cost{font-weight:700;color:var(--ink)}
+.pack .fits{color:var(--dim);font-size:13.5px}
 </style></head>
 <body data-page="pricing">
 <header class="topbar"><div class="topbar-in">
@@ -28,9 +35,9 @@
 </div></header>
 <main class="wrap">
 <section class="hero center">
-  <span class="eyebrow"><span class="dot"></span>Two plans, one free account</span>
-  <h1 class="display sm">Start with <span class="grad-text">Voxa Lite.</span> Step up to Studio.</h1>
-  <p class="lead">Both plans need a free account. On-device voices are unlimited on both. The difference is how much of the Studio voices, the ones made on our servers in nine languages, you can use each day.</p>
+  <span class="eyebrow"><span class="dot"></span>Free voices for everyone</span>
+  <h1 class="display sm">Free on your device. <span class="grad-text">Studio when you want more.</span></h1>
+  <p class="lead">Every account gets unlimited voices that run on your own phone or computer. Voxa Studio adds voices made on our servers, and HD packs add our best voices to any account, paid once.</p>
 </section>
 
 <section class="plans">
@@ -39,10 +46,11 @@
     <div class="price">$0 <small>free, with an account</small></div>
     <ul>
       <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b>Unlimited on-device voices</b>: 21 English and 2 Chinese voices that run on your phone or computer, free and offline</span></li>
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b data-limit="free">{{FREE_DAILY}}</b> Studio characters a day: about 1½ minutes of audio to try all 57 voices in nine languages</span></li>
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span>Whole audiobooks with on-device voices</span></li>
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b data-pod="free">1</b> AI podcast script a day, episodes up to <b data-podmin="free">{{PODCAST_MINUTES_FREE}}</b> minutes</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b>{{WELCOME_MINUTES}} minutes of Studio voices</b> to try, once, when you join</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b>1 new audiobook a day</b> with on-device voices</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b data-pod="free">1</b> AI podcast a week, up to <b data-podmin="free">{{PODCAST_MINUTES_FREE}}</b> minutes, with on-device voices</span></li>
       <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span>Voxa Reader: listen to copied text with on-device voices</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span>Hear every voice before you choose</span></li>
     </ul>
     <a class="btn-ghost cta" href="/">Sign in free</a>
   </div>
@@ -52,14 +60,25 @@
     <div class="price"><span class="grad-text">{{PRICE_LABEL}}</span></div>
     <ul>
       <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b>Everything in Voxa Lite</b>, including unlimited on-device voices</span></li>
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b data-limit="paid">{{PAID_DAILY}}</b> Studio characters a day: about 11 minutes of audio in any of the nine languages</span></li>
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span>Faster Studio voices on dedicated servers, ahead of the queue</span></li>
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b data-pod="paid">20</b> AI podcast scripts a day, episodes up to <b data-podmin="paid">{{PODCAST_MINUTES_PAID}}</b> minutes</span></li>
-      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span>Voxa Reader with Studio voices, which keep reading while the screen is locked</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b>Standard Studio voices</b> in nine languages for audiobooks, podcasts and the Reader: about {{STANDARD_MONTHLY_HOURS}} hours a month under fair use</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b>{{HD_MONTHLY_MINUTES}} minutes of HD voices</b> every month</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b>Unlimited audiobooks</b></span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span><b data-pod="paid">3</b> AI podcasts a day, up to <b data-podmin="paid">{{PODCAST_MINUTES_PAID}}</b> minutes</span></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span>Faster Studio voices on dedicated servers</span></li>
       <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg><span>Cancel any time with <b>Manage plan</b>. 14-day refunds: see the <a href="/refunds">refund policy</a>.</span></li>
     </ul>
     <a class="btn-primary cta" href="/">Sign in and choose Voxa Studio</a>
   </div>
+</section>
+
+<section class="card flat packs">
+  <div class="card-head"><div><h2>HD packs</h2><p class="sub">Our best voices for podcasts, audiobooks and anything else. For any account, paid once, never expire.</p></div></div>
+  <div class="pack-grid">
+    <div class="pack"><span class="min">100 <small>HD minutes</small></span><span class="cost">$4.99</span><span class="fits">About five 20-minute podcasts, or a short story</span></div>
+    <div class="pack"><span class="min">300 <small>HD minutes</small></span><span class="cost">$11.99</span><span class="fits">A novella</span></div>
+    <div class="pack"><span class="min">600 <small>HD minutes</small></span><span class="cost">$19.99</span><span class="fits">A full novel</span></div>
+  </div>
+  <p class="small-print">Voxa shows how many minutes a book or podcast needs before you make it. Studio's monthly HD minutes are used first, then pack minutes.</p>
 </section>
 
 <section class="card flat compare">
@@ -67,23 +86,22 @@
   <div class="table-scroll"><table>
     <tr><th></th><th>Voxa Lite</th><th>Voxa Studio</th></tr>
     <tr><td>On-device voices (English and Chinese)</td><td>Unlimited</td><td>Unlimited</td></tr>
-    <tr><td>Studio voices, 9 languages</td><td><span data-limit="free">{{FREE_DAILY}}</span> characters a day</td><td><span data-limit="paid">{{PAID_DAILY}}</span> characters a day</td></tr>
-    <tr><td>Generation speed</td><td>Shared queue</td><td>Dedicated servers, priority</td></tr>
-    <tr><td>Audiobooks</td><td>On-device voices</td><td>On-device or Studio voices</td></tr>
-    <tr><td>AI podcasts</td><td><span data-pod="free">1</span> a day, up to <span data-podmin="free">{{PODCAST_MINUTES_FREE}}</span> min</td><td><span data-pod="paid">20</span> a day, up to <span data-podmin="paid">{{PODCAST_MINUTES_PAID}}</span> min</td></tr>
+    <tr><td>Standard Studio voices, 9 languages</td><td>{{WELCOME_MINUTES}} minutes to try</td><td>About {{STANDARD_MONTHLY_HOURS}} hours a month</td></tr>
+    <tr><td>HD voices</td><td>From HD packs</td><td>{{HD_MONTHLY_MINUTES}} minutes a month, then packs</td></tr>
+    <tr><td>Audiobooks</td><td>1 new book a day</td><td>Unlimited</td></tr>
+    <tr><td>AI podcasts</td><td><span data-pod="free">1</span> a week, up to <span data-podmin="free">{{PODCAST_MINUTES_FREE}}</span> min</td><td><span data-pod="paid">3</span> a day, up to <span data-podmin="paid">{{PODCAST_MINUTES_PAID}}</span> min</td></tr>
     <tr><td>Reader with the screen locked</td><td>On-device voices may pause</td><td>Studio voices keep reading</td></tr>
     <tr><td>Hear every voice first</td><td>Free</td><td>Free</td></tr>
   </table></div>
 </section>
-<p class="small-print" style="text-align:center">Studio characters reset at midnight UTC. Renews automatically; sales tax or VAT is added at checkout where it applies. Payments are handled by Paddle, our reseller and merchant of record.</p>
+<p class="small-print" style="text-align:center">Monthly minutes reset on the 1st (UTC); pack minutes never expire. Renews automatically; sales tax or VAT is added at checkout where it applies. Payments are handled by Paddle, our reseller and merchant of record.</p>
 <p class="small-print" style="text-align:center">Questions: <a href="mailto:{{CONTACT_EMAIL}}">{{CONTACT_EMAIL}}</a>. Voxa is run by {{OPERATOR}}.</p>
 </main>
 {{FOOTER}}
 <script>
 // Show the allowances the server actually applies.
 fetch('/api/config').then(r => r.json()).then(c => {
-  for (const el of document.querySelectorAll('[data-limit]')) { const n = (c.limits || {})[el.dataset.limit]; if (n) el.textContent = n.toLocaleString('en'); }
-  for (const el of document.querySelectorAll('[data-pod]')) { const n = c.podcast && c.podcast.daily[el.dataset.pod]; if (n) el.textContent = n; }
+  for (const el of document.querySelectorAll('[data-pod]')) { const r = c.podcast && c.podcast.rules[el.dataset.pod]; if (r) el.textContent = r.limit; }
   for (const el of document.querySelectorAll('[data-podmin]')) { const n = c.podcast && c.podcast.max_minutes && c.podcast.max_minutes[el.dataset.podmin]; if (n) el.textContent = n; }
 }).catch(() => {});
 </script>

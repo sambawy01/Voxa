@@ -172,24 +172,23 @@ class ScriptJobsTest(unittest.TestCase):
 
 
 class PodcastHTTPTest(ts.ServerTestCase):
-    """Sign-in on: guests none, free accounts 1 a day, paid 2 (smaller numbers for the test)."""
+    """Sign-in on: guests none, Voxa Lite 1 script a week up to 5 minutes, Studio 3 a day up to 20."""
 
     def setUp(self):
         super().setUp()
         self.keys = getattr(PodcastHTTPTest, '_keys', None) or ts.Keys()
         PodcastHTTPTest._keys = self.keys
-        self.saved = podcast.DEEPSEEK_API_KEY, server.PODCAST_DAILY, server._scripts
+        self.saved = podcast.DEEPSEEK_API_KEY, server._scripts
         podcast.DEEPSEEK_API_KEY = 'sk-test'
-        server.PODCAST_DAILY = {'guest': 0, 'free': 1, 'paid': 2}
         server._auth = server.TokenVerifier(ts.URL, fetch_jwks=lambda: self.keys.jwks)
-        server._podcast_quota = server.Quota(':memory:', server.podcast_limits(), 'podcast_usage')
+        server._plans = server.plans.Plans(':memory:')
         self.written = []
         server._scripts = podcast.ScriptJobs(writer=lambda req: self.written.append(req) or podcast.check_script(script(), req['hosts']))
 
     def tearDown(self):
-        podcast.DEEPSEEK_API_KEY, server.PODCAST_DAILY, server._scripts = self.saved
+        podcast.DEEPSEEK_API_KEY, server._scripts = self.saved
         server._auth = None
-        server._podcast_quota = None
+        server._plans = None
 
     def call(self, path, body=None, token=None):
         data = json.dumps(body).encode() if body is not None else None
@@ -211,7 +210,7 @@ class PodcastHTTPTest(ts.ServerTestCase):
             time.sleep(0.02)
         self.fail('script never finished')
 
-    def test_free_account_writes_one_script_a_day(self):
+    def test_free_account_writes_one_script_a_week(self):
         token = self.keys.token(sub='alice')
         code, job = self.call('/api/podcast/script', {'text': DOC, 'focus': 'money', 'minutes': 5}, token)
         self.assertEqual(code, 202)
@@ -224,7 +223,7 @@ class PodcastHTTPTest(ts.ServerTestCase):
         self.assertEqual(code, 404)
         code, err = self.call('/api/podcast/script', {'text': DOC, 'minutes': 5}, token)
         self.assertEqual(code, 429)
-        self.assertIn('1 podcast script for today', err['error'])
+        self.assertIn('your 1 podcast for this week', err['error'])
 
     def test_failed_script_is_refunded(self):
         def boom(req):
@@ -249,7 +248,7 @@ class PodcastHTTPTest(ts.ServerTestCase):
 
     def test_paid_accounts_get_more_and_longer_episodes(self):
         token = self.keys.token(sub='erin', app_metadata={'tier': 'paid'})
-        for expected in (202, 202, 429):
+        for expected in (202, 202, 202, 429):
             code, _ = self.call('/api/podcast/script', {'text': DOC, 'minutes': 20}, token)
             self.assertEqual(code, expected)
 
@@ -264,7 +263,8 @@ class PodcastHTTPTest(ts.ServerTestCase):
 
     def test_config_and_page(self):
         _, config = self.call('/api/config')
-        self.assertEqual(config['podcast']['daily'], {'guest': 0, 'free': 1, 'paid': 2})
+        self.assertEqual(config['podcast']['rules']['free'], {'limit': 1, 'period': 'week', 'max_minutes': 5})
+        self.assertEqual(config['podcast']['rules']['paid'], {'limit': 3, 'period': 'day', 'max_minutes': 20})
         self.assertEqual(config['podcast']['minutes'], [5, 10, 20])
         self.assertEqual(config['podcast']['max_minutes'], {'free': 5, 'paid': 20, 'guest': 5})
         code, headers, page = self.req('/podcast')
@@ -289,9 +289,9 @@ class PodcastOffTest(ts.ServerTestCase):
         code, _, _ = self.req('/api/podcast/script/abc')
         self.assertEqual(code, 404)
 
-    def test_guests_get_the_free_allowance_until_sign_in_exists(self):
+    def test_guests_count_as_voxa_lite_until_sign_in_exists(self):
         self.assertIsNone(server._auth)
-        self.assertEqual(server.podcast_limits()['guest'], server.PODCAST_DAILY['free'])
+        self.assertEqual(server.plan_tier(server.Identity('1.2.3.4')), 'free')
 
 
 if __name__ == '__main__':

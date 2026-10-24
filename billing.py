@@ -26,6 +26,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import plans
+
 log = logging.getLogger('voxa.billing')
 
 PADDLE_API_KEY = os.environ.get('PADDLE_API_KEY', '')
@@ -99,13 +101,17 @@ def checked_user(custom_data, secret=None):
     return None
 
 
-def checkout(who, return_to):
-    """What the checkout page needs to open Paddle's checkout for this signed-in account."""
+def checkout(who, return_to, pack=None):
+    """What the checkout page needs to open Paddle's checkout for this signed-in account: the
+    Studio subscription, or a one-off HD pack (`pack` names one of plans.PACKS)."""
     customer = {'id': who.customer} if who.customer else ({'email': who.email} if who.email else {})
+    price = PADDLE_PRICE_ID
+    if pack:
+        price = os.environ.get(plans.PACKS[pack]['env'], '')
     return {'environment': 'sandbox' if sandbox() else 'production', 'token': PADDLE_CLIENT_TOKEN,
-            'price_id': PADDLE_PRICE_ID, 'customer': customer,
+            'price_id': price, 'customer': customer,
             'custom_data': {'user_id': who.user, 'user_sig': sign_user(who.user)},
-            'success_url': f'{return_to}?upgraded=1'}
+            'success_url': f'{return_to}?{"pack=" + pack if pack else "upgraded=1"}'}
 
 
 def portal_url(who):
@@ -179,8 +185,23 @@ def apply_subscription(supabase_url, user_id, sub, occurred_at):
     return meta['tier']
 
 
-def handle_event(event, supabase_url):
-    """Apply a verified Paddle event. Returns what it did, for the log and the tests."""
+def handle_event(event, supabase_url, credit=None):
+    """Apply a verified Paddle event. Returns what it did, for the log and the tests.
+
+    A completed transaction that is not a subscription payment is an HD pack:
+    `credit(user, price_id, quantity, transaction_id)` adds it to the account's wallet
+    (once per transaction, however often Paddle repeats the event)."""
+    if event.get('event_type') == 'transaction.completed':
+        tx = event.get('data') or {}
+        if tx.get('subscription_id'):
+            return 'ignored: subscription payment'
+        user = checked_user(tx.get('custom_data'))
+        if not user or credit is None:
+            log.warning('Paddle transaction %s has no signed account id', tx.get('id'))
+            return 'ignored: no signed account id'
+        done = [credit(user, (item.get('price') or {}).get('id'), item.get('quantity'), tx.get('id'))
+                for item in tx.get('items') or []]
+        return '; '.join(done) or 'ignored: no items'
     if event.get('event_type') not in SUBSCRIPTION_EVENTS:
         return 'ignored'
     sub = event.get('data') or {}

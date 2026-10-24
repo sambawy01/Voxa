@@ -133,7 +133,7 @@ ol.saved li{background:var(--surface);border:1px solid var(--line);border-radius
 <script type="module">
 import * as pdfjs from '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.min.mjs';
 import { paragraphsFromText, formatDuration, estimateSeconds, openStore, saveChunk, loadChunk, savedChunkKeys,
-  saveBook, listBooks, deleteBook, parseWav, encodeWav, floatToInt16, SAMPLE_RATE, bookMp3 } from '/book.js';
+  saveBook, listBooks, deleteBook, parseWav, encodeWav, floatToInt16, SAMPLE_RATE, bookMp3, studioLeft } from '/book.js';
 import { attachPreview, stopPreview, PREVIEW_LINE } from '/preview.js?v={{PREVIEW_VERSION}}';
 import { createLite } from '/lite.js?v={{LITE_VERSION}}';
 import { pdfText, pptxText, limitText, chapterToText, textToLines, scriptChars, planParts, joinTurns, MAX_TEXT } from '/podcast.js?v={{PODCAST_VERSION}}';
@@ -328,10 +328,11 @@ async function showAllowance() {
   // Episode lengths beyond this plan's longest are shown but cannot be chosen.
   for (const o of $('#minutes').options) o.disabled = +o.value > longest;
   if ($('#minutes').selectedOptions[0]?.disabled) $('#minutes').value = String(Math.max(...[...$('#minutes').options].filter(o => !o.disabled).map(o => +o.value)));
-  const scripts = n => `${n} script${n === 1 ? '' : 's'} a day`;
-  if (tier === 'guest' && CONFIG.auth) $('#allowance').textContent = `Sign in free for ${names.free} to make podcasts: ${scripts(p.daily.free)}, up to ${p.max_minutes.free} minutes.`;
-  else if (tier === 'paid') $('#allowance').textContent = `${names.paid}: ${scripts(p.daily.paid)}, up to ${p.max_minutes.paid} minutes.`;
-  else $('#allowance').textContent = `${names.free}: ${scripts(p.daily.free)}, up to ${p.max_minutes.free} minutes. ${names.paid}: ${scripts(p.daily.paid)}, up to ${p.max_minutes.paid} minutes.`;
+  const scripts = r => `${r.limit} podcast${r.limit === 1 ? '' : 's'} a ${r.period}, up to ${r.max_minutes} minutes`;
+  const { free, paid } = p.rules;
+  if (tier === 'guest' && CONFIG.auth) $('#allowance').textContent = `Sign in free for ${names.free} to make podcasts: ${scripts(free)}.`;
+  else if (tier === 'paid') $('#allowance').textContent = `${names.paid}: ${scripts(paid)}. HD voices use your HD minutes.`;
+  else $('#allowance').textContent = `${names.free}: ${scripts(free)}, with on-device voices. ${names.paid}: ${scripts(paid)}.`;
 }
 
 // --- Writing the script ----------------------------------------------------------------------------
@@ -433,9 +434,11 @@ async function refreshMake() {
   else {
     const q = await api('/api/quota', { cache: 'no-store' }).then(r => r.json()).then(j => j.quota).catch(() => null);
     if (stale()) return;
-    note.textContent = !q || q.unlimited ? 'Studio voices on your plan have no daily limit.'
-      : `This needs ${studioChars.toLocaleString()} characters of Studio voice; you have ${q.remaining.toLocaleString()} left today.` +
-        (studioChars > q.remaining ? ' Voxa makes what fits, saves it, and continues tomorrow.' : '');
+    const s = studioLeft(q);
+    note.textContent = !s ? 'Studio voices on your plan have no limit.'
+      : `This needs ${studioChars.toLocaleString()} characters of Studio voice; you have ${s.left.toLocaleString()} ${s.when}.` +
+        (studioChars > s.left ? (s.daily ? ' Voxa makes what fits, saves it, and continues tomorrow.'
+          : ' Voxa makes what fits and saves it; an HD pack or Voxa Studio covers the rest.') : '');
   }
   const done = plan.length - left.length;
   $('#start').hidden = !left.length;

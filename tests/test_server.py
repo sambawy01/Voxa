@@ -566,18 +566,26 @@ class TokenVerifierTest(unittest.TestCase):
 
 
 class AccountsHTTPTest(ServerTestCase):
-    """Sign-in turned on: visitors must sign in; Lite accounts get 100 a day, Studio 1000."""
+    """Sign-in turned on: visitors must sign in; accounts use the wallet and monthly allowances
+    (smaller numbers for the test: welcome 100, Studio HD 1000 and Standard 1000 a month)."""
 
     def setUp(self):
         super().setUp()
         self.keys = getattr(AccountsHTTPTest, '_keys', None) or Keys()
         AccountsHTTPTest._keys = self.keys
         server._auth = server.TokenVerifier(URL, fetch_jwks=lambda: self.keys.jwks)
-        server._quota = server.Quota(':memory:', {'guest': 100, 'free': 100, 'paid': 1000})
+        server._quota = server.Quota(':memory:', {'guest': 100})
+        server._plans = server.plans.Plans(':memory:')
+        self.saved_plans = (server.plans.WELCOME_CHARS, server.plans.HD_MONTHLY_CHARS,
+                            server.plans.STANDARD_MONTHLY_CHARS, server.voice_class)
+        server.plans.WELCOME_CHARS, server.plans.HD_MONTHLY_CHARS, server.plans.STANDARD_MONTHLY_CHARS = 100, 1000, 1000
 
     def tearDown(self):
         server._auth = None
         server._quota = None
+        server._plans = None
+        (server.plans.WELCOME_CHARS, server.plans.HD_MONTHLY_CHARS,
+         server.plans.STANDARD_MONTHLY_CHARS, server.voice_class) = self.saved_plans
 
     def bearer(self, path, body=None, token=None):
         data = json.dumps(body).encode() if body is not None else None
@@ -589,22 +597,29 @@ class AccountsHTTPTest(ServerTestCase):
         except urllib.error.HTTPError as e:
             return e.code, dict(e.headers), e.read()
 
-    def test_free_account_gets_its_allowance_and_account_info(self):
+    def test_free_account_spends_its_welcome_credit_then_needs_a_pack(self):
         token = self.keys.token(sub='alice', email='alice@example.com')
         code, _, body = self.bearer('/api/jobs', {'text': 'a' * 80}, token)
         self.assertIn(code, (200, 202))
-        self.assertEqual(json.loads(body)['quota']['remaining'], 20)
+        self.assertEqual(json.loads(body)['quota']['wallet'], 20)
         _, _, body = self.bearer('/api/quota', token=token)
         body = json.loads(body)
         self.assertEqual(body['account'], {'email': 'alice@example.com', 'tier': 'free'})
-        self.assertEqual(body['quota']['limit'], 100)
+        self.assertEqual((body['quota']['wallet'], body['quota']['hd_left']), (20, 20))
+        calls = len(self.gen.calls)
+        code, _, body = self.bearer('/api/jobs', {'text': 'b' * 50}, token)
+        body = json.loads(body)
+        self.assertEqual(code, 429)
+        self.assertTrue(body['wallet'])
+        self.assertIn('HD pack', body['error'])
+        self.assertEqual(len(self.gen.calls), calls)
 
     def test_visitors_must_sign_in_once_accounts_exist(self):
         _, _, body = self.req('/api/quota')
         self.assertIsNone(json.loads(body)['account'])
         calls = len(self.gen.calls)
-        for path in ('/api/tts', '/api/jobs'):
-            code, _, body = self.req(path, {'text': 'hello'})
+        for path in ('/api/tts', '/api/jobs', '/api/books/start'):
+            code, _, body = self.req(path, {'text': 'hello', 'book': 'b1'})
             body = json.loads(body)
             self.assertEqual(code, 403, path)
             self.assertTrue(body['signin'])
@@ -619,13 +634,56 @@ class AccountsHTTPTest(ServerTestCase):
             finally:
                 server.DATA_DIR = saved
 
-    def test_paid_account_gets_the_larger_daily_allowance(self):
+    def test_studio_standard_voices_use_the_monthly_fair_use(self):
         token = self.keys.token(sub='bob', app_metadata={'tier': 'paid'})
         code, _, body = self.bearer('/api/tts', {'text': 'p' * 400}, token)
         self.assertEqual(code, 200)
         _, _, body = self.bearer('/api/quota', token=token)
         quota = json.loads(body)['quota']
-        self.assertEqual((quota['tier'], quota['limit'], quota['remaining']), ('paid', 1000, 600))
+        self.assertEqual(quota['tier'], 'paid')
+        self.assertEqual(quota['standard_monthly'], {'limit': 1000, 'used': 400, 'left': 600})
+        self.assertEqual(quota['wallet'], 100)  # the welcome credit is untouched
+        code, _, body = self.bearer('/api/tts', {'text': 'q' * 700}, token)
+        self.assertEqual(code, 429)
+        self.assertIn('fair-use', json.loads(body)['error'])
+
+    def test_studio_hd_voices_use_the_month_then_the_wallet(self):
+        server.voice_class = lambda voice: 'hd'
+        token = self.keys.token(sub='hana', app_metadata={'tier': 'paid'})
+        code, _, _ = self.bearer('/api/tts', {'text': 'h' * 1050}, token)
+        self.assertEqual(code, 200)
+        _, _, body = self.bearer('/api/quota', token=token)
+        quota = json.loads(body)['quota']
+        self.assertEqual((quota['hd_monthly']['left'], quota['wallet'], quota['hd_left']), (0, 50, 50))
+
+    def test_welcome_credit_once_per_account_and_a_few_per_network(self):
+        for n, sub in enumerate(('w1', 'w2', 'w3', 'w4')):
+            _, _, body = self.bearer('/api/quota', token=self.keys.token(sub=sub))
+            self.assertEqual(json.loads(body)['quota']['wallet'], 100 if n < 3 else 0, sub)
+        _, _, body = self.bearer('/api/quota', token=self.keys.token(sub='w1'))
+        self.assertEqual(json.loads(body)['quota']['wallet'], 100)  # not granted twice
+
+    def test_lite_makes_one_new_book_a_day_studio_any(self):
+        lite, studio = self.keys.token(sub='lena'), self.keys.token(sub='sam', app_metadata={'tier': 'paid'})
+        for book, expected in (('b1', 200), ('b1', 200), ('b2', 429)):
+            code, _, body = self.bearer('/api/books/start', {'book': book}, lite)
+            self.assertEqual(code, expected, book)
+        self.assertIn('1 new book a day', json.loads(body)['error'])
+        for book in ('b1', 'b2', 'b3'):
+            self.assertEqual(self.bearer('/api/books/start', {'book': book}, studio)[0], 200)
+
+    def test_a_paid_pack_is_credited_once(self):
+        import os
+        os.environ['PADDLE_PRICE_HD100'] = 'pri_hd100'
+        try:
+            self.bearer('/api/quota', token=self.keys.token(sub='pat'))
+            self.assertEqual(server._credit_pack('pat', 'pri_hd100', 1, 'txn_1'), 'credited hd100 x1')
+            self.assertEqual(server._credit_pack('pat', 'pri_hd100', 1, 'txn_1'), 'already credited')
+            self.assertEqual(server._credit_pack('pat', 'pri_other', 1, 'txn_2'), 'not a pack')
+            _, _, body = self.bearer('/api/quota', token=self.keys.token(sub='pat'))
+            self.assertEqual(json.loads(body)['quota']['wallet'], 100 + 100 * server.plans.CHARS_PER_MINUTE)
+        finally:
+            del os.environ['PADDLE_PRICE_HD100']
 
     def test_bad_or_expired_token_is_401_not_guest(self):
         for token in (self.keys.token(exp=time.time() - 600), 'junk'):
@@ -644,8 +702,8 @@ class AccountsHTTPTest(ServerTestCase):
             server.SUPABASE_URL, server.SUPABASE_ANON_KEY = '', ''
         body = json.loads(body)
         self.assertEqual(body['auth'], {'url': URL, 'anon_key': 'public-anon-key'})
-        self.assertEqual(body['limits'], {'guest': server.FREE_DAILY_CHARS, 'free': server.FREE_DAILY_CHARS,
-                                          'paid': server.PAID_DAILY_CHARS})
+        self.assertEqual(body['limits'], {'guest': server.FREE_DAILY_CHARS})
+        self.assertEqual(body['plans']['welcome_minutes'], server.plans.minutes(server.plans.WELCOME_CHARS))
         self.assertEqual(body['tiers'], {'free': 'Voxa Lite', 'paid': 'Voxa Studio'})
 
 

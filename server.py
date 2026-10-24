@@ -44,6 +44,7 @@ import urllib.request
 import uuid
 
 import billing
+import plans
 import podcast
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
@@ -73,18 +74,13 @@ JOB_TTL = 30 * 60
 SYNC_TIMEOUT = 300
 # Two plans, both with an account: Voxa Lite (free) and Voxa Studio (paid). On-device voices
 # are unlimited on both; these are the daily Studio-voice characters (0 would mean no limit).
-# Cached replays are free; only new generation counts. Once sign-in is configured, visitors
-# who are not signed in can only hear voice previews; until then they get Lite's allowance.
+# What each plan includes is in plans.py: accounts use Studio voices from their wallet and
+# monthly allowances there. Cached replays are free; only new generation counts. Until
+# sign-in is configured nobody can have an account, so visitors get FREE_DAILY_CHARS of
+# Studio voices a day instead; once it is, visitors who are not signed in only hear previews.
 TIERS = {'free': 'Voxa Lite', 'paid': 'Voxa Studio'}
 FREE_DAILY_CHARS = int(os.environ.get('VOXA_FREE_DAILY_CHARS', '1500'))
-PAID_DAILY_CHARS = int(os.environ.get('VOXA_PAID_DAILY_CHARS', '10000'))
-# Podcast scripts per tier per day (each is a paid DeepSeek call, so here 0 means none), and
-# the longest episode each tier may ask for.
-PODCAST_DAILY = {'guest': int(os.environ.get('VOXA_PODCAST_DAILY_GUEST', '0')),
-                 'free': int(os.environ.get('VOXA_PODCAST_DAILY_FREE', '1')),
-                 'paid': int(os.environ.get('VOXA_PODCAST_DAILY_PAID', '20'))}
-PODCAST_MAX_MINUTES = {'free': int(os.environ.get('VOXA_PODCAST_MINUTES_FREE', '5')),
-                       'paid': int(os.environ.get('VOXA_PODCAST_MINUTES_PAID', '20'))}
+PODCAST_MAX_MINUTES = {tier: rule[2] for tier, rule in plans.PODCAST_RULES.items()}
 # Document text for a podcast script is far bigger than a speech request.
 MAX_PODCAST_BODY = 1024 * 1024
 # Sign-in (Supabase). SUPABASE_URL and the public anon key turn accounts on; the page uses
@@ -156,7 +152,9 @@ def web_values():
             'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js'),
             'LISTEN_VERSION': version('listen.js'), 'LITE_VERSION': version('lite.js'),
             'HOJO_DIR': HOJO_DIR, 'ORT_VERSION': ORT_VERSION,
-            'FREE_DAILY': f'{FREE_DAILY_CHARS:,}', 'PAID_DAILY': f'{PAID_DAILY_CHARS:,}',
+            'HD_MONTHLY_MINUTES': f'{plans.minutes(plans.HD_MONTHLY_CHARS):,.0f}',
+            'WELCOME_MINUTES': f'{plans.minutes(plans.WELCOME_CHARS):,.0f}',
+            'STANDARD_MONTHLY_HOURS': f'{plans.minutes(plans.STANDARD_MONTHLY_CHARS) / 60:,.0f}',
             'PODCAST_MINUTES_FREE': str(PODCAST_MAX_MINUTES['free']),
             'PODCAST_MINUTES_PAID': str(PODCAST_MAX_MINUTES['paid']),
             'OPERATOR': html.escape(OPERATOR), 'CONTACT_EMAIL': html.escape(CONTACT_EMAIL),
@@ -717,15 +715,49 @@ class Quota:
 
 
 def tier_limits():
-    """Daily Studio characters per tier. Guests only generate while sign-in is not configured
-    (nobody can have an account yet), and then they get Voxa Lite's allowance."""
-    return {'guest': FREE_DAILY_CHARS, 'free': FREE_DAILY_CHARS, 'paid': PAID_DAILY_CHARS}
+    """Daily Studio characters for visitors, who only generate while sign-in is not configured
+    (accounts are counted by plans.py instead)."""
+    return {'guest': FREE_DAILY_CHARS}
 
 
-def podcast_limits():
-    """Podcast scripts per tier per day; as with characters, guests get the free allowance
-    until sign-in is configured."""
-    return {**PODCAST_DAILY, 'guest': PODCAST_DAILY['guest'] if _auth else PODCAST_DAILY['free']}
+def plan_tier(who):
+    """The plans.py tier a request counts under: visitors count as Voxa Lite."""
+    return 'paid' if who.tier == 'paid' else 'free'
+
+
+def voice_class(voice):
+    """'hd' or 'standard' for a Studio voice id (None = the language's default voice)."""
+    return (VOICE_BY_ID.get(voice) or {}).get('class', 'standard')
+
+
+def plan_config():
+    """The plan rules the pages describe."""
+    return {'chars_per_minute': plans.CHARS_PER_MINUTE,
+            'hd_monthly_minutes': plans.minutes(plans.HD_MONTHLY_CHARS),
+            'standard_monthly_minutes': plans.minutes(plans.STANDARD_MONTHLY_CHARS),
+            'welcome_minutes': plans.minutes(plans.WELCOME_CHARS),
+            'books': {tier: rule and {'limit': rule[0], 'period': rule[1]} for tier, rule in plans.BOOK_RULES.items()}}
+
+
+def _credit_pack(user, price_id, quantity, transaction_id):
+    """Add a paid HD pack to an account's wallet; billing calls this for each line of a
+    completed Paddle transaction. Returns what it did."""
+    name = plans.pack_price_ids().get(price_id)
+    if not name:
+        return 'not a pack'
+    chars = plans.pack_chars(name) * max(1, int(quantity or 1))
+    if not _plans.credit(user, chars, f'paddle:{transaction_id}:{price_id}', name):
+        return 'already credited'
+    return f'credited {name} x{quantity or 1}'
+
+
+def open_plans():
+    path = os.path.join(DATA_DIR, 'voxa.sqlite3')
+    try:
+        return plans.Plans(path)
+    except sqlite3.Error as e:
+        log.warning('cannot open %s (%s); wallets and counts will reset on restart', path, e)
+        return plans.Plans(':memory:')
 
 
 def open_quota(limits=None, table='usage'):
@@ -738,8 +770,8 @@ def open_quota(limits=None, table='usage'):
         return Quota(':memory:', limits, table)
 
 
-_quota = None  # opened in main(), so importing this module touches no files
-_podcast_quota = None  # scripts per day, in the same file
+_quota = None  # visitors' daily characters; opened in main(), so importing touches no files
+_plans = None  # wallets, monthly allowances, podcast and audiobook counts, in the same file
 _scripts = podcast.ScriptJobs()
 
 
@@ -1038,9 +1070,38 @@ class Handler(BaseHTTPRequestHandler):
         who = self._identity()
         if _auth and not who.user:
             raise SignInRequired('generate speech')
-        charge = (lambda n: _quota.charge(who, n)) if _quota else None
-        job = _jobs.submit(*self._read_request(), charge=charge, who=who)
+        text, lang, voice, speed = self._read_request()
+        if _plans and who.user:
+            cls = voice_class(voice)
+            charge = lambda n: _plans.charge(who, n, cls)
+        else:
+            charge = (lambda n: _quota.charge(who, n)) if _quota else None
+        job = _jobs.submit(text, lang, voice, speed, charge=charge, who=who)
         return job, who
+
+    @staticmethod
+    def _allowance(who):
+        """What the pages show about this identity's Studio voices."""
+        if _plans and who.user:
+            return _plans.status(who)
+        return _quota.status(who) if _quota else None
+
+    def _json_body(self, limit=16 * 1024):
+        """A small JSON object body ({} when empty)."""
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            raise BadRequest('bad Content-Length')
+        if n > limit:
+            self.close_connection = True
+            raise BadRequest('request body too large')
+        try:
+            body = json.loads(self.rfile.read(n) or b'{}')
+        except (ValueError, UnicodeDecodeError) as e:
+            raise BadRequest(f'bad json: {e}')
+        if not isinstance(body, dict):
+            raise BadRequest('request body must be a JSON object')
+        return body
 
     def _read_request(self):
         """Parse and validate the JSON body. Returns (text, lang, voice, speed)."""
@@ -1086,6 +1147,10 @@ class Handler(BaseHTTPRequestHandler):
         except QuotaExceeded as e:
             self._send(429, {'error': str(e), 'quota': e.status},
                        extra={'Retry-After': str(max(1, int(e.status['resets_at'] - time.time())))})
+        except plans.WalletEmpty as e:
+            self._send(429, {'error': str(e), 'quota': e.status, 'wallet': True})
+        except plans.LimitReached as e:
+            self._send(429, {'error': str(e)})
         except Exception:
             log.exception('POST %s failed', self.path)
             self._send(500, {'error': 'internal server error'})
@@ -1115,7 +1180,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, page, ctype, extra)
         if p == '/api/quota':
             who = self._identity()
-            status = _quota.status(who) if _quota else None
+            status = self._allowance(who)
             account = {'email': who.email, 'tier': who.tier} if who.user else None
             return self._send(200, {'quota': status, 'account': account},
                               extra={'Cache-Control': 'no-store'})
@@ -1124,11 +1189,16 @@ class Handler(BaseHTTPRequestHandler):
             paying = ({'price_label': billing.PRICE_LABEL, 'paddle': {
                 'token': billing.PADDLE_CLIENT_TOKEN, 'environment': 'sandbox' if billing.sandbox() else 'production'}}
                 if _auth and billing.enabled(SUPABASE_URL) else None)
-            pods = {'daily': podcast_limits(), 'minutes': sorted(podcast.LENGTHS),
+            rules = {tier: {'limit': n, 'period': period, 'max_minutes': longest}
+                     for tier, (n, period, longest) in plans.PODCAST_RULES.items()}
+            pods = {'rules': {**rules, 'guest': rules['free']}, 'minutes': sorted(podcast.LENGTHS),
                     'max_minutes': {**PODCAST_MAX_MINUTES, 'guest': PODCAST_MAX_MINUTES['free']},
                     'tones': list(podcast.TONES), 'max_text': podcast.MAX_SOURCE} if podcast.enabled() else None
+            packs = [{'id': name, 'minutes': p['minutes'], 'price': p['price']}
+                     for name, p in plans.PACKS.items() if os.environ.get(p['env'])] if paying else []
             return self._send(200, {'auth': auth, 'limits': tier_limits(), 'tiers': TIERS,
-                                    'billing': paying, 'podcast': pods})
+                                    'billing': paying, 'podcast': pods, 'packs': packs,
+                                    'plans': plan_config()})
         if p.startswith('/api/podcast/script/'):
             if not podcast.enabled():
                 return self._send(404, {'error': 'podcasts are not set up'})
@@ -1198,7 +1268,7 @@ class Handler(BaseHTTPRequestHandler):
                 log.warning('rejected Paddle webhook: %s', e)
                 return self._send(400, {'error': 'bad signature'})
             try:
-                result = billing.handle_event(event, SUPABASE_URL)
+                result = billing.handle_event(event, SUPABASE_URL, credit=_credit_pack)
             except Exception:
                 # A non-2xx makes Paddle retry the event later, which is what we want here.
                 log.exception('Paddle event %s failed', event.get('event_id'))
@@ -1211,6 +1281,11 @@ class Handler(BaseHTTPRequestHandler):
         origin = PUBLIC_URL or f"{self.headers.get('X-Forwarded-Proto', 'http')}://{self.headers.get('Host', 'localhost')}"
         try:
             if p == '/api/billing/checkout':
+                pack = self._json_body().get('pack')
+                if pack:
+                    if pack not in plans.pack_price_ids().values():
+                        return self._send(404, {'error': 'That pack is not available.'})
+                    return self._send(200, {'checkout': billing.checkout(who, origin + '/', pack=pack)})
                 if who.tier == 'paid':
                     return self._send(409, {'error': 'This account already has the paid plan.'})
                 return self._send(200, {'checkout': billing.checkout(who, origin + '/')})
@@ -1244,22 +1319,15 @@ class Handler(BaseHTTPRequestHandler):
             raise BadRequest(str(e) if isinstance(e, podcast.BadRequest) else f'bad json: {e}')
         if _auth and not who.user:
             raise SignInRequired('make podcasts')
-        limits = podcast_limits()
-        if not limits.get(who.tier):
-            return self._send(403, {'error': f'Podcasts are part of {TIERS["paid"]}.'})
-        longest = PODCAST_MAX_MINUTES.get(who.tier, PODCAST_MAX_MINUTES['free'])
+        tier = plan_tier(who)
+        longest = PODCAST_MAX_MINUTES[tier]
         if req['minutes'] > longest:
-            return self._send(403, {'error': f'{TIERS.get(who.tier, TIERS["free"])} episodes are up to '
-                                             f'{longest} minutes. {TIERS["paid"]} goes up to '
-                                             f'{PODCAST_MAX_MINUTES["paid"]}.'})
+            return self._send(403, {'error': f'{TIERS[tier]} episodes are up to {longest} minutes. '
+                                             f'{TIERS["paid"]} goes up to {PODCAST_MAX_MINUTES["paid"]}.'})
         try:
-            refund = _podcast_quota.charge(who, 1) if _podcast_quota else (lambda: None)
-        except QuotaExceeded as e:
-            hours = max(1, round((e.status['resets_at'] - time.time()) / 3600))
-            word = 'script' if e.status['limit'] == 1 else 'scripts'
-            return self._send(429, {'error': f'You have made your {e.status["limit"]} podcast {word} '
-                                             f'for today. More in about {hours} h (midnight UTC).'},
-                              extra={'Retry-After': str(hours * 3600)})
+            refund = _plans.take_podcast(self._owner(who), tier, req['minutes']) if _plans else (lambda: None)
+        except plans.LimitReached as e:
+            return self._send(429, {'error': str(e)})
         try:
             job = _scripts.submit(req, self._owner(who), refund)
         except podcast.Busy:
@@ -1275,11 +1343,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._billing(p)
         if p == '/api/podcast/script':
             return self._podcast_script()
+        if p == '/api/books/start':
+            # Counts a Voxa Lite book the first time it is started each day; the book is read
+            # on the device, so this is a count, not a gate on the audio.
+            who = self._identity()
+            if _auth and not who.user:
+                raise SignInRequired('make audiobooks')
+            book = str(self._json_body().get('book') or '')[:128]
+            if not book:
+                raise BadRequest('missing book')
+            return self._send(200, _plans.start_book(self._owner(who), plan_tier(who), book) if _plans else {})
         if p == '/api/jobs':
             job, who = self._submit()
             out = job_json(job)
-            if _quota:
-                out['quota'] = _quota.status(who)
+            allowance = self._allowance(who)
+            if allowance:
+                out['quota'] = allowance
             return self._send(200 if job.status == 'done' else 202, out)
         if p == '/api/tts':
             # Synchronous form for scripts and API callers: same queue, waits for the result.
@@ -1296,15 +1375,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global _auth, _quota, _podcast_quota, _jobs
+    global _auth, _quota, _plans, _jobs
     if SUPABASE_URL and SUPABASE_ANON_KEY:
         _auth = TokenVerifier(SUPABASE_URL, SUPABASE_JWT_SECRET)
         log.info('sign-in enabled via %s', SUPABASE_URL)
     _quota = open_quota()
-    log.info('daily characters per tier (0 = no limit): %s', _quota.limits)
+    _plans = open_plans()
+    log.info('visitors: %s Studio characters a day; HD a month on Studio: %s; welcome credit: %s',
+             FREE_DAILY_CHARS, plans.HD_MONTHLY_CHARS, plans.WELCOME_CHARS)
     if podcast.enabled():
-        _podcast_quota = open_quota(podcast_limits(), 'podcast_usage')
-        log.info('podcasts on (%s); scripts per day per tier: %s', podcast.MODEL, _podcast_quota.limits)
+        log.info('podcasts on (%s); scripts: %s', podcast.MODEL, plans.PODCAST_RULES)
     if GPU_URL and GPU_TOKEN:
         _jobs = JobRouter(_jobs, JobQueue(generate_remote, workers=GPU_WORKERS, name='gpu'))
         log.info('paid jobs go to the GPU service at %s', GPU_URL)

@@ -71,15 +71,20 @@ MAX_PENDING = 16
 JOB_TTL = 30 * 60
 # How long the synchronous /api/tts endpoint waits for its job.
 SYNC_TIMEOUT = 300
-# Daily characters per tier; 0 means no limit. Cached replays are free; only new
-# generation counts. Guests are visitors who are not signed in.
-GUEST_DAILY_CHARS = int(os.environ.get('VOXA_GUEST_DAILY_CHARS', '1000'))
-FREE_DAILY_CHARS = int(os.environ.get('VOXA_FREE_DAILY_CHARS', '4000'))
-PAID_DAILY_CHARS = int(os.environ.get('VOXA_PAID_DAILY_CHARS', '0'))
-# Podcast scripts per tier per day. Each one is a paid DeepSeek call, so here 0 means none.
+# Two plans, both with an account: Voxa Lite (free) and Voxa Studio (paid). On-device voices
+# are unlimited on both; these are the daily Studio-voice characters (0 would mean no limit).
+# Cached replays are free; only new generation counts. Once sign-in is configured, visitors
+# who are not signed in can only hear voice previews; until then they get Lite's allowance.
+TIERS = {'free': 'Voxa Lite', 'paid': 'Voxa Studio'}
+FREE_DAILY_CHARS = int(os.environ.get('VOXA_FREE_DAILY_CHARS', '1500'))
+PAID_DAILY_CHARS = int(os.environ.get('VOXA_PAID_DAILY_CHARS', '10000'))
+# Podcast scripts per tier per day (each is a paid DeepSeek call, so here 0 means none), and
+# the longest episode each tier may ask for.
 PODCAST_DAILY = {'guest': int(os.environ.get('VOXA_PODCAST_DAILY_GUEST', '0')),
                  'free': int(os.environ.get('VOXA_PODCAST_DAILY_FREE', '1')),
                  'paid': int(os.environ.get('VOXA_PODCAST_DAILY_PAID', '20'))}
+PODCAST_MAX_MINUTES = {'free': int(os.environ.get('VOXA_PODCAST_MINUTES_FREE', '5')),
+                       'paid': int(os.environ.get('VOXA_PODCAST_MINUTES_PAID', '20'))}
 # Document text for a podcast script is far bigger than a speech request.
 MAX_PODCAST_BODY = 1024 * 1024
 # Sign-in (Supabase). SUPABASE_URL and the public anon key turn accounts on; the page uses
@@ -151,6 +156,9 @@ def web_values():
             'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js'),
             'LISTEN_VERSION': version('listen.js'), 'LITE_VERSION': version('lite.js'),
             'HOJO_DIR': HOJO_DIR, 'ORT_VERSION': ORT_VERSION,
+            'FREE_DAILY': f'{FREE_DAILY_CHARS:,}', 'PAID_DAILY': f'{PAID_DAILY_CHARS:,}',
+            'PODCAST_MINUTES_FREE': str(PODCAST_MAX_MINUTES['free']),
+            'PODCAST_MINUTES_PAID': str(PODCAST_MAX_MINUTES['paid']),
             'OPERATOR': html.escape(OPERATOR), 'CONTACT_EMAIL': html.escape(CONTACT_EMAIL),
             'PRICE_LABEL': html.escape(billing.PRICE_LABEL or 'see the price at checkout')}
 
@@ -473,6 +481,13 @@ class AuthError(Exception):
     """A sign-in token we cannot accept."""
 
 
+class SignInRequired(Exception):
+    """Sign-in is configured and this request came from a visitor who is not signed in."""
+
+    def __init__(self, what='use Voxa'):
+        super().__init__(f'Sign in to {what}. A Voxa Lite account is free.')
+
+
 def _b64url(text):
     return base64.urlsafe_b64decode(text + '=' * (-len(text) % 4))
 
@@ -702,10 +717,9 @@ class Quota:
 
 
 def tier_limits():
-    """Daily characters per tier. Until sign-in is configured nobody can have an account,
-    so guests get the free allowance rather than a smaller one."""
-    guest = GUEST_DAILY_CHARS if _auth else FREE_DAILY_CHARS
-    return {'guest': guest, 'free': FREE_DAILY_CHARS, 'paid': PAID_DAILY_CHARS}
+    """Daily Studio characters per tier. Guests only generate while sign-in is not configured
+    (nobody can have an account yet), and then they get Voxa Lite's allowance."""
+    return {'guest': FREE_DAILY_CHARS, 'free': FREE_DAILY_CHARS, 'paid': PAID_DAILY_CHARS}
 
 
 def podcast_limits():
@@ -1022,6 +1036,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _submit(self):
         who = self._identity()
+        if _auth and not who.user:
+            raise SignInRequired('generate speech')
         charge = (lambda n: _quota.charge(who, n)) if _quota else None
         job = _jobs.submit(*self._read_request(), charge=charge, who=who)
         return job, who
@@ -1064,6 +1080,9 @@ class Handler(BaseHTTPRequestHandler):
                        extra={'Retry-After': '30'})
         except AuthError as e:
             self._send_auth_error(e)
+        except SignInRequired as e:
+            # The page opens its sign-in box on `signin`; the message stands on its own too.
+            self._send(403, {'error': str(e), 'signin': True})
         except QuotaExceeded as e:
             self._send(429, {'error': str(e), 'quota': e.status},
                        extra={'Retry-After': str(max(1, int(e.status['resets_at'] - time.time())))})
@@ -1106,9 +1125,10 @@ class Handler(BaseHTTPRequestHandler):
                 'token': billing.PADDLE_CLIENT_TOKEN, 'environment': 'sandbox' if billing.sandbox() else 'production'}}
                 if _auth and billing.enabled(SUPABASE_URL) else None)
             pods = {'daily': podcast_limits(), 'minutes': sorted(podcast.LENGTHS),
+                    'max_minutes': {**PODCAST_MAX_MINUTES, 'guest': PODCAST_MAX_MINUTES['free']},
                     'tones': list(podcast.TONES), 'max_text': podcast.MAX_SOURCE} if podcast.enabled() else None
-            return self._send(200, {'auth': auth, 'limits': tier_limits(), 'billing': paying,
-                                    'podcast': pods})
+            return self._send(200, {'auth': auth, 'limits': tier_limits(), 'tiers': TIERS,
+                                    'billing': paying, 'podcast': pods})
         if p.startswith('/api/podcast/script/'):
             if not podcast.enabled():
                 return self._send(404, {'error': 'podcasts are not set up'})
@@ -1222,11 +1242,16 @@ class Handler(BaseHTTPRequestHandler):
             req = podcast.parse_request(json.loads(self.rfile.read(n) or b'{}'))
         except (ValueError, UnicodeDecodeError) as e:  # podcast.BadRequest is a ValueError
             raise BadRequest(str(e) if isinstance(e, podcast.BadRequest) else f'bad json: {e}')
+        if _auth and not who.user:
+            raise SignInRequired('make podcasts')
         limits = podcast_limits()
         if not limits.get(who.tier):
-            msg = ('Sign in to make podcasts.' if who.tier == 'guest'
-                   else 'Podcasts are part of the paid plan.')
-            return self._send(403, {'error': msg})
+            return self._send(403, {'error': f'Podcasts are part of {TIERS["paid"]}.'})
+        longest = PODCAST_MAX_MINUTES.get(who.tier, PODCAST_MAX_MINUTES['free'])
+        if req['minutes'] > longest:
+            return self._send(403, {'error': f'{TIERS.get(who.tier, TIERS["free"])} episodes are up to '
+                                             f'{longest} minutes. {TIERS["paid"]} goes up to '
+                                             f'{PODCAST_MAX_MINUTES["paid"]}.'})
         try:
             refund = _podcast_quota.charge(who, 1) if _podcast_quota else (lambda: None)
         except QuotaExceeded as e:

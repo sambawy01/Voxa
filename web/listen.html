@@ -145,7 +145,7 @@ details[open] summary{margin-bottom:10px}
   </details>
   <p class="safety">Driving? Set this up before you go, and use Siri so your eyes and hands stay on the road.</p>
 </section>
-<p class="small-print">Studio voices send the text to Voxa to be spoken and use the daily allowance. On-device voices (English) read on this device for free. Links in the text are read as "link", and quoted replies in emails are skipped.</p>
+<p class="small-print">Studio voices send the text to Voxa to be spoken and use the daily allowance. On-device voices (English and Chinese) read on this device for free. Links in the text are read as "link", and quoted replies in emails are skipped.</p>
 </main>
 {{FOOTER}}
 
@@ -313,7 +313,7 @@ async function playFrom(i) {
     if (my !== seq) return;
     playing = false; render();
     if (e.name === 'NotAllowedError') setStatus('Tap ▶ to start listening.');
-    else if (e instanceof QuotaReached) setStatus(e.message + (liteFor($('#lang').value).length ? ' English on-device voices have no daily limit.' : ''), 'err');
+    else if (e instanceof QuotaReached) setStatus(e.message + (liteFor($('#lang').value).length ? ' On-device voices have no daily limit.' : ''), 'err');
     else setStatus('Stopped: ' + e.message + '. Tap ▶ to try again.', 'err');
   }
 }

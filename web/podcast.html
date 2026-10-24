@@ -319,14 +319,19 @@ function hostVoices() {
 
 async function showAllowance() {
   await setupAccount();
-  const p = CONFIG.podcast;
+  const p = CONFIG.podcast, names = CONFIG.tiers || { free: 'Voxa Lite', paid: 'Voxa Studio' };
   $('#off').hidden = !!p; $('#source').hidden = !p;
   if (!p) return;
-  const signedIn = !!(await token());
-  const tier = signedIn ? null : 'guest';
-  if (tier === 'guest' && !p.daily.guest) $('#allowance').textContent = 'Sign in on the main page to make podcasts.';
-  else if (tier === 'guest') $('#allowance').textContent = `You can write ${p.daily.guest} script${p.daily.guest === 1 ? '' : 's'} a day.`;
-  else $('#allowance').textContent = `Free accounts: ${p.daily.free || 'no'} script${p.daily.free === 1 ? '' : 's'} a day. Paid: ${p.daily.paid} a day.`;
+  const q = await api('/api/quota', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}));
+  const tier = q.account ? q.account.tier : 'guest';
+  const longest = (p.max_minutes || {})[tier] || 20;
+  // Episode lengths beyond this plan's longest are shown but cannot be chosen.
+  for (const o of $('#minutes').options) o.disabled = +o.value > longest;
+  if ($('#minutes').selectedOptions[0]?.disabled) $('#minutes').value = String(Math.max(...[...$('#minutes').options].filter(o => !o.disabled).map(o => +o.value)));
+  const scripts = n => `${n} script${n === 1 ? '' : 's'} a day`;
+  if (tier === 'guest' && CONFIG.auth) $('#allowance').textContent = `Sign in free for ${names.free} to make podcasts: ${scripts(p.daily.free)}, up to ${p.max_minutes.free} minutes.`;
+  else if (tier === 'paid') $('#allowance').textContent = `${names.paid}: ${scripts(p.daily.paid)}, up to ${p.max_minutes.paid} minutes.`;
+  else $('#allowance').textContent = `${names.free}: ${scripts(p.daily.free)}, up to ${p.max_minutes.free} minutes. ${names.paid}: ${scripts(p.daily.paid)}, up to ${p.max_minutes.paid} minutes.`;
 }
 
 // --- Writing the script ----------------------------------------------------------------------------

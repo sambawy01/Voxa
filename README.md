@@ -80,9 +80,9 @@ free and failed generations are refunded. Limits are set by environment variable
 
 | Variable | Default | Who |
 |---|---|---|
-| `VOXA_GUEST_DAILY_CHARS` | 1000 | not signed in (counted by cookie, with a 5× per-IP backstop) |
-| `VOXA_FREE_DAILY_CHARS` | 4000 | free accounts; also guests while sign-in is off |
-| `VOXA_PAID_DAILY_CHARS` | 0 | paid accounts |
+| `VOXA_FREE_DAILY_CHARS` | 1500 | Voxa Lite (free accounts); also visitors while sign-in is off |
+| `VOXA_PAID_DAILY_CHARS` | 10000 | Voxa Studio (paid accounts); 0 would mean no limit |
+| `VOXA_PODCAST_MINUTES_FREE` / `_PAID` | 5 / 20 | longest podcast episode per plan |
 
 Sign-in uses Supabase. Setting `SUPABASE_URL` and `SUPABASE_ANON_KEY` turns it on: requests
 with `Authorization: Bearer <access token>` are counted against that account, and an

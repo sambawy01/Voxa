@@ -5,7 +5,9 @@
 Candidates are the models whose weights allow commercial use: VoxCPM2 (Apache 2.0),
 Chatterbox Multilingual (MIT) and Qwen3-TTS (Apache 2.0), Dia2 (Apache 2.0) for two-host
 podcasts, and an Egyptian Arabic fine-tune of Chatterbox, with Kokoro, Voxa's current engine,
-as the baseline where it has the language. gpu/compare_device.py adds the on-device engines.
+as the baseline where it has the language, plus three newer models: Audio8-TTS-Realistic
+(Apache 2.0, 0.6B), MOSS-TTS-v1.5 (Apache 2.0, 8.5B, 31 languages) and NVIDIA Magpie TTS
+Multilingual (NVIDIA Open Model License, 0.36B). gpu/compare_device.py adds the on-device engines.
 
     modal run gpu/compare.py --engines voxcpm,dia2   # a subset Each engine runs in its own image on an
 L4, because their pinned torch and transformers versions do not agree. One warm-up line is
@@ -56,6 +58,20 @@ EXTRA_TEXTS = {
 }
 ALL_TEXTS = {**TEXTS, **EXTRA_TEXTS}
 VOXCPM_VOICE = '(A warm, clear adult female narrator, calm and natural)'
+
+# MOSS-TTS-v1.5 takes language names. Magpie takes codes, has no Russian, and its voices are
+# Aria 0, Jason 1, John 2, Leo 3, Sofia 4; it speaks up to 20 seconds at a time, so text is
+# sent a sentence at a time.
+MOSS_NAMES = {'en': 'English', 'ar': 'Arabic', 'de': 'German', 'ja': 'Japanese', 'zh': 'Chinese', 'es': 'Spanish',
+              'fr': 'French', 'hi': 'Hindi', 'ko': 'Korean', 'ru': 'Russian'}
+MAGPIE_LANGS = [lang for lang in TEXTS if lang != 'ru']
+MAGPIE_SPEAKER = 4
+
+
+def sentences(text):
+    import re
+    return [p.strip() for p in re.findall(r'[^.!?\u3002\uff01\uff1f\u0964]+[.!?\u3002\uff01\uff1f\u0964]*', text) if p.strip()]
+
 
 # Qwen3-TTS takes language names and has nine named speakers; any of them can speak any of
 # its languages, but a native speaker sounds best where there is one.
@@ -113,6 +129,14 @@ kokoro_image = (
 
 voxcpm_image = base.pip_install('voxcpm', 'soundfile', 'numpy').env({'HF_HOME': '/model'})
 dia2_image = base.pip_install('git+https://github.com/nari-labs/dia2', 'soundfile', 'numpy').env({'HF_HOME': '/model'})
+
+audio8_image = base.pip_install('torch>=2.5.0', 'torchaudio>=2.5.0', 'transformers>=4.57.0,<5', 'soundfile',
+                                'safetensors', 'numpy').env({'HF_HOME': '/model'})
+moss_image = base.pip_install('git+https://github.com/OpenMOSS/MOSS-TTS', 'soundfile', 'numpy',
+                              extra_index_url='https://download.pytorch.org/whl/cu128').env({'HF_HOME': '/model'})
+magpie_image = base.apt_install('libsndfile1').pip_install(
+    'nemo_toolkit[tts] @ git+https://github.com/NVIDIA-NeMo/Speech.git@main', 'kaldialign', 'soundfile', 'numpy',
+).env({'HF_HOME': '/model'})
 
 app = modal.App('voxa-compare')
 
@@ -239,8 +263,84 @@ def chatterbox_eg():
     return rows
 
 
-ENGINES = {'voxcpm': voxcpm, 'chatterbox': chatterbox, 'qwen': qwen, 'dia2': dia2,
-           'chatterbox_eg': chatterbox_eg, 'kokoro': kokoro}
+@app.function(image=audio8_image, gpu=GPU, timeout=1800)
+def audio8():
+    import torch
+    from transformers import AutoModel, AutoProcessor
+
+    model_id = 'Edge0/Audio8-TTS-Realistic-0.6b'
+    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+    model = AutoModel.from_pretrained(model_id, trust_remote_code=True, dtype=torch.bfloat16).eval().to('cuda')
+
+    def speak(text, lang):
+        # No reference clip, so the model picks the voice. Its context is short, so long text goes in pieces.
+        import numpy as np
+        parts = []
+        for piece in sentences(text):
+            inputs = processor(text=[piece], return_tensors='pt')
+            inputs = {k: v.to('cuda') for k, v in inputs.items()}
+            with torch.inference_mode():
+                out = model.generate(**inputs, max_new_tokens=1024, temperature=0.8, top_p=0.95, top_k=50,
+                                     do_sample=True, return_dict_in_generate=True)
+                waves, lengths = model.decode_audio(out.codes)
+            parts.append(waves[0, :int(lengths[0])].float().cpu().numpy())
+            parts.append(np.zeros(int(model.config.codec_sample_rate * 0.2), dtype='float32'))
+        return np.concatenate(parts[:-1]), model.config.codec_sample_rate, 'no reference (model-chosen voice)'
+
+    rows = run_all('audio8', list(TEXTS), speak)
+    for row in rows:
+        row['engine_name'] = 'Audio8-TTS-Realistic 0.6B'
+    return rows
+
+
+@app.function(image=moss_image, gpu='L40S', timeout=2400)  # 8.5B parameters: more memory than an L4
+def moss15():
+    import torch
+    from transformers import AutoModel, AutoProcessor
+
+    path = 'OpenMOSS-Team/MOSS-TTS-v1.5'
+    processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
+    processor.audio_tokenizer = processor.audio_tokenizer.to('cuda')
+    model = AutoModel.from_pretrained(path, trust_remote_code=True, attn_implementation='sdpa',
+                                      torch_dtype=torch.bfloat16).to('cuda').eval()
+
+    def speak(text, lang):
+        batch = processor([[processor.build_user_message(text=text, language=MOSS_NAMES[lang])]], mode='generation')
+        with torch.no_grad():
+            out = model.generate(input_ids=batch['input_ids'].to('cuda'),
+                                 attention_mask=batch['attention_mask'].to('cuda'), max_new_tokens=4096)
+        message = next(iter(processor.decode(out)))
+        return message.audio_codes_list[0].float().cpu().numpy(), processor.model_config.sampling_rate, 'no reference (model-chosen voice)'
+
+    rows = run_all('moss15', list(MOSS_NAMES), speak)
+    for row in rows:
+        row['engine_name'] = 'MOSS-TTS-v1.5 8.5B'
+    return rows
+
+
+@app.function(image=magpie_image, gpu=GPU, timeout=1800)
+def magpie():
+    import numpy as np
+    from nemo.collections.tts.models import MagpieTTSModel
+
+    model = MagpieTTSModel.from_pretrained('nvidia/magpie_tts_multilingual_357m')
+
+    def speak(text, lang):
+        parts = []
+        for piece in sentences(text):
+            audio, length = model.do_tts(piece, language=lang, apply_TN=True, speaker_index=MAGPIE_SPEAKER)
+            parts.append(audio.squeeze().float().cpu().numpy()[:int(length)])
+            parts.append(np.zeros(int(22050 * 0.2), dtype='float32'))
+        return np.concatenate(parts[:-1]), 22050, 'Sofia (built-in)'
+
+    rows = run_all('magpie', MAGPIE_LANGS, speak)
+    for row in rows:
+        row['engine_name'] = 'NVIDIA Magpie TTS 357M'
+    return rows
+
+
+ENGINES = {'voxcpm': voxcpm, 'audio8': audio8, 'moss15': moss15, 'magpie': magpie, 'chatterbox': chatterbox,
+           'qwen': qwen, 'dia2': dia2, 'chatterbox_eg': chatterbox_eg, 'kokoro': kokoro}
 
 
 @app.local_entrypoint()

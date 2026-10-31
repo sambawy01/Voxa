@@ -8,7 +8,7 @@ name: Voice comparison
 on:
   push:
     branches: [feat/compare-v2]
-    paths: [gpu/compare.py, gpu/compare_device.py, .github/workflows/compare.yml]
+    paths: [gpu/compare.py, gpu/compare_device.py, gpu/readback.py, .github/workflows/compare.yml]
   workflow_dispatch:
     inputs:
       engines:
@@ -40,11 +40,13 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
           pip install -q --extra-index-url https://download.pytorch.org/whl/cpu \
-            supertonic pocket-tts soundfile numpy onnx onnxruntime tokenizers huggingface_hub
+            supertonic pocket-tts soundfile numpy onnx onnxruntime tokenizers huggingface_hub \
+            sentencepiece WeTextProcessing "transformers>=5.20.2" torchvision torchaudio torchcodec accelerate librosa pillow
           git clone -q --depth 1 https://github.com/HojoAI/Hojo-TTS-Light.git /tmp/hojo
+          git clone -q --depth 1 https://github.com/OpenMOSS/MOSS-TTS-Nano.git /tmp/moss-nano
 
       - name: On-device clips
-        run: HOJO_REPO=/tmp/hojo python gpu/compare_device.py out/compare 2>&1 | grep -vE 'it/s|Fetching'
+        run: HOJO_REPO=/tmp/hojo MOSS_NANO_REPO=/tmp/moss-nano MOSS_NANO_OUT=/tmp python gpu/compare_device.py out/compare 2>&1 | grep -vE 'it/s|Fetching|WETEXT|wetext'
 
       - name: Studio clips (Modal)
         continue-on-error: true
@@ -58,14 +60,19 @@ jobs:
           if [ "$engines" = all ]; then modal run gpu/compare.py --out out/compare
           else modal run gpu/compare.py --out out/compare --engines "$engines"; fi
 
+      - name: Read-back check (Whisper)
+        run: |
+          pip install -q faster-whisper
+          python gpu/readback.py out/compare
+
       - name: Summary
         run: |
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           rows = json.load(open('out/compare/results.json'))['rows']
-          print('| Engine | Language | Seconds to make | Seconds of audio | Note |\n| --- | --- | --- | --- | --- |')
+          print('| Engine | Language | Seconds to make | Seconds of audio | Read-back % | Note |\n| --- | --- | --- | --- | --- | --- |')
           for r in rows:
-              print(f"| {r.get('engine_name', r['engine'])} | {r.get('lang', '')} | {r.get('gen_seconds', '')} | {r.get('audio_seconds', '')} | {r.get('error', '')[:80]} |")
+              print(f"| {r.get('engine_name', r['engine'])} | {r.get('lang', '')} | {r.get('gen_seconds', '')} | {r.get('audio_seconds', '')} | {r.get('readback', '')} | {r.get('error', '')[:80]} |")
           PY
 
       - uses: actions/upload-artifact@v4

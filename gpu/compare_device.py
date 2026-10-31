@@ -6,8 +6,11 @@ here run on a plain CPU with their Python packages (the same weights the browser
     DEVICE_ENGINES=supertonic,hojo python gpu/compare_device.py   # a subset
 
 Engines: Supertonic 3 (31 languages, no Chinese), Pocket TTS in its standard and HD (24-layer)
-models for English, German, Spanish and French, and Hojo TTS Light for English and Chinese when
-HOJO_REPO points at a checkout of github.com/HojoAI/Hojo-TTS-Light. Clips and timings are added
+models for English, German, Spanish and French, Hojo TTS Light for English and Chinese when
+HOJO_REPO points at a checkout of github.com/HojoAI/Hojo-TTS-Light, MOSS-TTS-Nano (100M, ONNX,
+20 languages) when MOSS_NANO_REPO points at a checkout of github.com/OpenMOSS/MOSS-TTS-Nano, and
+LFM3-Omni-2B (Liquid AI's speech-to-speech model, here in its text-to-speech mode; needs
+transformers>=5.20.2, torch and torchvision). Clips and timings are added
 to results.json beside the GPU engines' (gpu/compare.py), so one page compares them all.
 Timings are CPU seconds on this machine, a rough guide to phone speed, not a measurement of it.
 """
@@ -39,6 +42,15 @@ POCKET = {  # language -> (standard model, HD model, voice)
     'fr': ('french', 'french_24l', 'estelle'),
 }
 HOJO = {'en': 'hojo_en_f_01', 'zh': 'hojo_zh_f_01'}
+# MOSS-TTS-Nano clones the voice of a reference clip. Its bundled presets are clips of unknown
+# origin (one is labelled as a politician), so this uses a CC0 donated voice from Kyutai's
+# catalogue for every language, as Voxa would. Hindi is not among its 20 languages.
+MOSS_NANO_LANGS = [lang for lang in TEXTS if lang != 'hi']
+MOSS_REFERENCE = ('kyutai/tts-voices', 'voice-donations/0a67_enhanced.wav')
+# LFM3-Omni speaks 19 languages and locales; Hindi and Russian are text-only. Names are those of
+# its "Perform TTS in <language> using a <gender> voice." prompt.
+LFM3_LANGS = {'en': 'American English', 'ar': 'Arabic', 'de': 'German', 'ja': 'Japanese', 'zh': 'Chinese',
+              'es': 'Spanish', 'fr': 'French', 'ko': 'Korean'}
 
 
 def to_mp3(samples, rate):
@@ -124,11 +136,78 @@ def hojo_rows():
             for lang, voice in HOJO.items()]
 
 
+def sentences(text):
+    """Whole sentences, so a long paragraph is spoken a piece at a time."""
+    import re
+    return [p.strip() for p in re.findall(r'[^.!?\u3002\uff01\uff1f]+[.!?\u3002\uff01\uff1f]*', text) if p.strip()]
+
+
+def moss_nano_rows():
+    repo = os.environ.get('MOSS_NANO_REPO')
+    if not repo:
+        print('moss_nano: skipped (set MOSS_NANO_REPO to a MOSS-TTS-Nano checkout)', flush=True)
+        return []
+    import numpy as np
+    from huggingface_hub import hf_hub_download
+
+    sys.path.insert(0, repo)
+    from onnx_tts_runtime import OnnxTtsRuntime
+
+    reference = hf_hub_download(MOSS_REFERENCE[0], MOSS_REFERENCE[1])
+    runtime = OnnxTtsRuntime(model_dir=os.environ.get('MOSS_NANO_MODELS'), thread_count=4)  # fetches the ONNX files once
+    output = os.path.join(os.environ.get('MOSS_NANO_OUT', '.'), 'moss_nano_tmp.wav')
+    kwargs = dict(prompt_audio_path=reference, output_audio_path=output, streaming=True, seed=7)
+    runtime.synthesize(text='Warm-up.', **kwargs)
+
+    def speak(text):
+        result = runtime.synthesize(text=text, **kwargs)
+        wave = np.asarray(result['waveform'], dtype='float32')
+        return (wave.mean(axis=1) if wave.ndim == 2 else wave), result['sample_rate'], 'CC0 donated voice (cloned)'
+    return [timed('moss_nano', 'MOSS-TTS-Nano 100M', lang, speak) for lang in MOSS_NANO_LANGS]
+
+
+def lfm3_rows():
+    import numpy as np
+    import torch
+    from transformers import AutoModelForMultimodalLM, AutoProcessor
+
+    model_id = 'LiquidAI/LFM3-Omni-2B'
+    model = AutoModelForMultimodalLM.from_pretrained(model_id, dtype=torch.float32, device_map='cpu',
+                                                     trust_remote_code=True).eval()
+    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+    codec = processor.audio_tokenizer.to(device='cpu').eval()
+
+    def say(text, language):
+        conversation = [{'role': 'system', 'content': f'Perform TTS in {language} using a female voice.'},
+                        {'role': 'user', 'content': text}]
+        inputs = processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=True,
+                                               return_dict=True, return_tensors='pt')
+        with torch.no_grad():
+            out = model.generate(**inputs, max_new_tokens=768, generation_mode='audio',
+                                 audio_temperature=0.4, audio_repetition_penalty=1.2)
+            wave = codec.decode(out.audio_codes[:1, :, :out.audio_lengths[0]]).audio_values[0]
+        return wave.squeeze(0).float().cpu().numpy()
+
+    say('Warm-up.', 'American English')
+
+    def speak_in(lang):
+        def speak(text):
+            gap = np.zeros(int(24000 * 0.2), dtype='float32')
+            parts = []
+            for piece in sentences(text):
+                if parts:
+                    parts.append(gap)
+                parts.append(say(piece, LFM3_LANGS[lang]))
+            return np.concatenate(parts), 24000, 'female voice (prompted)'
+        return speak
+    return [timed('lfm3', 'LFM3-Omni 2B (speech mode)', lang, speak_in(lang)) for lang in LFM3_LANGS]
+
+
 def main(out):
     os.makedirs(out, exist_ok=True)
     rows = []
     only = {e for e in os.environ.get('DEVICE_ENGINES', '').split(',') if e}
-    for make in (supertonic_rows, pocket_rows, hojo_rows):
+    for make in (supertonic_rows, pocket_rows, hojo_rows, moss_nano_rows, lfm3_rows):
         if only and make.__name__.replace('_rows', '') not in only:
             continue
         try:

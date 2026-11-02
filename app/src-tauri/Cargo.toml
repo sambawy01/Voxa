@@ -4,6 +4,16 @@ description = "Voxa: text to speech that runs on your device."
 edition.workspace = true
 version.workspace = true
 publish.workspace = true
+default-run = "voxa-app"
+
+[[bin]]
+name = "voxa-app"
+path = "src/main.rs"
+
+# Headless mode (`voxa serve`, `voxa say`, ...): a console program, unlike the app.
+[[bin]]
+name = "voxa"
+path = "src/bin/voxa.rs"
 
 [lib]
 name = "voxa_app_lib"
@@ -13,6 +23,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+dirs = "7"
 getrandom = "0.3"
 hex = "0.4"
 memory-stats = "1"
@@ -21,6 +32,7 @@ serde_json = "1"
 tauri = { version = "2", features = [] }
 sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 tauri-plugin-dialog = "2"
+tiny_http = "0.12"
 voxa-core = { path = "../crates/voxa-core" }
 voxa-engines = { path = "../crates/voxa-engines" }
 voxa-g2p = { path = "../crates/voxa-g2p" }
@@ -34,3 +46,4 @@ sha2 = "0.10"
 voxa-models = { path = "../crates/voxa-models", features = ["test-http"] }
 tauri = { version = "2", features = ["test"] }
 tempfile = "3"
+ureq = { version = "3", features = ["json"] }

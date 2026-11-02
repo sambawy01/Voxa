@@ -305,11 +305,24 @@ checks it off here in the same PR, and merges it once CI is green.**
       artifact.
     - Each build is checked: it must contain sherpa-onnx's framework and the microphone
       usage description. See [MOBILE.md](MOBILE.md).
-- [ ] **M11 Computer and GPU tiers, and headless mode.**
-  - A model-worker interface for larger models (MLX on Apple Silicon; a PyTorch/CUDA
-    worker elsewhere).
-  - First model: Qwen3-TTS.
-  - `voxa serve` headless mode on the local network.
+- **M11 Computer and GPU tiers, and headless mode.**
+  - [x] **M11a Headless mode.** A `voxa` command-line program, sharing the app's library
+    and data folder ([HEADLESS.md](HEADLESS.md)):
+    - `voxa serve` serves the installed voices over HTTP: on this machine by default,
+      and on the local network with `--lan`. Every request except the health check
+      needs a token.
+    - `voxa voices`, `voxa import`, `voxa say` and licence activation, for a box with no
+      screen.
+    - Result: a signed Kokoro pack imported, 20 voices served, and `/v1/speech` returned a
+      WAV; without the token the server answered 401. The app's `synthesize` now uses the
+      same code path.
+  - [ ] **M11b Model-worker protocol.** Larger models run in a separate worker process
+    (Python: PyTorch/CUDA or MLX). A Rust client implements `Engine` over a small,
+    versioned JSON protocol. It is tested here against a reference worker.
+  - [ ] **M11c Qwen3-TTS workers.** CUDA and MLX workers for Qwen3-TTS (Voxa Studio),
+    shipped as signed packs. Measuring them needs a GPU and an Apple Silicon Mac (owner).
+  - [ ] **M11d RE-USE on the GPU worker.** Film-dialogue clean-up for the GPU tier. This
+    needs a GPU to measure.
 - [ ] **M12 Launch changes to the website.** Only when the owner says the app is launching:
   - remove the paid tier, billing and the GPU path from the site
   - make the free site a demo with a "Get the app" button

@@ -4,6 +4,7 @@
 mod bench;
 mod cleanup;
 mod cloning;
+pub mod headless;
 mod licence;
 mod registry;
 
@@ -14,7 +15,6 @@ use registry::{AvailableModel, ModelInfo, Registry, Voice};
 use serde::Serialize;
 use tauri::ipc::Response;
 use tauri::{Emitter, Manager};
-use voxa_core::SampleFormat;
 
 type Reg<'a> = tauri::State<'a, Arc<Registry>>;
 type Lic<'a> = tauri::State<'a, Arc<licence::Licensing>>;
@@ -145,14 +145,8 @@ async fn synthesize(
     lic.require()?;
     let (reg, clones) = (Arc::clone(&reg), Arc::clone(&clones));
     tauri::async_runtime::spawn_blocking(move || {
-        if voice.starts_with(cloning::ID_PREFIX) {
-            // Cloned voices: watermarked, and labelled in the file.
-            return clones
-                .synthesize(&reg, &voice, &text, speed)
-                .map(|a| Response::new(cloning::labelled_wav(&a)));
-        }
-        reg.synthesize(&voice, &text, speed)
-            .map(|a| Response::new(a.to_wav(SampleFormat::Pcm16)))
+        // Cloned voices come back watermarked and labelled.
+        headless::speak_wav(&reg, &clones, &voice, &text, speed).map(Response::new)
     })
     .await
     .map_err(|e| e.to_string())?

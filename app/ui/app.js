@@ -2,6 +2,7 @@
 import {
   charStatus, clampSpeed, speedLabel, friendlyError, tierLabel, formatBytes, groupVoices,
   benchRows, benchFileName, licenceText, languagesOf, previewText, wavSummary,
+  toPcm16, recordingLabel, watermarkText,
 } from './logic.js';
 
 const invoke = window.__TAURI__?.core?.invoke;
@@ -187,6 +188,7 @@ async function loadThirdParty() {
 
 async function loadAll() {
   await Promise.all([loadVoices(), loadModels(), loadCleanupModels()]);
+  await loadCloning();
 }
 
 async function importPack() {
@@ -369,6 +371,180 @@ cl.save.addEventListener('click', (ev) => cleanAction(ev.target, async () => {
   await invoke('cleanup_save', { path, strength: Number(cl.strength.value) });
   cl.status.textContent = `Saved ${path}: same length, sample rate, channels and timecode as the original, 24-bit.`;
 }));
+
+// ---- Your voices (cloning) ----
+const cv = {
+  box: $('cloneBox'), noModel: $('cloneNoModel'), list: $('cloned'), steps: $('cloneSteps'),
+  name: $('cloneName'), start: $('cloneStart'), consentStep: $('cloneConsentStep'),
+  sentence: $('cloneSentence'), recConsent: $('cloneRecConsent'), consentTime: $('cloneConsentTime'),
+  sampleStep: $('cloneSampleStep'), recSample: $('cloneRecSample'), sampleTime: $('cloneSampleTime'),
+  createStep: $('cloneCreateStep'), create: $('cloneCreate'), problems: $('cloneProblems'),
+  status: $('cloneStatus'), wm: $('wmCheck'), wmResult: $('wmResult'),
+};
+const MIN_CONSENT = 4, MIN_SAMPLE = 10, MAX_RECORDING = 60;
+const takes = { consent: null, sample: null };
+let recorder = null;
+
+/** Records from the microphone until stop() (live only: there is no file upload). */
+async function startRecording(onTick) {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+  });
+  const ctx = new AudioContext();
+  const src = ctx.createMediaStreamSource(stream);
+  const node = ctx.createScriptProcessor(4096, 1, 1);
+  const chunks = [];
+  let frames = 0;
+  node.onaudioprocess = (e) => {
+    const c = new Float32Array(e.inputBuffer.getChannelData(0));
+    chunks.push(c);
+    frames += c.length;
+    onTick(frames / ctx.sampleRate);
+  };
+  src.connect(node);
+  node.connect(ctx.destination);
+  return {
+    seconds: () => frames / ctx.sampleRate,
+    async stop() {
+      node.disconnect();
+      src.disconnect();
+      stream.getTracks().forEach((t) => t.stop());
+      const rate = ctx.sampleRate;
+      await ctx.close();
+      return { samples: toPcm16(chunks), rate, seconds: frames / rate };
+    },
+  };
+}
+
+function setupRecordButton(btn, timeEl, kind, min, idle, after) {
+  btn.addEventListener('click', async () => {
+    cv.status.textContent = '';
+    if (recorder && recorder.kind === kind) {
+      const r = await recorder.stop();
+      recorder = null;
+      btn.textContent = idle;
+      btn.classList.remove('rec');
+      if (r.seconds < min) {
+        timeEl.textContent = `Too short (${r.seconds.toFixed(1)} s). Record again.`;
+        return;
+      }
+      takes[kind] = r;
+      timeEl.textContent = `Recorded ${r.seconds.toFixed(1)} s ✓`;
+      after();
+      return;
+    }
+    if (recorder) return; // one recording at a time
+    try {
+      const rec = await startRecording((t) => {
+        timeEl.textContent = recordingLabel(t, min);
+        if (t >= MAX_RECORDING) btn.click();
+      });
+      recorder = { ...rec, kind };
+      btn.textContent = 'Stop';
+      btn.classList.add('rec');
+    } catch (e) {
+      cv.status.textContent = `The microphone isn't available: ${e?.message ?? e}. Allow Voxa to use the microphone and try again.`;
+    }
+  });
+}
+
+setupRecordButton(cv.recConsent, cv.consentTime, 'consent', MIN_CONSENT, 'Record consent', () => {
+  cv.sampleStep.hidden = false;
+});
+setupRecordButton(cv.recSample, cv.sampleTime, 'sample', MIN_SAMPLE, 'Record voice sample', () => {
+  cv.createStep.hidden = false;
+});
+
+function resetCloneSteps() {
+  takes.consent = takes.sample = null;
+  cv.consentStep.hidden = cv.sampleStep.hidden = cv.createStep.hidden = cv.problems.hidden = true;
+  cv.consentTime.textContent = cv.sampleTime.textContent = '';
+}
+
+cv.start.addEventListener('click', async () => {
+  cv.status.textContent = '';
+  resetCloneSteps();
+  try {
+    const c = await invoke('clone_challenge', { name: cv.name.value });
+    cv.sentence.textContent = c.sentence;
+    cv.consentStep.hidden = false;
+  } catch (e) { cv.status.textContent = friendlyError(e); }
+});
+
+cv.create.addEventListener('click', async () => {
+  cv.create.disabled = true;
+  cv.problems.hidden = true;
+  cv.status.textContent = 'Checking the consent and making your voice… this runs on your device.';
+  try {
+    const r = await invoke('clone_create', {
+      consent: takes.consent.samples, consentRate: takes.consent.rate,
+      sample: takes.sample.samples, sampleRate: takes.sample.rate,
+    });
+    resetCloneSteps();
+    if (r.voice) {
+      cv.status.textContent = `"${r.voice.name}" is ready. Pick it under Your voices in the voice list.`;
+      cv.name.value = '';
+      await loadVoices();
+      showCloned();
+    } else {
+      cv.status.textContent = "The consent check didn't pass. Get a new consent sentence and try again:";
+      cv.problems.replaceChildren(...r.problems.map((p) => Object.assign(document.createElement('li'), { textContent: p })));
+      cv.problems.hidden = false;
+    }
+  } catch (e) {
+    cv.status.textContent = friendlyError(e);
+  } finally {
+    cv.create.disabled = false;
+  }
+});
+
+function showCloned() {
+  const mine = voiceList.filter((v) => v.cloned);
+  cv.list.replaceChildren(...mine.map((v) => {
+    const li = document.createElement('li');
+    const info = document.createElement('div');
+    const title = document.createElement('div');
+    title.className = 'title';
+    title.textContent = v.name;
+    const flag = document.createElement('span');
+    flag.className = 'flag';
+    flag.textContent = 'cloned · watermarked';
+    title.append(flag);
+    info.append(title);
+    const remove = document.createElement('button');
+    remove.className = 'btn ghost small';
+    remove.textContent = 'Delete';
+    remove.addEventListener('click', async () => {
+      if (!confirm(`Delete the voice "${v.name}"? Its recording and consent record are removed from this device.`)) return;
+      try {
+        await invoke('remove_cloned', { id: v.id });
+        await loadVoices();
+        showCloned();
+      } catch (e) { cv.status.textContent = friendlyError(e); }
+    });
+    li.append(info, remove);
+    return li;
+  }));
+}
+
+async function loadCloning() {
+  const ready = await invoke('cloning_ready');
+  cv.noModel.hidden = ready;
+  cv.steps.hidden = !ready;
+  showCloned();
+}
+
+cv.wm.addEventListener('click', async () => {
+  cv.wmResult.textContent = '';
+  try {
+    const path = await invoke('plugin:dialog|open', { options: {
+      title: 'Choose a WAV file to check', filters: [{ name: 'WAV audio', extensions: ['wav', 'WAV'] }],
+    } });
+    if (!path) return;
+    cv.wmResult.textContent = 'Checking…';
+    cv.wmResult.textContent = watermarkText(await invoke('watermark_check', { path }));
+  } catch (e) { cv.wmResult.textContent = friendlyError(e); }
+});
 
 const previews = new Map();
 async function previewVoice() {

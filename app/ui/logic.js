@@ -56,7 +56,7 @@ export function groupVoices(voices) {
   const groups = new Map();
   for (const v of voices) {
     const who = `${v.accent} ${v.gender === 'female' ? 'women' : v.gender === 'male' ? 'men' : 'voices'}`;
-    const label = v.family ? `${v.family} · ${who}` : who;
+    const label = v.cloned ? 'Your voices (cloned)' : v.family ? `${v.family} · ${who}` : who;
     if (!groups.has(label)) groups.set(label, []);
     groups.get(label).push(v);
   }
@@ -135,4 +135,33 @@ export function wavSummary(f) {
   const m = Math.floor(f.seconds / 60), s = Math.floor(f.seconds % 60);
   const keeps = f.kept_chunks?.length ? ` · keeps ${f.kept_chunks.join(', ')}` : '';
   return `${f.name} · ${ch} · ${(f.sample_rate / 1000).toFixed(f.sample_rate % 1000 ? 1 : 0)} kHz · ${m}:${String(s).padStart(2, '0')}${keeps}`;
+}
+
+/** Live-recorded Float32Array chunks -> 16-bit integer samples (a plain array for IPC). */
+export function toPcm16(chunks) {
+  const n = chunks.reduce((k, c) => k + c.length, 0);
+  const out = new Array(n);
+  let i = 0;
+  for (const c of chunks) {
+    for (const s of c) {
+      const v = Math.max(-1, Math.min(1, Number.isNaN(s) ? 0 : s));
+      out[i++] = Math.round(v * 32767);
+    }
+  }
+  return out;
+}
+
+/** The recording timer: "6.0 s · keep going (4 s more)" until `min` seconds. */
+export function recordingLabel(seconds, min) {
+  const t = `${seconds.toFixed(1)} s`;
+  if (seconds >= min) return `${t} · you can stop now`;
+  return `${t} · keep going (${Math.ceil(min - seconds)} s more)`;
+}
+
+/** The watermark check result in plain words. */
+export function watermarkText(r) {
+  const label = r.labelled ? ' It also carries Voxa\'s "cloned voice" label.' : '';
+  if (r.found) return `Watermark found: this audio was made with a cloned voice in Voxa (score ${r.score.toFixed(1)}).${label}`;
+  if (r.seconds < 1) return 'This file is too short to check (it needs at least 1 second).';
+  return `No Voxa watermark found (score ${r.score.toFixed(1)}, needs ${r.threshold.toFixed(0)}).${label} Heavy compression or resampling can remove it, so this doesn't prove the audio is real.`;
 }

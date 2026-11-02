@@ -27,12 +27,15 @@ pub const SAME_SPEAKER_THRESHOLD: f32 = 0.75;
 pub const MIN_CONSENT_SECONDS: f32 = 4.0;
 pub const MIN_SAMPLE_SECONDS: f32 = 10.0;
 
-/// Short, distinct, easy-to-say words for the code. Avoids homophones ("two"/"too").
-const CODE_WORDS: &[&str] = &[
-    "amber", "banjo", "canyon", "dolphin", "ember", "falcon", "garden", "harbor", "igloo",
-    "jungle", "kettle", "lantern", "meadow", "nectar", "orbit", "pepper", "quartz", "rocket",
+/// Short, distinct, easy-to-say words for the code. Avoids homophones ("two"/"too") and
+/// near-pairs ("ember"/"amber"). Swept with Whisper over 8 voices (roadmap M9b): "quartz"
+/// ("courts"), "kettle" ("cattle"), "meadow", "orbit", "igloo", "pebble" and "ember" were
+/// misheard and replaced.
+pub const CODE_WORDS: &[&str] = &[
+    "amber", "banjo", "canyon", "dolphin", "tomato", "falcon", "garden", "harbor", "volcano",
+    "jungle", "piano", "lantern", "rabbit", "nectar", "window", "pepper", "guitar", "rocket",
     "saddle", "tiger", "umbrella", "velvet", "walnut", "yellow", "zebra", "copper", "violin",
-    "marble", "pebble", "thunder",
+    "marble", "rainbow", "thunder",
 ];
 
 /// What the person must read aloud.
@@ -124,7 +127,13 @@ fn close(a: &str, b: &str) -> bool {
 
 /// Which of the challenge's required words are missing from a transcript.
 pub fn missing_words(challenge: &Challenge, transcript: &str) -> Vec<String> {
-    let heard = words_of(transcript);
+    let mut heard = words_of(transcript);
+    // Recognisers sometimes split a word ("or bit"): also try each adjacent pair joined.
+    let joined: Vec<String> = heard
+        .windows(2)
+        .map(|w| format!("{}{}", w[0], w[1]))
+        .collect();
+    heard.extend(joined);
     let mut required: Vec<String> = challenge.words.to_vec();
     required.extend(words_of(&challenge.name));
     required
@@ -271,6 +280,23 @@ mod tests {
         for word in &a.words {
             assert!(a.sentence.contains(word.as_str()));
         }
+    }
+
+    #[test]
+    fn split_words_are_joined() {
+        let mut c = Challenge::new("Sam", "today", 7);
+        c.words = ["window".into(), "rainbow".into(), "tiger".into()];
+        assert!(missing_words(&c, "I am Sam. Win dow, rain bow, tiger.").is_empty());
+    }
+
+    #[test]
+    fn code_words_cannot_be_mistaken_for_each_other() {
+        for (i, a) in CODE_WORDS.iter().enumerate() {
+            for b in &CODE_WORDS[i + 1..] {
+                assert!(!close(a, b), "{a} / {b}");
+            }
+        }
+        assert_eq!(CODE_WORDS.len(), 30);
     }
 
     #[test]

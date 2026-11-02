@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   charStatus, clampSpeed, speedLabel, friendlyError, MAX_CHARS, tierLabel, formatBytes, groupVoices,
   benchRows, benchFileName, licenceText, languagesOf, languageName, previewText, wavSummary,
+  toPcm16, recordingLabel, watermarkText,
 } from '../ui/logic.js';
 
 test('charStatus counts trimmed characters, not UTF-16 units', () => {
@@ -123,4 +124,28 @@ test('wavSummary', () => {
     wavSummary({ name: 'memo.wav', channels: 1, sample_rate: 44100, seconds: 5, kept_chunks: [] }),
     'memo.wav · Mono · 44.1 kHz · 0:05',
   );
+});
+
+test('cloned voices get their own group', () => {
+  const g = groupVoices([
+    { id: 'clone-1', name: 'Sam', family: 'Your voices', gender: '', accent: '', cloned: true },
+    { id: 'harper', name: 'Harper', family: 'Voxa Classic', gender: 'female', accent: 'American', cloned: false },
+  ]);
+  assert.deepEqual(g.map(([l]) => l), ['Your voices (cloned)', 'Voxa Classic · American women']);
+});
+
+test('toPcm16 clips, rounds and joins chunks', () => {
+  const out = toPcm16([new Float32Array([0, 0.5, -1]), new Float32Array([2, -2, NaN])]);
+  assert.deepEqual(out, [0, 16384, -32767, 32767, -32767, 0]);
+});
+
+test('recordingLabel counts down to the minimum', () => {
+  assert.equal(recordingLabel(3.2, 10), '3.2 s · keep going (7 s more)');
+  assert.equal(recordingLabel(10, 10), '10.0 s · you can stop now');
+});
+
+test('watermarkText', () => {
+  assert.match(watermarkText({ found: true, score: 23.9, threshold: 6, labelled: true, seconds: 4 }), /^Watermark found.*label/);
+  assert.match(watermarkText({ found: false, score: 1.2, threshold: 6, labelled: false, seconds: 4 }), /No Voxa watermark found.*doesn't prove/);
+  assert.match(watermarkText({ found: false, score: 0, threshold: 6, labelled: false, seconds: 0.2 }), /too short/);
 });

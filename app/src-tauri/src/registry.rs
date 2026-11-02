@@ -7,8 +7,11 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use voxa_core::{Audio, Engine, EngineError, SynthesisRequest};
+use voxa_engines::consent::ConsentChecker;
 use voxa_engines::supertonic::CHECKED_LANGUAGES;
-use voxa_engines::{Denoiser, DenoiserKind, Family, StyleEngine, StylePackage, SupertonicEngine};
+use voxa_engines::{
+    Denoiser, DenoiserKind, Family, PocketEngine, StyleEngine, StylePackage, SupertonicEngine,
+};
 use voxa_g2p::EnglishG2p;
 use voxa_models::{
     import_pack, Catalogue, Downloader, InstalledModel, ModelEntry, ModelStore, Tier, TrustedKeys,
@@ -33,6 +36,8 @@ pub fn family_name(engine: &str) -> &'static str {
         "supertonic" => "Voxa World",
         "dpdfnet" => "Voxa Clean Studio",
         "gtcrn" => "Voxa Clean Fast",
+        "pocket" => "Your voices",
+        "consent" => "Voxa Consent check",
         _ => "Voxa",
     }
 }
@@ -122,6 +127,9 @@ pub struct Voice {
     pub credit: String,
     /// The language's default voice in voices.json (Harper for US English).
     pub default: bool,
+    /// A voice cloned from the user's own recording ("Your voices"); its audio is
+    /// watermarked and labelled.
+    pub cloned: bool,
     /// The model's own voice id (e.g. "af_heart").
     #[serde(skip)]
     pub source: String,
@@ -172,6 +180,8 @@ pub struct Registry {
     threads: i32,
     engines: Mutex<HashMap<String, Arc<dyn Engine>>>,
     denoisers: Mutex<HashMap<String, Arc<Denoiser>>>,
+    pocket: Mutex<Option<(String, Arc<PocketEngine>)>>,
+    consent: Mutex<Option<(String, Arc<ConsentChecker>)>>,
 }
 
 /// An installed clean-up model, for the "Clean up audio" picker.
@@ -201,6 +211,8 @@ impl Registry {
             threads,
             engines: Mutex::new(HashMap::new()),
             denoisers: Mutex::new(HashMap::new()),
+            pocket: Mutex::new(None),
+            consent: Mutex::new(None),
         })
     }
 
@@ -234,6 +246,7 @@ impl Registry {
                 tier: m.entry.tier,
                 credit: m.entry.license.credit.clone(),
                 default: false,
+                cloned: false,
                 source: src.into(),
             };
         if m.entry.engine == "kitten" {
@@ -285,6 +298,7 @@ impl Registry {
                             tier: m.entry.tier,
                             credit: m.entry.license.credit.clone(),
                             default: v.default,
+                            cloned: false,
                             source: v.source.as_str()?.to_string(),
                         })
                     })
@@ -507,6 +521,55 @@ impl Registry {
         );
         self.denoisers.lock().unwrap().insert(key, Arc::clone(&d));
         Ok(d)
+    }
+
+    /// The newest installed model of an engine kind ("pocket", "consent").
+    fn newest_of(&self, engine: &str, what: &str) -> Result<InstalledModel, String> {
+        self.newest()?
+            .into_iter()
+            .find(|m| m.entry.engine == engine)
+            .ok_or_else(|| format!("{what} is not installed; get it in the voice library"))
+    }
+
+    /// The installed voice-cloning model (Pocket TTS).
+    pub fn pocket_model(&self) -> Result<InstalledModel, String> {
+        self.newest_of("pocket", "the voice cloning model")
+    }
+
+    /// Both cloning models are installed (it does not load them).
+    pub fn cloning_ready(&self) -> bool {
+        self.pocket_model().is_ok() && self.newest_of("consent", "").is_ok()
+    }
+
+    /// The voice-cloning engine, loaded once per model version.
+    pub fn pocket(&self) -> Result<Arc<PocketEngine>, String> {
+        let m = self.pocket_model()?;
+        let key = format!("{}@{}", m.entry.id, m.entry.version);
+        let mut slot = self.pocket.lock().unwrap();
+        if let Some((k, e)) = slot.as_ref() {
+            if *k == key {
+                return Ok(Arc::clone(e));
+            }
+        }
+        let e =
+            Arc::new(PocketEngine::load(&key, &m.dir, self.threads).map_err(|e| e.to_string())?);
+        *slot = Some((key, Arc::clone(&e)));
+        Ok(e)
+    }
+
+    /// The consent checker (speech recognition + speaker match), loaded once.
+    pub fn consent_checker(&self) -> Result<Arc<ConsentChecker>, String> {
+        let m = self.newest_of("consent", "the consent check model")?;
+        let key = format!("{}@{}", m.entry.id, m.entry.version);
+        let mut slot = self.consent.lock().unwrap();
+        if let Some((k, c)) = slot.as_ref() {
+            if *k == key {
+                return Ok(Arc::clone(c));
+            }
+        }
+        let c = Arc::new(ConsentChecker::load(&m.dir, self.threads).map_err(|e| e.to_string())?);
+        *slot = Some((key, Arc::clone(&c)));
+        Ok(c)
     }
 
     /// One voice per installed model (newest version), for the benchmark: the model's

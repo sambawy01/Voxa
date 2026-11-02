@@ -1,71 +1,95 @@
-//! Tauri shell: exposes voxa-core to the UI as commands. All logic lives in voxa-core so it
-//! can be tested without a window; this file only adapts types.
+//! Tauri shell: exposes the registry (installed voices and models) to the UI as commands.
+//! Logic lives in `registry` and the voxa-* crates so it can be tested without a window.
 
+mod registry;
+
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde::Serialize;
+use registry::{ModelInfo, Registry, Voice};
 use tauri::ipc::Response;
-use voxa_core::{Engine, SampleFormat, SynthesisRequest, ToneEngine};
+use tauri::Manager;
+use voxa_core::SampleFormat;
 
-/// The engines available on this device. M1 has only the placeholder.
-struct Engines {
-    default: Arc<dyn Engine>,
-}
+type Reg<'a> = tauri::State<'a, Arc<Registry>>;
 
-#[derive(Serialize)]
-struct VoiceInfo {
-    id: String,
-    engine: String,
+#[tauri::command]
+fn list_voices(reg: Reg<'_>) -> Result<Vec<Voice>, String> {
+    reg.voices()
 }
 
 #[tauri::command]
-fn list_voices(engines: tauri::State<'_, Engines>) -> Vec<VoiceInfo> {
-    let e = &engines.default;
-    e.voices()
-        .into_iter()
-        .map(|id| VoiceInfo {
-            id,
-            engine: e.id().to_string(),
-        })
-        .collect()
+fn list_models(reg: Reg<'_>) -> Result<Vec<ModelInfo>, String> {
+    reg.models()
+}
+
+/// Verifies and installs a signed voice pack from a folder. Copies and hashes hundreds of
+/// MB, so it runs off the UI thread.
+#[tauri::command]
+async fn import_pack(reg: Reg<'_>, path: String) -> Result<ModelInfo, String> {
+    let reg = Arc::clone(&reg);
+    tauri::async_runtime::spawn_blocking(move || reg.import(&PathBuf::from(path)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn remove_model(reg: Reg<'_>, id: String, version: String) -> Result<(), String> {
+    reg.remove(&id, &version)
 }
 
 /// Generates speech and returns a 16-bit WAV as raw bytes (an ArrayBuffer in the UI).
-/// Runs off the UI thread so long text never freezes the window.
 #[tauri::command]
 async fn synthesize(
-    engines: tauri::State<'_, Engines>,
+    reg: Reg<'_>,
     text: String,
     voice: String,
     speed: f32,
 ) -> Result<Response, String> {
-    let engine = Arc::clone(&engines.default);
-    let req = SynthesisRequest { text, voice, speed };
+    let reg = Arc::clone(&reg);
     tauri::async_runtime::spawn_blocking(move || {
-        engine
-            .synthesize(&req, &mut |_, _| {})
+        reg.synthesize(&voice, &text, speed)
             .map(|a| Response::new(a.to_wav(SampleFormat::Pcm16)))
-            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// Registers Voxa's state and commands. Shared by the app and the tests (which use Tauri's
-/// mock runtime), so tests exercise the same wiring the window uses.
-fn setup<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder
-        .manage(Engines {
-            default: Arc::new(ToneEngine),
-        })
-        .invoke_handler(tauri::generate_handler![list_voices, synthesize])
+/// Registers Voxa's state and commands. `root` overrides the data directory (tests).
+fn setup<R: tauri::Runtime>(
+    builder: tauri::Builder<R>,
+    root: Option<PathBuf>,
+) -> tauri::Builder<R> {
+    let builder = match root {
+        // Known data directory (tests): register the state up front.
+        Some(root) => builder.manage(Arc::new(
+            Registry::open(&root, registry::trusted_keys()).expect("open model store"),
+        )),
+        // The app's data directory is only known once the app exists.
+        None => builder.setup(|app| {
+            let root = app.path().app_data_dir()?;
+            let reg = Registry::open(&root, registry::trusted_keys())?;
+            app.manage(Arc::new(reg));
+            Ok(())
+        }),
+    };
+    builder.invoke_handler(tauri::generate_handler![
+        list_voices,
+        list_models,
+        import_pack,
+        remove_model,
+        synthesize
+    ])
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    setup(tauri::Builder::default())
-        .run(tauri::generate_context!())
-        .expect("error while running Voxa");
+    setup(
+        tauri::Builder::default().plugin(tauri_plugin_dialog::init()),
+        None,
+    )
+    .run(tauri::generate_context!())
+    .expect("error while running Voxa");
 }
 
 #[cfg(test)]
@@ -76,13 +100,19 @@ mod tests {
     use tauri::webview::InvokeRequest;
     use tauri::WebviewWindowBuilder;
 
-    fn window() -> tauri::WebviewWindow<tauri::test::MockRuntime> {
-        let app = setup(mock_builder())
+    fn window(
+        root: &std::path::Path,
+    ) -> (
+        tauri::App<tauri::test::MockRuntime>,
+        tauri::WebviewWindow<tauri::test::MockRuntime>,
+    ) {
+        let app = setup(mock_builder(), Some(root.to_path_buf()))
             .build(mock_context(noop_assets()))
             .expect("build mock app");
-        WebviewWindowBuilder::new(&app, "main", Default::default())
+        let w = WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()
-            .expect("build mock window")
+            .expect("build mock window");
+        (app, w)
     }
 
     fn call(
@@ -105,47 +135,42 @@ mod tests {
     }
 
     #[test]
-    fn list_voices_returns_engine_voices() {
-        let w = window();
-        let body = call(&w, "list_voices", serde_json::json!({})).expect("ok");
-        let v: serde_json::Value = body.deserialize().expect("json");
-        let ids: Vec<&str> = v
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| x["id"].as_str().unwrap())
-            .collect();
-        assert_eq!(ids, ["low", "high"]);
-    }
-
-    #[test]
-    fn synthesize_returns_wav_bytes() {
-        let w = window();
-        let body = call(
-            &w,
-            "synthesize",
-            serde_json::json!({"text": "Hello there.", "voice": "low", "speed": 1.0}),
-        )
-        .expect("ok");
-        match body {
-            InvokeResponseBody::Raw(bytes) => {
-                assert_eq!(&bytes[0..4], b"RIFF");
-                assert_eq!(&bytes[8..12], b"WAVE");
-                assert!(bytes.len() > 44);
-            }
-            other => panic!("expected raw bytes, got {other:?}"),
+    fn fresh_install_has_no_voices_or_models() {
+        let d = tempfile::tempdir().unwrap();
+        let (_app, w) = window(d.path());
+        for cmd in ["list_voices", "list_models"] {
+            let v: serde_json::Value = call(&w, cmd, serde_json::json!({}))
+                .unwrap()
+                .deserialize()
+                .unwrap();
+            assert_eq!(v, serde_json::json!([]), "{cmd}");
         }
     }
 
     #[test]
-    fn synthesize_reports_errors_as_text() {
-        let w = window();
+    fn synthesize_without_voices_explains_why() {
+        let d = tempfile::tempdir().unwrap();
+        let (_app, w) = window(d.path());
         let err = call(
             &w,
             "synthesize",
-            serde_json::json!({"text": "  ", "voice": "low", "speed": 1.0}),
+            serde_json::json!({"text": "Hello.", "voice": "harper", "speed": 1.0}),
         )
-        .expect_err("empty text must fail");
-        assert_eq!(err, serde_json::json!("text is empty"));
+        .expect_err("no voices installed");
+        assert!(err.as_str().unwrap().contains("unknown voice"), "{err}");
+    }
+
+    #[test]
+    fn import_of_a_plain_folder_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let (_app, w) = window(d.path());
+        let empty = tempfile::tempdir().unwrap();
+        let err = call(
+            &w,
+            "import_pack",
+            serde_json::json!({"path": empty.path().to_string_lossy()}),
+        )
+        .expect_err("not a pack");
+        assert!(err.as_str().unwrap().contains("not a Voxa voice pack"));
     }
 }

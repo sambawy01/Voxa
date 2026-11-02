@@ -62,3 +62,24 @@ $B verify catalogue.json <public-key-hex>
 `sign` refuses to sign a catalogue the app would reject. Keep the secret key offline, never
 in the repository. To rotate the key, ship an app build that trusts both the old and the new
 key, then switch signing to the new one.
+
+## Voice packs (install from a folder)
+
+A voice pack is a model as a folder: the model files, plus `voxa-pack.json` (the catalogue
+entry for that model, with every file's sha256 and size) and `voxa-pack.json.sig`. In the
+app, **Voice library → Import voice pack…** checks the signature against the app's trusted
+keys and every file's hash before installing. Uses:
+
+- moving voices between your own devices offline, and
+- handing out voices before the model mirror exists.
+
+Make one:
+
+```bash
+python -I app/tools/build_kokoro_package.py <sherpa kokoro-int8-multi-lang-v1_0> <pack-dir> <misaki/data>
+$B pack <pack-dir> entry.json <secret-key-file>  # entry.json: the catalogue entry without "files"
+```
+
+Debug builds trust the development key in `app/keys/` (its secret is committed on purpose).
+Release builds trust only the production key passed at build time as
+`VOXA_CATALOGUE_PUBKEY`.

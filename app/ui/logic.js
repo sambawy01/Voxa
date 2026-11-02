@@ -33,3 +33,30 @@ export function friendlyError(err) {
   if (/unknown voice/.test(msg)) return 'That voice is not installed on this device.';
   return msg ? `Something went wrong: ${msg}` : 'Something went wrong.';
 }
+
+/** Device label from the plan: 📱 Phone, 💻 Computer, 🖥️ GPU. */
+export function tierLabel(tier) {
+  return { phone: '📱 Phone', computer: '💻 Computer', gpu: '🖥️ GPU' }[tier] ?? tier;
+}
+
+/** "148.5 MB" style size. */
+export function formatBytes(n) {
+  if (!Number.isFinite(n) || n < 0) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (n >= 1000 && i < units.length - 1) { n /= 1000; i++; }
+  return `${i === 0 ? n : n.toFixed(1)} ${units[i]}`;
+}
+
+/** Groups voices for the picker: [[label, voices], ...], women first, names sorted. */
+export function groupVoices(voices) {
+  const groups = new Map();
+  for (const v of voices) {
+    const label = `${v.accent} ${v.gender === 'female' ? 'women' : v.gender === 'male' ? 'men' : 'voices'}`;
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(v);
+  }
+  return [...groups.entries()]
+    .map(([label, vs]) => [label, vs.sort((a, b) => a.name.localeCompare(b.name))])
+    .sort(([a], [b]) => (a.endsWith('women') === b.endsWith('women') ? a.localeCompare(b) : a.endsWith('women') ? -1 : 1));
+}

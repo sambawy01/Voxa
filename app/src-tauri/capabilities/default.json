@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window: core APIs only. Voxa's own commands are allowed by default.",
+  "description": "The main window: core APIs and the folder picker (for importing voice packs). Voxa's own commands are allowed by default.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:allow-open"]
 }

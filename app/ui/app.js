@@ -1,6 +1,7 @@
 // Wires the page to the Rust core through Tauri commands.
 import {
   charStatus, clampSpeed, speedLabel, friendlyError, tierLabel, formatBytes, groupVoices,
+  benchRows, benchFileName,
 } from './logic.js';
 
 const invoke = window.__TAURI__?.core?.invoke;
@@ -181,6 +182,54 @@ async function importPack() {
   }
 }
 
+const benchBtn = $('bench'), benchBar = $('benchBar'), benchOut = $('benchOut');
+
+function benchTable(report) {
+  const table = document.createElement('table');
+  table.className = 'results';
+  const head = table.createTHead().insertRow();
+  for (const h of ['Voice model', 'Load', 'First audio', 'Speed', 'Memory']) {
+    const th = document.createElement('th');
+    th.textContent = h;
+    head.append(th);
+  }
+  const body = table.createTBody();
+  for (const r of benchRows(report)) {
+    const row = body.insertRow();
+    for (const v of [r.model, r.load, r.first, r.speed, r.memory]) row.insertCell().textContent = v;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'scroll-x';
+  wrap.append(table);
+  const d = report.device;
+  const device = document.createElement('p');
+  device.className = 'dim note';
+  device.textContent = `${d.os} · ${d.cpu || d.arch} · ${d.cpus} cores · ${formatBytes(d.ram_mb * 1e6)} RAM`;
+  const save = document.createElement('a');
+  save.className = 'btn ghost small';
+  save.textContent = 'Save results';
+  save.download = benchFileName(report);
+  save.href = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
+  return [device, wrap, save];
+}
+
+async function runBench() {
+  benchBtn.disabled = true;
+  benchBar.hidden = false;
+  benchBar.value = 0;
+  benchOut.replaceChildren(document.createTextNode('Running… this loads each model and reads a short paragraph.'));
+  try {
+    const report = await invoke('run_benchmark');
+    benchOut.replaceChildren(...(report.results.length ? benchTable(report)
+      : [document.createTextNode('Install a voice first, then run the speed test.')]));
+  } catch (e) {
+    benchOut.textContent = friendlyError(e);
+  } finally {
+    benchBtn.disabled = false;
+    benchBar.hidden = true;
+  }
+}
+
 const previews = new Map();
 async function previewVoice() {
   const v = voiceList.find((x) => x.id === voice.value);
@@ -234,12 +283,16 @@ go.addEventListener('click', generate);
 importBtn.addEventListener('click', importPack);
 previewBtn.addEventListener('click', previewVoice);
 refreshBtn.addEventListener('click', refreshCatalogue);
+benchBtn.addEventListener('click', runBench);
 creditsBox.addEventListener('toggle', () => { if (creditsBox.open) loadThirdParty(); });
 if (invoke) {
   loadAll().catch((e) => { status.textContent = friendlyError(e); });
   invoke('catalogue_configured').then((yes) => {
     availableBox.hidden = !yes;
     if (yes) refreshCatalogue();
+  });
+  window.__TAURI__?.event?.listen('bench-progress', ({ payload }) => {
+    if (payload.total) benchBar.value = payload.done / payload.total;
   });
   window.__TAURI__?.event?.listen('install-progress', ({ payload }) => {
     const bar = document.querySelector(`progress[data-key="${payload.id}@${payload.version}"]`);

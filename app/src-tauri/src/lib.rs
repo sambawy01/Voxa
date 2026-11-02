@@ -1,6 +1,7 @@
 //! Tauri shell: exposes the registry (installed voices and models) to the UI as commands.
 //! Logic lives in `registry` and the voxa-* crates so it can be tested without a window.
 
+mod bench;
 mod registry;
 
 use std::path::PathBuf;
@@ -87,6 +88,28 @@ async fn install_model<R: tauri::Runtime>(
     .map_err(|e| e.to_string())?
 }
 
+#[derive(Clone, Serialize)]
+struct BenchProgress {
+    done: usize,
+    total: usize,
+}
+
+/// Runs the device benchmark over every installed model, emitting `bench-progress`.
+#[tauri::command]
+async fn run_benchmark<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    reg: Reg<'_>,
+) -> Result<bench::Report, String> {
+    let reg = Arc::clone(&reg);
+    tauri::async_runtime::spawn_blocking(move || {
+        bench::run(&reg, &mut |done, total| {
+            let _ = app.emit("bench-progress", BenchProgress { done, total });
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn remove_model(reg: Reg<'_>, id: String, version: String) -> Result<(), String> {
     reg.remove(&id, &version)
@@ -135,7 +158,8 @@ fn setup<R: tauri::Runtime>(
         synthesize,
         catalogue_configured,
         refresh_catalogue,
-        install_model
+        install_model,
+        run_benchmark
     ])
 }
 

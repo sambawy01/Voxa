@@ -78,6 +78,11 @@ fn main() {
     };
     let voice = args.get(3).cloned().unwrap_or_else(|| default_voice.into());
     let max_wer: f64 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0.15);
+    // ROUNDTRIP_SPEED checks intelligibility at a voice's corrected pace.
+    let speed: f32 = std::env::var("ROUNDTRIP_SPEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1.0);
 
     let misaki = Path::new(&args[1]);
     let read = |n: &str| std::fs::read(misaki.join(n)).expect(n);
@@ -121,7 +126,7 @@ fn main() {
         let req = SynthesisRequest {
             text: s.to_string(),
             voice: voice.clone(),
-            speed: 1.0,
+            speed,
         };
         let a = engine.synthesize(&req, &mut |_, _| {}).unwrap();
         gen_s += t.elapsed().as_secs_f64();
@@ -142,7 +147,7 @@ fn main() {
     }
     let wer = errs as f64 / total as f64;
     println!(
-        "\nWER {wer:.3} ({errs}/{total} words), voice {voice}, RTF {:.2}, letter-to-sound words: {:?}",
+        "\nWER {wer:.3} ({errs}/{total} words), voice {voice}, speed {speed}, audio {audio_s:.1} s, RTF {:.2}, letter-to-sound words: {:?}",
         gen_s / audio_s,
         rules_words
     );

@@ -63,6 +63,16 @@
     </section>
 
     <section class="card">
+      <div class="row between">
+        <h2>Speed test</h2>
+        <button id="bench" class="btn ghost small" type="button">Run speed test</button>
+      </div>
+      <p class="dim note">Measures every installed voice model on this device: how long it takes to load, to start speaking, and how much faster than real time it reads. Nothing is uploaded; you can save the results.</p>
+      <progress id="benchBar" max="1" value="0" hidden></progress>
+      <div id="benchOut"></div>
+    </section>
+
+    <section class="card">
       <details id="creditsBox">
         <summary><h2 class="inline">Credits &amp; licences</h2></summary>
         <p class="dim note">Voxa runs open models and open-source software. Every voice and component is listed with its licence.</p>

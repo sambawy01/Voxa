@@ -60,7 +60,9 @@ jobs:
       - run: python3 -I tools/android_setup.py --self-test
       - run: python3 -I tools/ios_setup.py --self-test
       - name: Model-worker protocol (Python side)
-        run: python3 -I workers/test_voxa_worker.py
+        run: |
+          python3 -I workers/test_voxa_worker.py
+          python3 -I workers/test_studio.py
 
   build:
     strategy:

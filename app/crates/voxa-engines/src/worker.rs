@@ -543,4 +543,71 @@ mod tests {
         );
         assert!(t.elapsed() < Duration::from_secs(10));
     }
+
+    /// Voxa Studio (Qwen3-TTS) through its real worker, checked with speech recognition:
+    /// `VOXA_STUDIO_DIR=<built studio package> VOXA_CONSENT_DIR=<consent models> \
+    ///  cargo test --release -p voxa-engines -- --ignored studio_e2e --nocapture`
+    #[test]
+    #[ignore = "needs a Voxa Studio package and the consent models"]
+    fn studio_e2e_speaks_english_intelligibly() {
+        let dir = PathBuf::from(std::env::var("VOXA_STUDIO_DIR").unwrap());
+        let asr = crate::consent::ConsentChecker::load(
+            Path::new(&std::env::var("VOXA_CONSENT_DIR").unwrap()),
+            2,
+        )
+        .unwrap();
+        let e = WorkerEngine::load("studio", &dir).unwrap();
+        assert!(e.voices().contains(&"studio-ryan".to_string()));
+        let words = |s: &str| -> Vec<String> {
+            s.to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .map(str::to_string)
+                .collect()
+        };
+        let (mut errors, mut total, mut secs, mut took) = (0usize, 0usize, 0f64, 0f64);
+        for (voice, text) in [
+            (
+                "studio-ryan",
+                "Thank you for calling. Please leave a message after the tone.",
+            ),
+            (
+                "studio-aiden",
+                "The meeting has moved to Thursday afternoon at noon.",
+            ),
+        ] {
+            let t = std::time::Instant::now();
+            let a = e.synthesize(&req(text, voice), &mut |_, _| {}).unwrap();
+            took += t.elapsed().as_secs_f64();
+            secs += a.duration();
+            assert_eq!(a.sample_rate, 24_000);
+            let heard = asr.transcribe(&a.samples, a.sample_rate);
+            let (want, got) = (words(text), words(&heard));
+            // Word-level edit distance.
+            let mut prev: Vec<usize> = (0..=got.len()).collect();
+            for (i, x) in want.iter().enumerate() {
+                let mut cur = vec![i + 1];
+                for (j, y) in got.iter().enumerate() {
+                    cur.push(
+                        (prev[j] + usize::from(x != y))
+                            .min(prev[j + 1] + 1)
+                            .min(cur[j] + 1),
+                    );
+                }
+                prev = cur;
+            }
+            errors += prev[got.len()];
+            total += want.len();
+            eprintln!("{voice}: {text:?} -> {heard:?} ({:.2} s)", a.duration());
+        }
+        let wer = errors as f64 / total as f64;
+        eprintln!(
+            "studio: WER {:.1}%, {:.1} s of speech in {:.1} s ({:.2}x real time, first call includes loading)",
+            100.0 * wer,
+            secs,
+            took,
+            secs / took
+        );
+        assert!(wer <= 0.10, "word error rate {:.1}%", 100.0 * wer);
+    }
 }

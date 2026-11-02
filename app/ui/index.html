@@ -32,13 +32,23 @@
         </label>
       </div>
 
-      <p class="note dim">Preview build: voices are placeholder tones until real on-device voices arrive.</p>
+      <p id="noVoices" class="note" hidden>No voices installed yet. Import a voice pack below to start.</p>
 
       <div class="row">
         <button id="go" class="btn" disabled>Read aloud</button>
         <span id="status" class="dim" role="status" aria-live="polite"></span>
       </div>
       <audio id="player" controls hidden></audio>
+    </section>
+
+    <section class="card">
+      <div class="row between">
+        <h2>Voice library</h2>
+        <button id="import" class="btn ghost">Import voice pack…</button>
+      </div>
+      <p class="dim note">Voices run entirely on this device. A voice pack is a folder signed by Voxa; it is checked before anything is installed.</p>
+      <ul id="models" class="models"></ul>
+      <span id="libStatus" class="dim" role="status" aria-live="polite"></span>
     </section>
   </main>
 </body>

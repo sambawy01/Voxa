@@ -13,10 +13,18 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+hex = "0.4"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
 voxa-core = { path = "../crates/voxa-core" }
+voxa-engines = { path = "../crates/voxa-engines" }
+voxa-g2p = { path = "../crates/voxa-g2p" }
+voxa-models = { path = "../crates/voxa-models" }
 
 [dev-dependencies]
+base64 = "0.22"
+ed25519-dalek = "2"
 tauri = { version = "2", features = ["test"] }
-serde_json = "1"
+tempfile = "3"

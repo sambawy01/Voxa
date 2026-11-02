@@ -67,11 +67,18 @@ checks it off here in the same PR, and merges it once CI is green.**
       rate** (af_heart) and 0.9% (am_michael) on 12 test sentences with numbers, money,
       dates and names. The remaining errors are Whisper's ("sea shore"). Measure it with
       `cargo run --release -p voxa-engines --example roundtrip`.
-  - [ ] **M3c Wire into the app.**
+  - [x] **M3c Wire into the app.**
     - A development catalogue (dev signing key) listing Kokoro int8.
     - Install with progress from the UI.
     - Voices come from installed models, using their Voxa names (`voices.json`), and
       replace the tone engine.
+    - Done as **signed voice packs** (import from a folder), because the mirror is blocked
+      on the owner. Packs are verified like downloads. Checked in the real window: the
+      20 US voices show under their Voxa names, Harper is the default, and "Read aloud"
+      speaks.
+    - Follow-ups:
+      - the signature blends (Aurora, Atlas), which need style mixing, not a speaker id
+      - British voices, using misaki's `gb_*` dictionaries
   - [ ] **M3d Kitten nano.** Kitten was trained on espeak-style IPA, so it needs its own
     permissive lexicon (CMUdict → IPA, or misaki → espeak-IPA mapping). The sherpa-onnx
     release has kitten-nano v0.2; check for 0.8.

@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { charStatus, clampSpeed, speedLabel, friendlyError, MAX_CHARS } from '../ui/logic.js';
+import {
+  charStatus, clampSpeed, speedLabel, friendlyError, MAX_CHARS, tierLabel, formatBytes, groupVoices,
+} from '../ui/logic.js';
 
 test('charStatus counts trimmed characters, not UTF-16 units', () => {
   assert.deepEqual(charStatus('  hi  ').count, 2);
@@ -31,4 +33,27 @@ test('friendlyError maps engine errors', () => {
   assert.match(friendlyError(new Error('unknown voice "x"')), /not installed/);
   assert.match(friendlyError('boom'), /boom/);
   assert.equal(friendlyError(undefined), 'Something went wrong.');
+});
+
+test('tierLabel', () => {
+  assert.equal(tierLabel('phone'), '📱 Phone');
+  assert.equal(tierLabel('gpu'), '🖥️ GPU');
+  assert.equal(tierLabel('other'), 'other');
+});
+
+test('formatBytes', () => {
+  assert.equal(formatBytes(512), '512 B');
+  assert.equal(formatBytes(148_500_000), '148.5 MB');
+  assert.equal(formatBytes(2_100_000_000), '2.1 GB');
+  assert.equal(formatBytes(-1), '');
+});
+
+test('groupVoices puts women first and sorts names', () => {
+  const g = groupVoices([
+    { name: 'Miles', gender: 'male', accent: 'American' },
+    { name: 'Nora', gender: 'female', accent: 'American' },
+    { name: 'Harper', gender: 'female', accent: 'American' },
+  ]);
+  assert.deepEqual(g.map(([l]) => l), ['American women', 'American men']);
+  assert.deepEqual(g[0][1].map((v) => v.name), ['Harper', 'Nora']);
 });

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::catalogue::{safe_id, safe_rel_path, ModelEntry};
-use crate::download::{DownloadError, Downloader};
+use crate::download::{sha256_file, DownloadError, Downloader};
 
 const MARKER: &str = ".voxa-model.json";
 /// Sequence of the last catalogue accepted, for rollback protection across restarts.
@@ -159,19 +159,81 @@ impl ModelStore {
             }
             done_before += f.size;
         }
-        // Everything verified: move into place, then write the marker last so a crash
-        // mid-move never looks installed.
-        if dir.exists() {
-            fs::remove_dir_all(&dir)?; // leftovers of a crashed move of this same version
-        }
-        fs::create_dir_all(dir.parent().expect("model dir has a parent"))?;
-        fs::rename(&staging, &dir)?;
-        fs::write(dir.join(MARKER), serde_json::to_vec_pretty(entry).unwrap())?;
+        self.finish(entry, &staging, &dir)?;
         on_progress(total, total);
         Ok(InstalledModel {
             entry: entry.clone(),
             dir,
         })
+    }
+
+    /// Installs a model whose files are already on disk (an imported voice pack). Every
+    /// file is copied into staging and checked against the entry's size and sha256 before
+    /// anything is installed; the source directory is never modified.
+    pub fn install_from_dir(
+        &self,
+        entry: &ModelEntry,
+        src: &Path,
+    ) -> Result<InstalledModel, StoreError> {
+        let dir = self.dir(&entry.id, &entry.version)?;
+        if self.is_installed(&entry.id, &entry.version) {
+            return Ok(InstalledModel {
+                entry: entry.clone(),
+                dir,
+            });
+        }
+        if !entry.files.iter().all(|f| safe_rel_path(&f.path)) {
+            return Err(StoreError::Unsafe);
+        }
+        let staging = self
+            .root
+            .join("staging")
+            .join(&entry.id)
+            .join(&entry.version);
+        if staging.exists() {
+            fs::remove_dir_all(&staging)?;
+        }
+        for f in &entry.files {
+            let from = src.join(&f.path);
+            let to = staging.join(&f.path);
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&from, &to).map_err(|e| {
+                StoreError::Io(std::io::Error::new(e.kind(), format!("{}: {e}", f.path)))
+            })?;
+            let size = fs::metadata(&to)?.len();
+            if size != f.size {
+                fs::remove_dir_all(&staging)?;
+                return Err(DownloadError::WrongSize {
+                    path: f.path.clone(),
+                    expected: f.size,
+                    got: size,
+                }
+                .into());
+            }
+            if sha256_file(&to)? != f.sha256.to_ascii_lowercase() {
+                fs::remove_dir_all(&staging)?;
+                return Err(DownloadError::HashMismatch(f.path.clone()).into());
+            }
+        }
+        self.finish(entry, &staging, &dir)?;
+        Ok(InstalledModel {
+            entry: entry.clone(),
+            dir,
+        })
+    }
+
+    /// Moves a fully verified staging directory into place, then writes the marker last so
+    /// a crash mid-move never looks installed.
+    fn finish(&self, entry: &ModelEntry, staging: &Path, dir: &Path) -> Result<(), StoreError> {
+        if dir.exists() {
+            fs::remove_dir_all(dir)?; // leftovers of a crashed move of this same version
+        }
+        fs::create_dir_all(dir.parent().expect("model dir has a parent"))?;
+        fs::rename(staging, dir)?;
+        fs::write(dir.join(MARKER), serde_json::to_vec_pretty(entry).unwrap())?;
+        Ok(())
     }
 
     /// Deletes one installed version. Only called when the user asks.

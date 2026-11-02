@@ -47,7 +47,8 @@ impl TrustedKeys {
             .map(TrustedKeys)
     }
 
-    fn verify(&self, msg: &[u8], sig_b64: &str) -> Result<(), CatalogueError> {
+    /// Verifies a base64 Ed25519 signature over `msg` against any trusted key.
+    pub fn verify_bytes(&self, msg: &[u8], sig_b64: &str) -> Result<(), CatalogueError> {
         let raw = base64::engine::general_purpose::STANDARD
             .decode(sig_b64.trim())
             .map_err(|_| CatalogueError::BadSignatureEncoding)?;
@@ -120,6 +121,32 @@ pub struct ModelEntry {
     pub retired: bool,
 }
 
+impl ModelEntry {
+    /// Safe ids and paths, well-formed hashes, at least one file.
+    pub fn check(&self) -> Result<(), CatalogueError> {
+        let bad = |why: String| Err(CatalogueError::Invalid(format!("{}: {why}", self.id)));
+        if !safe_id(&self.id) || !safe_id(&self.version) {
+            return bad("id and version must be [a-z0-9._-]".into());
+        }
+        if self.files.is_empty() {
+            return bad("no files".into());
+        }
+        let mut paths = std::collections::HashSet::new();
+        for f in &self.files {
+            if !safe_rel_path(&f.path) {
+                return bad(format!("unsafe file path {:?}", f.path));
+            }
+            if !paths.insert(f.path.as_str()) {
+                return bad(format!("file {} listed twice", f.path));
+            }
+            if f.sha256.len() != 64 || hex::decode(&f.sha256).is_err() {
+                return bad(format!("bad sha256 for {}", f.path));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Catalogue {
     pub schema: u32,
@@ -137,7 +164,7 @@ impl Catalogue {
         keys: &TrustedKeys,
         last_sequence: u64,
     ) -> Result<Self, CatalogueError> {
-        keys.verify(json, sig_b64)?;
+        keys.verify_bytes(json, sig_b64)?;
         let cat: Catalogue = serde_json::from_slice(json)?;
         if cat.schema != SCHEMA {
             return Err(CatalogueError::UnsupportedSchema(cat.schema));
@@ -156,23 +183,12 @@ impl Catalogue {
     fn check(&self) -> Result<(), CatalogueError> {
         let mut seen = std::collections::HashSet::new();
         for m in &self.models {
-            let bad = |why: String| Err(CatalogueError::Invalid(format!("{}: {why}", m.id)));
-            if !safe_id(&m.id) || !safe_id(&m.version) {
-                return bad("id and version must be [a-z0-9._-]".into());
-            }
+            m.check()?;
             if !seen.insert((m.id.as_str(), m.version.as_str())) {
-                return bad(format!("version {} listed twice", m.version));
-            }
-            if m.files.is_empty() {
-                return bad("no files".into());
-            }
-            for f in &m.files {
-                if !safe_rel_path(&f.path) {
-                    return bad(format!("unsafe file path {:?}", f.path));
-                }
-                if f.sha256.len() != 64 || hex::decode(&f.sha256).is_err() {
-                    return bad(format!("bad sha256 for {}", f.path));
-                }
+                return Err(CatalogueError::Invalid(format!(
+                    "{}: version {} listed twice",
+                    m.id, m.version
+                )));
             }
         }
         Ok(())

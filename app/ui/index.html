@@ -24,7 +24,10 @@
       <div class="row controls">
         <label class="field">
           <span class="lbl">Voice</span>
-          <select id="voice"></select>
+          <span class="row tight">
+            <select id="voice"></select>
+            <button id="preview" class="btn ghost small" type="button" disabled>Preview</button>
+          </span>
         </label>
         <label class="field">
           <span class="lbl">Speed <span id="speedVal" class="dim">1.0×</span></span>
@@ -49,6 +52,33 @@
       <p class="dim note">Voices run entirely on this device. A voice pack is a folder signed by Voxa; it is checked before anything is installed.</p>
       <ul id="models" class="models"></ul>
       <span id="libStatus" class="dim" role="status" aria-live="polite"></span>
+
+      <div id="availableBox" hidden>
+        <div class="row between">
+          <h3>Available to download</h3>
+          <button id="refresh" class="btn ghost small" type="button">Check for voices</button>
+        </div>
+        <ul id="available" class="models"></ul>
+      </div>
+    </section>
+
+    <section class="card">
+      <details id="creditsBox">
+        <summary><h2 class="inline">Credits &amp; licences</h2></summary>
+        <p class="dim note">Voxa runs open models and open-source software. Every voice and component is listed with its licence.</p>
+        <h3>Voice models</h3>
+        <ul id="modelCredits" class="credits"></ul>
+        <h3>Built-in engines</h3>
+        <ul class="credits">
+          <li><b>sherpa-onnx</b> by k2-fsa (Next-gen Kaldi), Apache-2.0</li>
+          <li><b>ONNX Runtime</b> by Microsoft, MIT</li>
+          <li><b>misaki</b> English pronunciation dictionary by hexgrad, Apache-2.0</li>
+          <li><b>Tauri</b>, MIT or Apache-2.0</li>
+        </ul>
+        <h3>Libraries</h3>
+        <p id="libCount" class="dim note"></p>
+        <ul id="thirdParty" class="credits small"></ul>
+      </details>
     </section>
   </main>
 </body>

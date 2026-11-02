@@ -55,8 +55,9 @@ impl Downloader {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn for_local_tests() -> Self {
+    /// A downloader that also accepts http://127.0.0.1 and http://localhost, for tests.
+    #[cfg(any(test, feature = "test-http"))]
+    pub fn for_local_tests() -> Self {
         Self {
             allow_local_http: true,
             ..Self::new()
@@ -75,6 +76,35 @@ impl Downloader {
     /// Downloads `file` to `dest`, using `part` as the resumable partial file.
     /// `on_bytes(downloaded, total)` reports progress. On success `part` is renamed to
     /// `dest`; on a checksum failure `part` is deleted so the next attempt starts clean.
+    /// Fetches a small text resource (the catalogue and its signature), at most `limit`
+    /// bytes, from an allowed URL.
+    pub fn get_text(&self, url: &str, limit: u64) -> Result<Vec<u8>, DownloadError> {
+        self.check_url(url)?;
+        let resp = self
+            .agent
+            .get(url)
+            .call()
+            .map_err(|e| DownloadError::Network(e.to_string()))?;
+        let status = resp.status().as_u16();
+        if status != 200 {
+            return Err(DownloadError::Status(status));
+        }
+        let mut body = Vec::new();
+        resp.into_body()
+            .into_reader()
+            .take(limit + 1)
+            .read_to_end(&mut body)
+            .map_err(|e| DownloadError::Network(e.to_string()))?;
+        if body.len() as u64 > limit {
+            return Err(DownloadError::WrongSize {
+                path: url.into(),
+                expected: limit,
+                got: body.len() as u64,
+            });
+        }
+        Ok(body)
+    }
+
     pub fn fetch(
         &self,
         file: &ModelFile,

@@ -57,3 +57,16 @@ test('groupVoices puts women first and sorts names', () => {
   assert.deepEqual(g.map(([l]) => l), ['American women', 'American men']);
   assert.deepEqual(g[0][1].map((v) => v.name), ['Harper', 'Nora']);
 });
+
+test('groupVoices separates families, women first within each', () => {
+  const g = groupVoices([
+    { name: 'Ben', gender: 'male', accent: 'American', family: 'Voxa Instant' },
+    { name: 'Harper', gender: 'female', accent: 'American', family: 'Voxa Classic' },
+    { name: 'Luna', gender: 'female', accent: 'American', family: 'Voxa Instant' },
+    { name: 'Miles', gender: 'male', accent: 'American', family: 'Voxa Classic' },
+  ]);
+  assert.deepEqual(g.map(([l]) => l), [
+    'Voxa Classic · American women', 'Voxa Classic · American men',
+    'Voxa Instant · American women', 'Voxa Instant · American men',
+  ]);
+});

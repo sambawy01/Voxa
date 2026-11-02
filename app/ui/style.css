@@ -90,3 +90,12 @@ h2 { font-size: 1.15rem; margin: 0 }
 .models .title { font-weight: 600 }
 .models .meta { font-size: .85rem; color: var(--dim) }
 .badge { font-size: .8rem; border: 1px solid var(--line-2); border-radius: 999px; padding: 2px 10px; margin-left: 6px }
+h3 { font-size: 1rem; margin: 16px 0 8px }
+h2.inline { display: inline; font-size: 1.15rem }
+summary { cursor: pointer }
+.tight { gap: 8px; flex-wrap: nowrap }
+.tight select { flex: 1 }
+.credits { margin: 0; padding-left: 18px; display: grid; gap: 4px }
+.credits.small { font-size: .82rem; color: var(--dim) }
+progress { width: 100%; height: 6px; accent-color: #7c3aed }
+.flag { font-size: .8rem; color: var(--dim); margin-left: 6px }

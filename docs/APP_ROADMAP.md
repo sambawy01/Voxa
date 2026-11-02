@@ -95,9 +95,23 @@ checks it off here in the same PR, and merges it once CI is green.**
 
     - Kitten voices are named in the app (Luna, Nell, Tess, Zoe, Ben, Leo, Sam, Max), not
       in voices.json, because the website reads that file.
-- [ ] **M4 Voice library UI.** Voice cards with the device label (📱/💻/🖥️), languages,
+- [x] **M4 Voice library UI.** Voice cards with the device label (📱/💻/🖥️), languages,
   size, cloning flag, licence and credit; download/remove; Credits screen. Voices carry
   their Voxa names from `voices.json` where they exist.
+  - Model cards show the family name (Voxa Classic = Kokoro, Voxa Instant = Kitten), the
+    device label, voice count, languages, size, licence and credit, and whether the model
+    clones voices, with Remove. The voice picker groups by family, accent and gender, and
+    has a **Preview** button.
+  - **Downloads:** "Available to download" lists the signed catalogue's models for this
+    app version, with Install and live progress. It is hidden until a build sets
+    `VOXA_CATALOGUE_URL`, which needs the mirror (blocked on owner). Tested end to end
+    against a local server: progress, a min_app filter, and refusal of forged or older
+    catalogues.
+  - **Credits & licences:** the installed models, the native engines, and all 489 Rust
+    libraries from `cargo metadata`.
+  - `tools/licences.py` is now a **CI licence gate**: the build fails if any dependency's
+    licence cannot be met with permissive licences (no GPL, AGPL or LGPL), or if the
+    credits list is stale.
 - [ ] **M5 Device benchmark.** An in-app benchmark: speed (real-time factor), first-audio
   latency and peak memory per voice, exportable as JSON. These numbers feed the voice-card
   labels.

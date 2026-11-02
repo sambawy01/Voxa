@@ -158,9 +158,30 @@ checks it off here in the same PR, and merges it once CI is green.**
     - An end-to-end test of the Rust client against the real server runs in CI: two seats,
       the third refused, deactivate, reset, and offline use afterwards.
     - In the real window: activate with a key, and reading aloud works once activated.
-- [ ] **M7 Multilingual phone voices.** Supertonic 3 and Pocket TTS (no-cloning build)
+- [x] **M7 Multilingual phone voices.** Supertonic 3 and Pocket TTS (no-cloning build)
   through sherpa-onnx for es, fr, it, pt, de and hi. Pass on OpenRAIL-M and CC-BY terms in
   the app's terms and credits.
+  - Done with **Supertonic 3** (`sherpa-onnx-supertonic-3-tts-int8-2026-05-11`, 145 MB),
+    shown as **Voxa World**.
+    - Plain text in, no G2P.
+    - 10 speakers, 44.1 kHz, about 7× real time on 4 CPU cores.
+    - Voices: Ana, Elena, Mira, Nina, Sofia, Adrian, Daniel, Teo, Luca, Hugo, in each of
+      es, fr, de, it, pt and hi.
+  - Speech checked by transcribing it with Whisper base:
+    - German: a perfect transcript.
+    - Spanish and Italian: one sound-alike word each.
+    - French: one sound-alike word.
+    - Portuguese: the weakest; two words misheard.
+    - Hindi: correct words, in romanised script.
+
+    Supertonic offers 31 languages; others can be added after the same check.
+  - **Licence:** the model is under BigScience Open RAIL-M. The package ships the model and
+    code licences, and Attachment A (use restrictions) appears in Credits under the model.
+    That is the pass-on the licence requires.
+  - The app gained a **Language** picker that filters voices, and the Preview line now
+    speaks the voice's own language.
+  - **Pocket TTS moved to M9.** sherpa-onnx's build of it is the voice-cloning variant (it
+    needs reference audio) and English-only, so it belongs with cloning.
 - [ ] **M8 Audio clean-up.**
   - GTCRN and DeepFilterNet 3 denoise.
   - A strength (wet/dry) mix and an A/B player.
@@ -201,6 +222,13 @@ store listings, legal review.)
     licence key.
   - Write the licence and refund terms, including the 2-device rule and resets. This
     needs legal review.
+- **Listening checks** (from M7):
+  - Supertonic's export has no speaker names. By pitch, speakers 0–3 are clearly female
+    and 6–9 clearly male. Speakers 4 ("Sofia", labelled female) and 5 ("Adrian", labelled
+    male) are both about 170 Hz, so their labels follow Supertonic's F1–F5 / M1–M5 order.
+    Listen to both and say if either is wrong.
+  - Also, a native-speaker listen to the Portuguese voices, the weakest in the
+    transcription check.
 - **Speed tests on real devices** (from M5). Install the app on 3–5 devices: an old
   phone and a new one once M10 makes mobile builds, an Apple Silicon Mac, a Windows
   laptop, and an NVIDIA machine. Run **Speed test** on each and send the saved JSON

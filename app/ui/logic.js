@@ -97,3 +97,34 @@ export function licenceText(s) {
   if (s.problem) return `The saved licence can't be used: ${s.problem}. Activate again with your key.`;
   return 'Enter the licence key from your purchase email to activate Voxa on this device.';
 }
+
+const LANGUAGE_NAMES = {
+  'en-US': 'English (US)', 'en-GB': 'English (UK)', es: 'Spanish', fr: 'French', de: 'German',
+  it: 'Italian', pt: 'Portuguese', hi: 'Hindi', ja: 'Japanese', zh: 'Chinese',
+};
+
+/** Display name of a voice language tag. */
+export function languageName(tag) {
+  return LANGUAGE_NAMES[tag] ?? tag;
+}
+
+/** The languages the installed voices speak, [[tag, name], ...], English first, then by name. */
+export function languagesOf(voices) {
+  const tags = [...new Set(voices.map((v) => v.language))];
+  return tags
+    .map((t) => [t, languageName(t)])
+    .sort(([a, an], [b, bn]) => (a.startsWith('en') === b.startsWith('en') ? an.localeCompare(bn) : a.startsWith('en') ? -1 : 1));
+}
+
+/** The Preview line, in the voice's own language. */
+export function previewText(name, tag) {
+  const lines = {
+    es: `Hola, soy ${name}. Así es como sueno.`,
+    fr: `Bonjour, je suis ${name}. Voici ma voix.`,
+    de: `Hallo, ich bin ${name}. So klinge ich.`,
+    it: `Ciao, sono ${name}. Questa è la mia voce.`,
+    pt: `Olá, eu sou ${name}. Esta é a minha voz.`,
+    hi: `नमस्ते, मैं ${name} हूँ। मेरी आवाज़ ऐसी है।`,
+  };
+  return lines[tag] ?? `Hi, I'm ${name}. This is how I sound.`;
+}

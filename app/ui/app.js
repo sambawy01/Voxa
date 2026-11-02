@@ -1,7 +1,7 @@
 // Wires the page to the Rust core through Tauri commands.
 import {
   charStatus, clampSpeed, speedLabel, friendlyError, tierLabel, formatBytes, groupVoices,
-  benchRows, benchFileName, licenceText,
+  benchRows, benchFileName, licenceText, languagesOf, previewText,
 } from './logic.js';
 
 const invoke = window.__TAURI__?.core?.invoke;
@@ -12,6 +12,7 @@ const noVoices = $('noVoices'), models = $('models'), importBtn = $('import'), l
 const previewBtn = $('preview'), availableBox = $('availableBox'), available = $('available');
 const refreshBtn = $('refresh'), creditsBox = $('creditsBox');
 let voiceList = [];
+const language = $('language');
 let busy = false;
 let lastUrl = null;
 
@@ -22,10 +23,9 @@ function refresh() {
   go.disabled = busy || !s.ok || !voice.value || !invoke;
 }
 
-async function loadVoices() {
-  const voices = await invoke('list_voices');
-  voiceList = voices;
-  const keep = voice.value;
+/** Fills the voice picker with the chosen language's voices. */
+function showVoices(keep) {
+  const voices = voiceList.filter((v) => v.language === language.value);
   voice.replaceChildren(...groupVoices(voices).map(([label, vs]) => {
     const g = document.createElement('optgroup');
     g.label = label;
@@ -34,6 +34,18 @@ async function loadVoices() {
   }));
   const fallback = voices.find((v) => v.default) ?? voices[0];
   voice.value = voices.some((v) => v.id === keep) ? keep : (fallback?.id ?? '');
+}
+
+async function loadVoices() {
+  const voices = await invoke('list_voices');
+  voiceList = voices;
+  const keep = voice.value;
+  const keepLang = language.value || voices.find((v) => v.default)?.language;
+  const langs = languagesOf(voices);
+  language.replaceChildren(...langs.map(([tag, name]) => new Option(name, tag)));
+  language.value = langs.some(([t]) => t === keepLang) ? keepLang : (langs[0]?.[0] ?? '');
+  language.disabled = langs.length < 2;
+  showVoices(keep);
   noVoices.hidden = voices.length > 0;
   voice.disabled = voices.length === 0;
   previewBtn.disabled = voices.length === 0;
@@ -84,6 +96,18 @@ async function loadModels() {
   credits.replaceChildren(...(list.length ? list : [{ credit: 'No voice models installed yet.', license: '' }]).map((m) => {
     const li = document.createElement('li');
     li.textContent = m.license ? `${m.credit} (${m.license})` : m.credit;
+    if (m.restrictions) {
+      // Licences such as Open RAIL-M require these use restrictions to be passed on.
+      const d = document.createElement('details');
+      const sum = document.createElement('summary');
+      sum.className = 'dim note';
+      sum.textContent = 'Use restrictions that come with this voice';
+      const pre = document.createElement('pre');
+      pre.className = 'restrictions';
+      pre.textContent = m.restrictions;
+      d.append(sum, pre);
+      li.append(d);
+    }
     return li;
   }));
 }
@@ -268,7 +292,7 @@ async function previewVoice() {
   try {
     if (!previews.has(v.id)) {
       const buf = await invoke('synthesize', {
-        text: `Hi, I'm ${v.name}. This is how I sound.`, voice: v.id, speed: 1,
+        text: previewText(v.name, v.language), voice: v.id, speed: 1,
       });
       previews.set(v.id, URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
     }
@@ -308,6 +332,7 @@ async function generate() {
 
 text.addEventListener('input', refresh);
 voice.addEventListener('change', refresh);
+language.addEventListener('change', () => { showVoices(); refresh(); });
 speed.addEventListener('input', () => { speedVal.textContent = speedLabel(speed.value); });
 go.addEventListener('click', generate);
 importBtn.addEventListener('click', importPack);

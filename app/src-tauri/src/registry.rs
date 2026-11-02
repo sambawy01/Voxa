@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use voxa_core::{Audio, Engine, EngineError, SynthesisRequest};
-use voxa_engines::{Family, StyleEngine, StylePackage};
+use voxa_engines::supertonic::CHECKED_LANGUAGES;
+use voxa_engines::{Family, StyleEngine, StylePackage, SupertonicEngine};
 use voxa_g2p::EnglishG2p;
 use voxa_models::{
     import_pack, Catalogue, Downloader, InstalledModel, ModelEntry, ModelStore, Tier, TrustedKeys,
@@ -29,7 +30,39 @@ pub fn family_name(engine: &str) -> &'static str {
     match engine {
         "kokoro" => "Voxa Classic",
         "kitten" => "Voxa Instant",
+        "supertonic" => "Voxa World",
         _ => "Voxa",
+    }
+}
+
+/// Supertonic 3 speakers -> (Voxa id, name, gender). The export carries no speaker names;
+/// pitch analysis shows ids 0-3 clearly female (196-220 Hz) and 6-9 clearly male
+/// (96-130 Hz). Ids 4 and 5 sit at ~170 Hz; Supertonic documents five female (F1-F5) and
+/// five male (M1-M5) styles, so 0-4 female and 5-9 male is the natural export order.
+/// Ids 4 and 5 are to be confirmed by listening (roadmap).
+const SUPERTONIC_VOICES: &[(&str, &str, &str)] = &[
+    ("ana", "Ana", "female"),
+    ("elena", "Elena", "female"),
+    ("mira", "Mira", "female"),
+    ("nina", "Nina", "female"),
+    ("sofia", "Sofia", "female"),
+    ("adrian", "Adrian", "male"),
+    ("daniel", "Daniel", "male"),
+    ("teo", "Teo", "male"),
+    ("luca", "Luca", "male"),
+    ("hugo", "Hugo", "male"),
+];
+
+/// Display names of the languages Supertonic is offered in (see CHECKED_LANGUAGES).
+fn language_name(code: &str) -> &'static str {
+    match code {
+        "es" => "Spanish",
+        "fr" => "French",
+        "de" => "German",
+        "it" => "Italian",
+        "pt" => "Portuguese",
+        "hi" => "Hindi",
+        _ => "Other",
     }
 }
 
@@ -105,6 +138,8 @@ pub struct ModelInfo {
     pub size_bytes: u64,
     pub license: String,
     pub credit: String,
+    /// Use restrictions the model's licence requires Voxa to pass on (OpenRAIL-M, ...).
+    pub restrictions: Option<String>,
     pub voices: usize,
 }
 
@@ -193,6 +228,26 @@ impl Registry {
                 .map(|(src, id, name, gender, _)| voice(id, name, gender, "American", "en-US", src))
                 .collect();
         }
+        if m.entry.engine == "supertonic" {
+            return CHECKED_LANGUAGES
+                .iter()
+                .flat_map(|lang| {
+                    SUPERTONIC_VOICES
+                        .iter()
+                        .enumerate()
+                        .map(move |(sid, (id, name, gender))| {
+                            voice(
+                                &format!("{id}-{lang}"),
+                                name,
+                                gender,
+                                language_name(lang),
+                                lang,
+                                &format!("{sid}:{lang}"),
+                            )
+                        })
+                })
+                .collect();
+        }
         if m.entry.engine != "kokoro" {
             return Vec::new();
         }
@@ -256,6 +311,7 @@ impl Registry {
                 size_bytes: m.entry.files.iter().map(|f| f.size).sum(),
                 license: m.entry.license.spdx.clone(),
                 credit: m.entry.license.credit.clone(),
+                restrictions: m.entry.license.restrictions.clone(),
                 voices: self.voices_of(m).len(),
             })
             .collect())
@@ -425,6 +481,12 @@ impl Registry {
                 };
                 Arc::new(engine.with_pace(&pace))
             }
+            "supertonic" => Arc::new(SupertonicEngine::load(
+                &key,
+                &model.dir,
+                CHECKED_LANGUAGES,
+                self.threads,
+            )?),
             other => {
                 return Err(EngineError::Failed(format!(
                     "this version of Voxa cannot run {other} models yet"
@@ -499,6 +561,52 @@ mod tests {
         assert!(us_single
             .iter()
             .any(|v| v.id == "harper" && v.source == "af_heart"));
+    }
+
+    #[test]
+    fn supertonic_names_are_unique_and_do_not_clash() {
+        let file: VoicesFile = serde_json::from_str(VOICES_JSON).unwrap();
+        let mut seen = std::collections::HashSet::new();
+        for (id, ..) in SUPERTONIC_VOICES {
+            assert!(seen.insert(*id), "{id} twice");
+            assert!(
+                !file.voices.iter().any(|v| v.id == *id),
+                "{id} is in voices.json"
+            );
+            assert!(
+                !KITTEN_VOICES.iter().any(|k| k.1 == *id),
+                "{id} is a Kitten voice"
+            );
+        }
+        assert_eq!(SUPERTONIC_VOICES.len(), 10);
+        for lang in CHECKED_LANGUAGES {
+            assert_ne!(language_name(lang), "Other", "{lang} needs a display name");
+        }
+    }
+
+    /// `VOXA_SUPERTONIC_PACK=<signed dev pack> cargo test -p voxa-app -- --ignored supertonic`
+    #[test]
+    #[ignore = "needs a signed Supertonic voice pack (VOXA_SUPERTONIC_PACK)"]
+    fn imports_supertonic_and_speaks_spanish() {
+        let (_d, r) = registry();
+        let pack = std::env::var("VOXA_SUPERTONIC_PACK").expect("set VOXA_SUPERTONIC_PACK");
+        let m = r.import(Path::new(&pack)).unwrap();
+        assert_eq!(m.family, "Voxa World");
+        assert_eq!(m.voices, 10 * CHECKED_LANGUAGES.len());
+        assert!(
+            m.restrictions.is_some(),
+            "OpenRAIL-M restrictions must be shown"
+        );
+        let v = r.voices().unwrap();
+        let ana = v.iter().find(|x| x.id == "ana-es").unwrap();
+        assert_eq!(
+            (ana.accent.as_str(), ana.language.as_str()),
+            ("Spanish", "es")
+        );
+        let a = r
+            .synthesize("hugo-de", "Guten Morgen. Wie geht es dir?", 1.0)
+            .unwrap();
+        assert!(a.duration() > 1.0);
     }
 
     #[test]

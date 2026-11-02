@@ -14,3 +14,4 @@ voxa-core = { path = "../voxa-core" }
 
 [dev-dependencies]
 tempfile = "3"
+voxa-g2p = { path = "../voxa-g2p" }

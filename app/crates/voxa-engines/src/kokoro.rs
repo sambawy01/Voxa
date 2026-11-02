@@ -132,6 +132,40 @@ fn select_voices(speakers: &[String], prefixes: &[&str]) -> Vec<(String, i32)> {
         .collect()
 }
 
+/// Kokoro's context is 510 tokens; stay well under it per call.
+const MAX_PHONEMES: usize = 400;
+
+/// Splits a long phoneme string into pieces of at most `max` characters, preferring to cut
+/// after punctuation, then at a word break. A single over-long "word" is cut hard.
+fn chunk_phonemes(p: &str, max: usize) -> Vec<String> {
+    let chars: Vec<char> = p.chars().collect();
+    let mut out = Vec::new();
+    let mut start = 0;
+    while chars.len() - start > max {
+        let window = &chars[start..start + max];
+        let cut = window
+            .iter()
+            .rposition(|c| ",;:—…".contains(*c))
+            .map(|i| i + 1)
+            .or_else(|| window.iter().rposition(|c| *c == ' '))
+            .filter(|&i| i > 0)
+            .unwrap_or(max);
+        out.push(
+            chars[start..start + cut]
+                .iter()
+                .collect::<String>()
+                .trim()
+                .to_string(),
+        );
+        start += cut;
+    }
+    let tail: String = chars[start..].iter().collect::<String>().trim().to_string();
+    if !tail.is_empty() {
+        out.push(tail);
+    }
+    out
+}
+
 /// Phonemes as codepoints for sherpa-onnx (one sentence = one inner vector).
 fn codepoints(phonemes: &str) -> Vec<i32> {
     phonemes.chars().map(|c| c as i32).collect()
@@ -163,17 +197,24 @@ impl Engine for KokoroEngine {
         if phonemes.trim().is_empty() {
             return Ok(Audio::new(self.sample_rate, Vec::new()));
         }
-        let cfg = GenerationConfig {
-            sid,
-            speed,
-            phoneme_codepoints: Some(vec![codepoints(&phonemes)]),
-            ..Default::default()
-        };
-        let out = self
-            .tts
-            .generate_with_config("", &cfg, None::<fn(&[f32], f32) -> bool>)
-            .ok_or_else(|| EngineError::Failed("Kokoro generation failed".into()))?;
-        Ok(Audio::new(out.sample_rate() as u32, out.samples().to_vec()))
+        let mut audio = Audio::new(self.sample_rate, Vec::new());
+        for piece in chunk_phonemes(&phonemes, MAX_PHONEMES) {
+            let cfg = GenerationConfig {
+                sid,
+                speed,
+                phoneme_codepoints: Some(vec![codepoints(&piece)]),
+                ..Default::default()
+            };
+            let out = self
+                .tts
+                .generate_with_config("", &cfg, None::<fn(&[f32], f32) -> bool>)
+                .ok_or_else(|| EngineError::Failed("Kokoro generation failed".into()))?;
+            audio.append(
+                &Audio::new(out.sample_rate() as u32, out.samples().to_vec()),
+                0.1,
+            );
+        }
+        Ok(audio)
     }
 }
 
@@ -231,6 +272,18 @@ mod tests {
             ]
         );
         assert!(select_voices(&speakers, &["zf_"]).is_empty());
+    }
+
+    #[test]
+    fn long_phonemes_are_chunked_at_natural_breaks() {
+        let p = "ab cd, ef gh ij";
+        assert_eq!(chunk_phonemes(p, 100), vec![p]);
+        assert_eq!(chunk_phonemes(p, 8), vec!["ab cd,", "ef gh", "ij"]);
+        // No break available: hard cut, nothing lost.
+        let hard = chunk_phonemes("abcdefghij", 4);
+        assert_eq!(hard, vec!["abcd", "efgh", "ij"]);
+        assert_eq!(hard.concat(), "abcdefghij");
+        assert!(chunk_phonemes("", 4).is_empty());
     }
 
     #[test]

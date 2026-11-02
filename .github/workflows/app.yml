@@ -57,4 +57,5 @@ jobs:
         with:
           workspaces: app
       - run: cargo build -p voxa-app
-      - run: cargo test -p voxa-core
+      # voxa-engines links sherpa-onnx statically: prove it links on every OS.
+      - run: cargo test -p voxa-core -p voxa-g2p -p voxa-engines -p voxa-models

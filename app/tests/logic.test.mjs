@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   charStatus, clampSpeed, speedLabel, friendlyError, MAX_CHARS, tierLabel, formatBytes, groupVoices,
-  benchRows, benchFileName, licenceText,
+  benchRows, benchFileName, licenceText, languagesOf, languageName, previewText,
 } from '../ui/logic.js';
 
 test('charStatus counts trimmed characters, not UTF-16 units', () => {
@@ -100,4 +100,16 @@ test('licenceText', () => {
 test('friendlyError explains activation', () => {
   assert.match(friendlyError('Voxa is not activated on this device yet.'), /Activate Voxa/);
   assert.match(friendlyError('could not reach the licence server: timeout'), /works offline/);
+});
+
+test('languagesOf lists each language once, English first', () => {
+  const v = [{ language: 'es' }, { language: 'en-US' }, { language: 'de' }, { language: 'es' }];
+  assert.deepEqual(languagesOf(v), [['en-US', 'English (US)'], ['de', 'German'], ['es', 'Spanish']]);
+  assert.equal(languageName('xx'), 'xx');
+});
+
+test('previewText speaks the voice language', () => {
+  assert.equal(previewText('Ana', 'es'), 'Hola, soy Ana. Así es como sueno.');
+  assert.equal(previewText('Harper', 'en-US'), "Hi, I'm Harper. This is how I sound.");
+  assert.match(previewText('Nina', 'hi'), /Nina/);
 });

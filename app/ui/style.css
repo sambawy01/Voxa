@@ -116,3 +116,5 @@ input.key {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   letter-spacing: .04em;
 }
+pre.restrictions { white-space: pre-wrap; font: .78rem/1.45 var(--font); color: var(--dim); max-height: 260px; overflow: auto; margin: 6px 0 0 }
+.controls > .field.narrow { flex: 0 1 170px }

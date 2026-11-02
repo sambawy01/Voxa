@@ -186,8 +186,8 @@ Cloning-capable models, by tier:
   - If the old machine is dead or lost, the user requests a reset on Voxa's account page
     or by emailing support.
   - Self-service resets are rate-limited (for example 3 a year); support can always do more.
-- **Activations per licence.** One, as decided. Suggestion: allow two, one computer and one
-  phone, since the app is meant for both. Your call.
+- **Activations per licence: two (decided).** Any two devices, for example one computer and
+  one phone. Deactivating one frees its slot.
 - **If Voxa ever shuts down**, publish a final update or unlock that removes the activation
   check, so buyers keep what they paid for.
 - **Model downloads still need a server** the first time. Mirror the catalogue to a second
@@ -206,8 +206,8 @@ Cloning-capable models, by tier:
 ### Updates
 
 - Every catalogue voice the installed app version can run is included, forever.
-- Proposal: major app versions that add new model architectures are an optional discounted
-  upgrade. Decide this before launch.
+- **To be decided before launch:** whether major app versions that add new model
+  architectures are free for existing buyers or an optional discounted upgrade.
 
 ## First steps
 

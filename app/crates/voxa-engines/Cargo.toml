@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 # Apache-2.0; links sherpa-onnx and onnxruntime (MIT) statically. No espeak-ng since 2.0.
 sherpa-onnx = "=2.0.1"
+base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

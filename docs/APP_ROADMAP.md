@@ -316,9 +316,17 @@ checks it off here in the same PR, and merges it once CI is green.**
     - Result: a signed Kokoro pack imported, 20 voices served, and `/v1/speech` returned a
       WAV; without the token the server answered 401. The app's `synthesize` now uses the
       same code path.
-  - [ ] **M11b Model-worker protocol.** Larger models run in a separate worker process
-    (Python: PyTorch/CUDA or MLX). A Rust client implements `Engine` over a small,
-    versioned JSON protocol. It is tested here against a reference worker.
+  - [x] **M11b Model-worker protocol.** Larger models run in a separate worker process
+    (Python: PyTorch/CUDA or MLX), started from a signed pack with `"engine": "worker"`
+    ([WORKERS.md](WORKERS.md)).
+    - `WorkerEngine` implements `Engine` over newline-delimited JSON, protocol version 1.
+    - It starts the worker on first use, gives every reply a deadline, and restarts a
+      worker that dies, once.
+    - A pack may only run Python or a program inside the pack.
+    - Voices come from `worker.json`, so listing them doesn't start the worker.
+    - Tested against a reference worker with no dependencies: speech, errors in plain
+      words, a restart after a crash, a timeout, and a signed worker pack installed and
+      spoken through the registry.
   - [ ] **M11c Qwen3-TTS workers.** CUDA and MLX workers for Qwen3-TTS (Voxa Studio),
     shipped as signed packs. Measuring them needs a GPU and an Apple Silicon Mac (owner).
   - [ ] **M11d RE-USE on the GPU worker.** Film-dialogue clean-up for the GPU tier. This

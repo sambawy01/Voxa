@@ -76,7 +76,7 @@ keys and every file's hash before installing. Uses:
 Make one:
 
 ```bash
-python -I app/tools/build_kokoro_package.py <sherpa kokoro-int8-multi-lang-v1_0> <pack-dir> <misaki/data>
+python -I app/tools/build_style_package.py <sherpa kokoro-int8-multi-lang-v1_0 or kitten-nano-en-v0_8-int8> <pack-dir> <misaki/data>
 $B pack <pack-dir> entry.json <secret-key-file>  # entry.json: the catalogue entry without "files"
 ```
 

@@ -79,9 +79,22 @@ checks it off here in the same PR, and merges it once CI is green.**
     - Follow-ups:
       - the signature blends (Aurora, Atlas), which need style mixing, not a speaker id
       - British voices, using misaki's `gb_*` dictionaries
-  - [ ] **M3d Kitten nano.** Kitten was trained on espeak-style IPA, so it needs its own
+  - [x] **M3d Kitten nano.** Kitten was trained on espeak-style IPA, so it needs its own
     permissive lexicon (CMUdict → IPA, or misaki → espeak-IPA mapping). The sherpa-onnx
     release has kitten-nano v0.2; check for 0.8.
+    - Done with a symbol mapping (misaki → espeak-style IPA), not a second lexicon: no
+      espeak code or data. sherpa-onnx publishes kitten-nano 0.8 int8 (24 MB, 8 speakers).
+    - The Whisper round trip also exposed a G2P bug: "the" and "a" always got their
+      stressed forms. Fixed with misaki's context rules (ðə/ði, ɐ).
+    - Word error rate, now 0.9% for both:
+
+      | Voice | Before | After | RTF on 4 CPUs |
+      |---|---|---|---|
+      | Kitten nano | 4.4% | 0.9% | 0.19 |
+      | Kokoro | 1.8% | 0.9% | 0.66 |
+
+    - Kitten voices are named in the app (Luna, Nell, Tess, Zoe, Ben, Leo, Sam, Max), not
+      in voices.json, because the website reads that file.
 - [ ] **M4 Voice library UI.** Voice cards with the device label (📱/💻/🖥️), languages,
   size, cloning flag, licence and credit; download/remove; Credits screen. Voices carry
   their Voxa names from `voices.json` where they exist.

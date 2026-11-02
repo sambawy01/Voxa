@@ -80,6 +80,7 @@ impl EnglishG2p {
                 }
             }
         }
+        weak_forms(&mut out);
         out
     }
 
@@ -229,6 +230,38 @@ impl EnglishG2p {
             }
         }
         None
+    }
+}
+
+/// Function words whose pronunciation depends on context, as misaki does it:
+/// "the" is ðə before a consonant sound and ði before a vowel sound; the article "a" is the
+/// weak ɐ, not the letter name. The dictionary alone gives the stressed forms ("thee",
+/// "ay"), which listeners (and speech recognisers) hear as other words.
+fn weak_forms(tokens: &mut [Token]) {
+    for i in 0..tokens.len() {
+        let next_starts_with_vowel = tokens[i + 1..].iter().find_map(|t| match t {
+            Token::Word { phonemes, .. } => Some(
+                phonemes
+                    .chars()
+                    .find(|c| !matches!(c, 'ˈ' | 'ˌ'))
+                    .is_some_and(|c| VOWELS.contains(c)),
+            ),
+            Token::Punct(_) => None,
+        });
+        if let Token::Word { text, phonemes, .. } = &mut tokens[i] {
+            match text.as_str() {
+                "the" | "The" => {
+                    *phonemes = if next_starts_with_vowel == Some(true) {
+                        "ði".into()
+                    } else {
+                        "ðə".into()
+                    };
+                }
+                // Only the lower-case article: a capital "A" alone may be the letter.
+                "a" if next_starts_with_vowel.is_some() => *phonemes = "ɐ".into(),
+                _ => {}
+            }
+        }
     }
 }
 
@@ -454,6 +487,22 @@ mod tests {
                 assert!(!phonemes.is_empty(), "{text} has no phonemes");
             }
         }
+    }
+
+    #[test]
+    fn weak_forms_of_the_and_a() {
+        let g = EnglishG2p::new(Lexicon::from_pairs(&[
+            ("the", "ði"),
+            ("a", "A"),
+            ("A", "ˈA"),
+            ("cat", "kˈæt"),
+            ("apple", "ˈæpᵊl"),
+        ]));
+        assert_eq!(g.phonemize("The cat.").unwrap(), "ðə kˈæt.");
+        assert_eq!(g.phonemize("the apple").unwrap(), "ði ˈæpᵊl");
+        assert_eq!(g.phonemize("a cat").unwrap(), "ɐ kˈæt");
+        // A sentence-final "a" or a capital letter A is left as the letter name.
+        assert!(g.phonemize("plan A").unwrap().ends_with("ˈA"));
     }
 
     #[test]

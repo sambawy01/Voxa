@@ -33,6 +33,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app
+          # sherpa-onnx-sys downloads its static libraries here and records the path in its
+          # build-script output. rust-cache restores that output but not this folder, so on
+          # an exact cache hit the linker finds no library. Cache the folder too.
+          cache-directories: app/target/sherpa-onnx-prebuilt
+          # New key so caches saved without that folder are never restored.
+          prefix-key: v2-sherpa
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -56,6 +62,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app
+          # sherpa-onnx-sys downloads its static libraries here and records the path in its
+          # build-script output. rust-cache restores that output but not this folder, so on
+          # an exact cache hit the linker finds no library. Cache the folder too.
+          cache-directories: app/target/sherpa-onnx-prebuilt
+          # New key so caches saved without that folder are never restored.
+          prefix-key: v2-sherpa
       - run: cargo build -p voxa-app
       # voxa-engines links sherpa-onnx statically: prove it links on every OS.
       - run: cargo test -p voxa-core -p voxa-g2p -p voxa-engines -p voxa-models

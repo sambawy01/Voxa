@@ -31,6 +31,8 @@ export function friendlyError(err) {
   if (/text is empty/.test(msg)) return 'Type something to read aloud first.';
   if (/limit is/.test(msg)) return `That's too long for one go: the limit is ${MAX_CHARS.toLocaleString('en-US')} characters.`;
   if (/unknown voice/.test(msg)) return 'That voice is not installed on this device.';
+  if (/not activated/.test(msg)) return 'Activate Voxa under Licence to start reading.';
+  if (/could not reach the licence server/.test(msg)) return 'Could not reach the licence server. Check your connection and try again; once activated, Voxa works offline.';
   return msg ? `Something went wrong: ${msg}` : 'Something went wrong.';
 }
 
@@ -83,4 +85,15 @@ export function benchRows(report) {
 /** File name for saving a report, e.g. "voxa-speed-test-x86_64-2026-11-02.json". */
 export function benchFileName(report, date = new Date()) {
   return `voxa-speed-test-${report.device.arch}-${date.toISOString().slice(0, 10)}.json`;
+}
+
+/** One sentence describing the licence state. */
+export function licenceText(s) {
+  if (!s.enabled) return '';
+  if (s.active) {
+    const when = s.issued ? ` on ${s.issued.slice(0, 10)}` : '';
+    return `Activated on this device${when}. Voxa now works offline. Your licence covers ${s.seats ?? 2} devices.`;
+  }
+  if (s.problem) return `The saved licence can't be used: ${s.problem}. Activate again with your key.`;
+  return 'Enter the licence key from your purchase email to activate Voxa on this device.';
 }

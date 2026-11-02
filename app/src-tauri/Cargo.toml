@@ -23,6 +23,7 @@ tauri-plugin-dialog = "2"
 voxa-core = { path = "../crates/voxa-core" }
 voxa-engines = { path = "../crates/voxa-engines" }
 voxa-g2p = { path = "../crates/voxa-g2p" }
+voxa-licence = { path = "../crates/voxa-licence" }
 voxa-models = { path = "../crates/voxa-models" }
 
 [dev-dependencies]

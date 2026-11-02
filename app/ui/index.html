@@ -62,6 +62,27 @@
       </div>
     </section>
 
+    <section id="licenceBox" class="card" hidden>
+      <h2>Licence</h2>
+      <p id="licenceState" class="note"></p>
+      <div id="licenceActivate" class="row" hidden>
+        <input id="licenceKey" class="key" placeholder="VOXA-XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false">
+        <button id="activate" class="btn small" type="button">Activate</button>
+      </div>
+      <div id="licenceActive" class="row" hidden>
+        <button id="deactivate" class="btn ghost small" type="button">Deactivate this device</button>
+      </div>
+      <details>
+        <summary class="dim note">Lost or broken a device?</summary>
+        <p class="dim note">Release every device on your licence, then activate again where you need it. You can do this 3 times a year; after that, contact support.</p>
+        <div class="row">
+          <input id="resetKey" class="key" placeholder="Your licence key" autocomplete="off" spellcheck="false">
+          <button id="reset" class="btn ghost small" type="button">Release all devices</button>
+        </div>
+      </details>
+      <span id="licenceMsg" class="dim" role="status" aria-live="polite"></span>
+    </section>
+
     <section class="card">
       <div class="row between">
         <h2>Speed test</h2>

@@ -1,7 +1,7 @@
 // Wires the page to the Rust core through Tauri commands.
 import {
   charStatus, clampSpeed, speedLabel, friendlyError, tierLabel, formatBytes, groupVoices,
-  benchRows, benchFileName,
+  benchRows, benchFileName, licenceText,
 } from './logic.js';
 
 const invoke = window.__TAURI__?.core?.invoke;
@@ -230,6 +230,36 @@ async function runBench() {
   }
 }
 
+const licenceBox = $('licenceBox'), licenceState = $('licenceState'), licenceMsg = $('licenceMsg');
+
+function showLicence(s) {
+  licenceBox.hidden = !s.enabled;
+  licenceState.textContent = licenceText(s);
+  $('licenceActivate').hidden = s.active;
+  $('licenceActive').hidden = !s.active;
+}
+
+async function licenceAction(btn, fn) {
+  btn.disabled = true;
+  licenceMsg.textContent = '';
+  try { await fn(); } catch (e) { licenceMsg.textContent = friendlyError(e); } finally { btn.disabled = false; }
+}
+
+$('activate').addEventListener('click', (ev) => licenceAction(ev.target, async () => {
+  showLicence(await invoke('activate_licence', { key: $('licenceKey').value }));
+  $('licenceKey').value = '';
+}));
+$('deactivate').addEventListener('click', (ev) => licenceAction(ev.target, async () => {
+  if (!confirm('Deactivate Voxa on this device? You can activate it again, here or on another device.')) return;
+  showLicence(await invoke('deactivate_licence'));
+}));
+$('reset').addEventListener('click', (ev) => licenceAction(ev.target, async () => {
+  if (!confirm('Release every device on this licence? Each one will need to be activated again.')) return;
+  const left = await invoke('reset_licence', { key: $('resetKey').value });
+  licenceMsg.textContent = `All devices released. Resets left this year: ${left}.`;
+  showLicence(await invoke('licence_status'));
+}));
+
 const previews = new Map();
 async function previewVoice() {
   const v = voiceList.find((x) => x.id === voice.value);
@@ -287,6 +317,7 @@ benchBtn.addEventListener('click', runBench);
 creditsBox.addEventListener('toggle', () => { if (creditsBox.open) loadThirdParty(); });
 if (invoke) {
   loadAll().catch((e) => { status.textContent = friendlyError(e); });
+  invoke('licence_status').then(showLicence);
   invoke('catalogue_configured').then((yes) => {
     availableBox.hidden = !yes;
     if (yes) refreshCatalogue();

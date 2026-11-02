@@ -1,0 +1,20 @@
+name: Licence server
+
+# licence-server/: the activation service for copies of the app sold directly. Separate
+# from the website; these tests never touch server.py.
+on:
+  push:
+    paths: [licence-server/**, .github/workflows/licence.yml]
+  pull_request:
+    paths: [licence-server/**, .github/workflows/licence.yml]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install cryptography
+      - run: python -m unittest discover -s licence-server/tests -v

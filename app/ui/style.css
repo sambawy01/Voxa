@@ -17,6 +17,8 @@
 }
 
 *, *::before, *::after { box-sizing: border-box }
+/* `hidden` must win over classes that set display (e.g. .row is flex). */
+[hidden] { display: none !important }
 html, body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--font) }
 body {
   min-height: 100vh;
@@ -103,3 +105,14 @@ table.results { width: 100%; border-collapse: collapse; font-size: .85rem }
 table.results th, table.results td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line) }
 table.results th { color: var(--dim); font-weight: 500 }
 .scroll-x { overflow-x: auto }
+input.key {
+  flex: 1 1 260px;
+  background: var(--field);
+  color: var(--ink);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font: inherit;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: .04em;
+}

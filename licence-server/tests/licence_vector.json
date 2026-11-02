@@ -1,0 +1,9 @@
+{
+ "_comment": "TEST key only (32 bytes of 0x42). Checked by licence-server tests and app/crates/voxa-licence.",
+ "test_secret": "4242424242424242424242424242424242424242424242424242424242424242",
+ "public_key": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+ "licence": {
+  "payload": "{\"activation\":\"00000000-0000-4000-8000-000000000001\",\"device\":\"dddddddddddddddddddddddddddddddd\",\"issued\":\"2026-11-02T12:00:00+00:00\",\"licence\":\"0123456789abcdef\",\"product\":\"voxa-desktop\",\"seats\":2,\"v\":1}",
+  "sig": "8U7Gi5ftDi5s2uqZhca+Ep+1gExeCH8Y6eDSDMh7ScVw3ArdR+MOGck8LLuqaC2hesLmK9gF4A/69MlPz9RpDQ=="
+ }
+}

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   charStatus, clampSpeed, speedLabel, friendlyError, MAX_CHARS, tierLabel, formatBytes, groupVoices,
-  benchRows, benchFileName,
+  benchRows, benchFileName, licenceText,
 } from '../ui/logic.js';
 
 test('charStatus counts trimmed characters, not UTF-16 units', () => {
@@ -86,4 +86,18 @@ test('benchFileName', () => {
     benchFileName({ device: { arch: 'aarch64' } }, new Date('2026-11-02T12:00:00Z')),
     'voxa-speed-test-aarch64-2026-11-02.json',
   );
+});
+
+test('licenceText', () => {
+  assert.equal(licenceText({ enabled: false, active: true }), '');
+  assert.match(licenceText({ enabled: true, active: true, issued: '2026-11-02T12:00:00+00:00', seats: 2 }),
+    /Activated on this device on 2026-11-02.*2 devices/);
+  assert.match(licenceText({ enabled: true, active: false, problem: 'this licence belongs to another device' }),
+    /another device/);
+  assert.match(licenceText({ enabled: true, active: false }), /Enter the licence key/);
+});
+
+test('friendlyError explains activation', () => {
+  assert.match(friendlyError('Voxa is not activated on this device yet.'), /Activate Voxa/);
+  assert.match(friendlyError('could not reach the licence server: timeout'), /works offline/);
 });

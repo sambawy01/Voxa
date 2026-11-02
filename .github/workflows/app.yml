@@ -172,17 +172,12 @@ jobs:
           npx tauri ios init --ci
           python3 -I tools/ios_setup.py src-tauri/gen/apple
       - name: Build for iPhone, unsigned
-        run: |
-          cd src-tauri/gen/apple
-          project=$(ls -d *.xcodeproj | head -n 1)
-          scheme=$(basename "$project" .xcodeproj)_iOS
-          xcodebuild -project "$project" -scheme "$scheme" -configuration release \
-            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build | tail -n 40
-          test "${PIPESTATUS[0]}" -eq 0
+        # Xcode's "Build Rust Code" phase only works under `tauri ios build` (it reads the
+        # options that command serves), so build through it; --no-sign skips signing.
+        run: npx tauri ios build --target aarch64 --no-sign --ci
       - name: Check the app (framework and microphone description)
         run: |
-          app=$(find src-tauri/gen/apple/build -name '*.app' -path '*iphoneos*' | head -n 1)
+          app=$(find src-tauri/gen/apple/build -name '*.app' -type d -not -path '*Intermediates*' | head -n 1)
           test -n "$app" || { echo "no .app built"; exit 1; }
           echo "App: $app ($(du -sh "$app" | cut -f1))"
           ls "$app/Frameworks"

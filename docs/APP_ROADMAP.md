@@ -281,8 +281,22 @@ checks it off here in the same PR, and merges it once CI is green.**
       voice in Voxa".
     - **Check a WAV file** reports whether the watermark and the label are present.
 
-- [ ] **M10 Mobile builds.** Android build in CI, iOS build in CI on a macOS runner
-  (unsigned). Mobile layout. Signing and stores go under **Blocked on owner**.
+- **M10 Mobile builds.** Signing and stores go under **Blocked on owner**.
+  - [x] **M10a Mobile layout.**
+    - Touch-sized controls (44 px) on touch screens and narrow windows.
+    - Long ids and paths wrap instead of widening the page.
+    - Phones hide "Import voice pack" (they can't pick a folder), using a new `platform`
+      command, so voices come from the catalogue there.
+    - Checked by `tests/layout.test.mjs`. It renders the real UI in headless Chromium at 360
+      and 390 px with a fake backend, and checks three things:
+      - no sideways scrolling, including long error paths
+      - every control at least 44 px tall
+      - inputs at 16 px or more, so iOS doesn't zoom
+  - [ ] **M10b Android build in CI.** An unsigned APK built with `tauri android build`,
+    sherpa-onnx's Android libraries, and the microphone permission (`RECORD_AUDIO`) for
+    Your voices.
+  - [ ] **M10c iOS build in CI.** An unsigned build on a macOS runner, with the microphone
+    usage description.
 - [ ] **M11 Computer and GPU tiers, and headless mode.**
   - A model-worker interface for larger models (MLX on Apple Silicon; a PyTorch/CUDA
     worker elsewhere).

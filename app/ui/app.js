@@ -603,6 +603,11 @@ refreshBtn.addEventListener('click', refreshCatalogue);
 benchBtn.addEventListener('click', runBench);
 creditsBox.addEventListener('toggle', () => { if (creditsBox.open) loadThirdParty(); });
 if (invoke) {
+  // Phones can't pick a folder, so voice packs come from the catalogue there.
+  invoke('platform').then((os) => {
+    document.body.dataset.platform = os;
+    importBtn.hidden = os === 'android' || os === 'ios';
+  });
   loadAll().catch((e) => { status.textContent = friendlyError(e); });
   invoke('licence_status').then(showLicence);
   invoke('catalogue_configured').then((yes) => {

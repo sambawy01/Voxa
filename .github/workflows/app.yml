@@ -50,6 +50,8 @@ jobs:
           pip install cryptography
           cargo test -p voxa-app -- --ignored licence_e2e
       - run: npm ci
+      # The mobile layout test renders the UI in headless Chromium.
+      - run: npx playwright install --with-deps chromium
       - run: npm test
       - name: Compile the packaging tools
         run: python3 -m py_compile tools/*.py

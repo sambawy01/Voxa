@@ -28,6 +28,13 @@ fn list_voices(reg: Reg<'_>, clones: Clones<'_>) -> Result<Vec<Voice>, String> {
     Ok(v)
 }
 
+/// The operating system ("macos", "windows", "linux", "android", "ios"), so the UI can
+/// hide what a platform can't do (phones can't pick a folder to import a voice pack).
+#[tauri::command]
+fn platform() -> &'static str {
+    std::env::consts::OS
+}
+
 #[tauri::command]
 fn list_models(reg: Reg<'_>) -> Result<Vec<ModelInfo>, String> {
     reg.models()
@@ -365,6 +372,7 @@ fn setup<R: tauri::Runtime>(
         .manage(cleanup::Shared::default())
         .on_permission_request(|_, kind| permission(kind));
     builder.invoke_handler(tauri::generate_handler![
+        platform,
         list_voices,
         list_models,
         import_pack,
@@ -442,6 +450,17 @@ mod tests {
                 invoke_key: INVOKE_KEY.to_string(),
             },
         )
+    }
+
+    #[test]
+    fn platform_names_the_os() {
+        let d = tempfile::tempdir().unwrap();
+        let (_app, w) = window(d.path());
+        let os: String = call(&w, "platform", serde_json::json!({}))
+            .unwrap()
+            .deserialize()
+            .unwrap();
+        assert_eq!(os, std::env::consts::OS);
     }
 
     #[test]

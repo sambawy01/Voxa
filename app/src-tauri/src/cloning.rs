@@ -649,7 +649,7 @@ mod tests {
         for (name, reference) in references {
             let secs = reference.duration();
             e.set_voice("r", reference);
-            let (mut errors, mut total) = (0, 0);
+            let (mut errors, mut total, mut marked_errors) = (0, 0, 0);
             for _ in 0..3 {
                 for t in E2E_SENTENCES {
                     let req = SynthesisRequest {
@@ -668,11 +668,21 @@ mod tests {
                     if n > 0 {
                         eprintln!("POCKET [{name}] {t:?} -> {heard:?}");
                     }
+                    // The same clip, watermarked as the app ships it (a paired comparison).
+                    watermark::embed(&mut a.samples, watermark::VOXA_KEY);
+                    let heard = asr.transcribe(&a.samples, a.sample_rate);
+                    let n = word_edits(&norm_words(t), &norm_words(&heard));
+                    marked_errors += n;
+                    if n > 0 {
+                        eprintln!("POCKET [{name}, watermarked] {t:?} -> {heard:?}");
+                    }
                 }
             }
             eprintln!(
-                "POCKET [{name}, reference {secs:.1} s] WER {:.1}% ({errors}/{total})",
-                100.0 * errors as f32 / total as f32
+                "POCKET [{name}, reference {secs:.1} s] WER {:.1}% ({errors}/{total}), \
+                 watermarked {:.1}% ({marked_errors}/{total})",
+                100.0 * errors as f32 / total as f32,
+                100.0 * marked_errors as f32 / total as f32
             );
         }
     }

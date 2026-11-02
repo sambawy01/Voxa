@@ -353,7 +353,7 @@ fn setup<R: tauri::Runtime>(
                 &root,
                 None,
                 Vec::new(),
-                voxa_licence::device_id(),
+                voxa_licence::device_id(&root),
             )))
             .manage(Arc::new(
                 cloning::Cloning::open(&root).expect("open cloned voices"),

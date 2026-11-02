@@ -292,9 +292,14 @@ checks it off here in the same PR, and merges it once CI is green.**
       - no sideways scrolling, including long error paths
       - every control at least 44 px tall
       - inputs at 16 px or more, so iOS doesn't zoom
-  - [ ] **M10b Android build in CI.** An unsigned APK built with `tauri android build`,
-    sherpa-onnx's Android libraries, and the microphone permission (`RECORD_AUDIO`) for
-    Your voices.
+  - [x] **M10b Android build in CI.**
+    - An unsigned arm64 APK (18 MB) is built on every change and kept as a CI artifact.
+    - Each build is checked: it must contain the app, sherpa-onnx and ONNX Runtime
+      libraries and declare `RECORD_AUDIO` and `INTERNET`. That check caught an APK
+      without the sherpa-onnx libraries, which would have failed at start. See
+      [MOBILE.md](MOBILE.md).
+    - The licence device ID on phones is a random per-install ID, because phones give
+      apps no machine ID.
   - [ ] **M10c iOS build in CI.** An unsigned build on a macOS runner, with the microphone
     usage description.
 - [ ] **M11 Computer and GPU tiers, and headless mode.**
@@ -352,6 +357,16 @@ store listings, legal review.)
   genuine) is shown in Credits. sherpa-onnx's README for the int8 build says "It is for
   non-commercial". That probably refers to its test recordings, which Voxa doesn't ship.
   Confirm with a lawyer, or with k2-fsa, before selling.
+- **Android on real phones and the Play Store** (from M10b). CI builds an unsigned APK.
+  Before release:
+  - Create a Google Play developer account and an upload key.
+  - Test on 2-3 phones (an older one and a newer one):
+    - first start
+    - installing a voice from the catalogue
+    - speaking
+    - the microphone prompt and recording for Your voices
+    - activation
+  - Also run **Speed test** on each phone and send the results.
 - **Model mirror hosting** (from M2). Somewhere to host model files over https, for example
   Cloudflare R2, a Hugging Face organisation, or both as primary and backup. Needs an account
   in Voxa's name.

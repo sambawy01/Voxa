@@ -362,6 +362,18 @@ impl Cloning {
 mod tests {
     use super::*;
 
+    const E2E_SENTENCES: [&str; 4] = [
+        "Thank you for calling. Please leave a message after the tone.",
+        "The meeting has moved to Thursday afternoon at noon.",
+        "Turn left at the bakery and the station is on your right.",
+        "We will send the new schedule to everyone by Friday.",
+    ];
+    const SHORT_SAMPLE: &str = "I've lived by the sea for most of my life. In the mornings I \
+        walk the dog along the harbour, and in the evenings I read until it gets dark.";
+    const LONG_SAMPLE: &str = "I've lived by the sea for most of my life. In the mornings I \
+        walk the dog along the harbour, and in the evenings I read until it gets dark. My \
+        favourite season is autumn, when the light turns gold.";
+
     fn norm_words(s: &str) -> Vec<String> {
         s.to_lowercase()
             .split(|c: char| !c.is_alphanumeric())
@@ -493,15 +505,7 @@ mod tests {
         }
         let c = Cloning::open(d.path()).unwrap();
         let person = "harper";
-        let sample = reg
-            .synthesize(
-                person,
-                "I've lived by the sea for most of my life. In the mornings I walk the dog \
-                 along the harbour, and in the evenings I read until it gets dark. My \
-                 favourite season is autumn, when the light turns gold.",
-                1.0,
-            )
-            .unwrap();
+        let sample = reg.synthesize(person, LONG_SAMPLE, 1.0).unwrap();
         assert!(sample.duration() >= 10.0, "{}", sample.duration());
 
         // Reading out an old sentence (other code words) fails, and uses the challenge up.
@@ -537,12 +541,7 @@ mod tests {
         // Intelligibility: the word error rate over several sentences, as in the round-trip
         // quality gate. Pocket is sampled, so a single clip can slur a word ("thank you"
         // heard as "but keep" at full length); the gate is on the rate, not one clip.
-        let sentences = [
-            "Thank you for calling. Please leave a message after the tone.",
-            "The meeting has moved to Thursday afternoon at noon.",
-            "Turn left at the bakery and the station is on your right.",
-            "We will send the new schedule to everyone by Friday.",
-        ];
+        let sentences = E2E_SENTENCES;
         let asr = reg.consent_checker().unwrap();
         let (mut errors, mut total, mut worst) = (0usize, 0usize, 0f32);
         for (k, text) in sentences.iter().enumerate() {
@@ -623,66 +622,58 @@ mod tests {
         eprintln!("MISSES {misses:?}");
     }
 
-    /// Diagnostic: does Pocket keep the first word? Speaks sentences in a voice made from
-    /// `VOXA_POCKET_REF` (a WAV) and prints what Whisper hears, plus the opening level.
+    /// Diagnostic: how intelligible are Pocket's clones, by reference? Speaks sentences in a
+    /// voice made from `VOXA_POCKET_REF` (a WAV, or `kokoro:<voice>` to use a Kokoro voice as
+    /// the person, read over a short and a long sample) and prints the word error rate.
     #[test]
-    #[ignore = "diagnostic; needs VOXA_CLONE_PACKS (pocket:consent) and VOXA_POCKET_REF"]
-    fn pocket_first_word() {
+    #[ignore = "diagnostic; needs VOXA_CLONE_PACKS (pocket:consent[:kokoro]) and VOXA_POCKET_REF"]
+    fn pocket_wer() {
         let d = tempfile::tempdir().unwrap();
         let reg = Registry::open(d.path(), crate::registry::trusted_keys()).unwrap();
         for p in std::env::var("VOXA_CLONE_PACKS").unwrap().split(':') {
             reg.import(Path::new(p)).unwrap();
         }
-        // A WAV path, or "kokoro:<voice>" to use a Kokoro voice (needs its pack) as the person.
         let src = std::env::var("VOXA_POCKET_REF").unwrap();
-        let reference = match src.strip_prefix("kokoro:") {
-            Some(v) => reg
-                .synthesize(
-                    v,
-                    "I've lived by the sea for most of my life. In the mornings I walk the dog \
-                     along the harbour, and in the evenings I read until it gets dark.",
-                    1.0,
-                )
-                .unwrap(),
+        let references: Vec<(&str, Audio)> = match src.strip_prefix("kokoro:") {
+            Some(v) => [("short", SHORT_SAMPLE), ("long", LONG_SAMPLE)]
+                .into_iter()
+                .map(|(n, t)| (n, reg.synthesize(v, t, 1.0).unwrap()))
+                .collect(),
             None => {
                 let w = WavFile::parse(&std::fs::read(&src).unwrap()).unwrap();
-                Audio::new(w.sample_rate, w.channels[0].clone())
+                vec![("file", Audio::new(w.sample_rate, w.channels[0].clone()))]
             }
         };
         let e = reg.pocket().unwrap();
-        e.set_voice("r", reference);
         let asr = reg.consent_checker().unwrap();
-        let sentences = [
-            "Thank you for calling. Please leave a message after the tone.",
-            "The meeting has moved to Thursday afternoon at noon.",
-            "Turn left at the bakery and the station is on your right.",
-            "We will send the new schedule to everyone by Friday.",
-            "Hello there.",
-        ];
-        let (mut errors, mut total) = (0, 0);
-        for _ in 0..3 {
-            for t in sentences {
-                let req = SynthesisRequest {
-                    text: t.into(),
-                    voice: "r".into(),
-                    speed: 1.0,
-                };
-                let mut a =
-                    voxa_core::Engine::synthesize(e.as_ref(), &req, &mut |_, _| {}).unwrap();
-                a.samples
-                    .splice(0..0, std::iter::repeat_n(0.0, a.sample_rate as usize / 5));
-                let heard = asr.transcribe(&a.samples, a.sample_rate);
-                let n = word_edits(&norm_words(t), &norm_words(&heard));
-                errors += n;
-                total += norm_words(t).len();
-                if n > 0 {
-                    eprintln!("POCKET {t:?} -> {heard:?} ({:.2} s)", a.duration());
+        for (name, reference) in references {
+            let secs = reference.duration();
+            e.set_voice("r", reference);
+            let (mut errors, mut total) = (0, 0);
+            for _ in 0..3 {
+                for t in E2E_SENTENCES {
+                    let req = SynthesisRequest {
+                        text: t.into(),
+                        voice: "r".into(),
+                        speed: 1.0,
+                    };
+                    let mut a =
+                        voxa_core::Engine::synthesize(e.as_ref(), &req, &mut |_, _| {}).unwrap();
+                    a.samples
+                        .splice(0..0, std::iter::repeat_n(0.0, a.sample_rate as usize / 5));
+                    let heard = asr.transcribe(&a.samples, a.sample_rate);
+                    let n = word_edits(&norm_words(t), &norm_words(&heard));
+                    errors += n;
+                    total += norm_words(t).len();
+                    if n > 0 {
+                        eprintln!("POCKET [{name}] {t:?} -> {heard:?}");
+                    }
                 }
             }
+            eprintln!(
+                "POCKET [{name}, reference {secs:.1} s] WER {:.1}% ({errors}/{total})",
+                100.0 * errors as f32 / total as f32
+            );
         }
-        eprintln!(
-            "POCKET WER {:.1}% ({errors}/{total})",
-            100.0 * errors as f32 / total as f32
-        );
     }
 }

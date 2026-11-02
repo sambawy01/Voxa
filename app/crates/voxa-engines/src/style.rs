@@ -1,6 +1,7 @@
-//! Kokoro-82M (Apache-2.0) through sherpa-onnx.
+//! StyleTTS-family voices through sherpa-onnx: Kokoro-82M and Kitten TTS (both Apache-2.0).
 //!
-//! A Voxa Kokoro package (built by `app/tools/build_kokoro_package.py`) is a directory with:
+//! A Voxa package for either (built by `app/tools/build_style_package.py`, which also
+//! handles Kitten) is a directory with:
 //!
 //! ```text
 //! model.int8.onnx   the model (or model.onnx)
@@ -12,7 +13,9 @@
 //!
 //! Text never reaches sherpa-onnx: the [`Phonemizer`] turns each sentence into misaki
 //! phonemes, which are passed as codepoints. That keeps espeak-ng (GPL) out and makes
-//! unknown words the G2P's job instead of being silently skipped.
+//! unknown words the G2P's job instead of being silently skipped. Kokoro was trained on
+//! misaki's symbols; Kitten on espeak-style IPA, so its phonemes go through
+//! [`misaki_to_ipa`] first.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,24 +23,32 @@ use std::sync::Arc;
 use sherpa_onnx::{GenerationConfig, OfflineTts, OfflineTtsConfig};
 use voxa_core::{Audio, Engine, EngineError, Phonemizer};
 
-/// The files of a Kokoro package, checked to exist.
+/// Which model family a package holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Family {
+    Kokoro,
+    Kitten,
+}
+
+/// The files of a Kokoro or Kitten package, checked to exist.
 #[derive(Debug, Clone, PartialEq)]
-pub struct KokoroPackage {
+pub struct StylePackage {
+    pub family: Family,
     pub model: PathBuf,
     pub voices: PathBuf,
     pub tokens: PathBuf,
     pub speakers: Vec<String>,
 }
 
-impl KokoroPackage {
-    pub fn open(dir: &Path) -> Result<Self, EngineError> {
+impl StylePackage {
+    pub fn open(dir: &Path, family: Family) -> Result<Self, EngineError> {
         let need = |name: &str| -> Result<PathBuf, EngineError> {
             let p = dir.join(name);
             if p.is_file() {
                 Ok(p)
             } else {
                 Err(EngineError::Failed(format!(
-                    "Kokoro package is missing {name}"
+                    "{family:?} package is missing {name}"
                 )))
             }
         };
@@ -50,6 +61,7 @@ impl KokoroPackage {
             return Err(EngineError::Failed("speakers.json is empty".into()));
         }
         Ok(Self {
+            family,
             model,
             voices: need("voices.bin")?,
             tokens: need("tokens.txt")?,
@@ -60,18 +72,29 @@ impl KokoroPackage {
     fn config(&self, threads: i32) -> OfflineTtsConfig {
         let s = |p: &PathBuf| Some(p.to_string_lossy().into_owned());
         let mut cfg = OfflineTtsConfig::default();
-        cfg.model.kokoro.model = s(&self.model);
-        cfg.model.kokoro.voices = s(&self.voices);
-        cfg.model.kokoro.tokens = s(&self.tokens);
+        match self.family {
+            Family::Kokoro => {
+                cfg.model.kokoro.model = s(&self.model);
+                cfg.model.kokoro.voices = s(&self.voices);
+                cfg.model.kokoro.tokens = s(&self.tokens);
+            }
+            Family::Kitten => {
+                cfg.model.kitten.model = s(&self.model);
+                cfg.model.kitten.voices = s(&self.voices);
+                cfg.model.kitten.tokens = s(&self.tokens);
+                cfg.model.kitten.length_scale = 1.0;
+            }
+        }
         cfg.model.num_threads = threads.max(1);
         cfg.model.debug = false;
         cfg
     }
 }
 
-/// Kokoro for one language (one G2P), exposing that language's speakers.
-pub struct KokoroEngine {
+/// A Kokoro or Kitten model for one language (one G2P), exposing that language's speakers.
+pub struct StyleEngine {
     id: String,
+    family: Family,
     tts: OfflineTts,
     sample_rate: u32,
     /// (Kokoro speaker name, sid) for the speakers this engine offers.
@@ -79,18 +102,19 @@ pub struct KokoroEngine {
     phonemizer: Arc<dyn Phonemizer>,
 }
 
-impl KokoroEngine {
-    /// Loads the model. `voice_prefixes` picks the language's speakers by Kokoro's naming
-    /// (e.g. `["af_", "am_"]` for American English).
+impl StyleEngine {
+    /// Loads the model. `voice_prefixes` picks the language's speakers by the model's own
+    /// naming (e.g. `["af_", "am_"]` for Kokoro's American English; `[""]` for all).
     pub fn load(
         id: &str,
-        package: &KokoroPackage,
+        package: &StylePackage,
         voice_prefixes: &[&str],
         phonemizer: Arc<dyn Phonemizer>,
         threads: i32,
     ) -> Result<Self, EngineError> {
-        let tts = OfflineTts::create(&package.config(threads))
-            .ok_or_else(|| EngineError::Failed("could not load the Kokoro model".into()))?;
+        let tts = OfflineTts::create(&package.config(threads)).ok_or_else(|| {
+            EngineError::Failed(format!("could not load the {:?} model", package.family))
+        })?;
         let n = tts.num_speakers();
         if n as usize != package.speakers.len() {
             return Err(EngineError::Failed(format!(
@@ -107,6 +131,7 @@ impl KokoroEngine {
         let sample_rate = tts.sample_rate() as u32;
         Ok(Self {
             id: id.into(),
+            family: package.family,
             tts,
             sample_rate,
             voices,
@@ -132,8 +157,56 @@ fn select_voices(speakers: &[String], prefixes: &[&str]) -> Vec<(String, i32)> {
         .collect()
 }
 
-/// Kokoro's context is 510 tokens; stay well under it per call.
-const MAX_PHONEMES: usize = 400;
+/// Kokoro's context is 510 tokens and Kitten's 400; stay well under both per call.
+const MAX_PHONEMES: usize = 340;
+
+/// Converts misaki phonemes (Kokoro's) to the espeak-style IPA Kitten was trained on.
+/// misaki writes diphthongs as one capital letter and leaves out vowel length; espeak's US
+/// English IPA spells diphthongs out, marks long vowels with ː and uses ɚ for unstressed
+/// "er". No espeak code or data is involved: this is a symbol mapping.
+pub fn misaki_to_ipa(p: &str) -> String {
+    let mut out = String::with_capacity(p.len() + 8);
+    let chars: Vec<char> = p.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        // R-coloured vowels first (two misaki symbols -> one IPA sequence).
+        match (c, next) {
+            ('ə', Some('ɹ')) => {
+                out.push('ɚ');
+                i += 2;
+                continue;
+            }
+            ('ɜ', Some('ɹ')) => {
+                out.push_str("ɜː");
+                i += 2;
+                continue;
+            }
+            _ => {}
+        }
+        match c {
+            'A' => out.push_str("eɪ"),
+            'I' => out.push_str("aɪ"),
+            'O' => out.push_str("oʊ"),
+            'W' => out.push_str("aʊ"),
+            'Y' => out.push_str("ɔɪ"),
+            'Q' => out.push_str("əʊ"),
+            'ᵊ' => out.push('ə'),
+            'ʤ' => out.push_str("dʒ"),
+            'ʧ' => out.push_str("tʃ"),
+            'i' | 'u' | 'ɑ' | 'ɔ' => {
+                out.push(c);
+                if next != Some('ː') {
+                    out.push('ː');
+                }
+            }
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    out
+}
 
 /// Splits a long phoneme string into pieces of at most `max` characters, preferring to cut
 /// after punctuation, then at a word break. A single over-long "word" is cut hard.
@@ -171,7 +244,7 @@ fn codepoints(phonemes: &str) -> Vec<i32> {
     phonemes.chars().map(|c| c as i32).collect()
 }
 
-impl Engine for KokoroEngine {
+impl Engine for StyleEngine {
     fn id(&self) -> &str {
         &self.id
     }
@@ -193,7 +266,10 @@ impl Engine for KokoroEngine {
         let sid = self
             .sid(voice)
             .ok_or_else(|| EngineError::UnknownVoice(voice.into()))?;
-        let phonemes = self.phonemizer.phonemize(sentence)?;
+        let mut phonemes = self.phonemizer.phonemize(sentence)?;
+        if self.family == Family::Kitten {
+            phonemes = misaki_to_ipa(&phonemes);
+        }
         if phonemes.trim().is_empty() {
             return Ok(Audio::new(self.sample_rate, Vec::new()));
         }
@@ -208,7 +284,9 @@ impl Engine for KokoroEngine {
             let out = self
                 .tts
                 .generate_with_config("", &cfg, None::<fn(&[f32], f32) -> bool>)
-                .ok_or_else(|| EngineError::Failed("Kokoro generation failed".into()))?;
+                .ok_or_else(|| {
+                    EngineError::Failed(format!("{:?} generation failed", self.family))
+                })?;
             audio.append(
                 &Audio::new(out.sample_rate() as u32, out.samples().to_vec()),
                 0.1,
@@ -235,7 +313,7 @@ mod tests {
     #[test]
     fn package_requires_every_file() {
         let d = package_dir(&["model.int8.onnx", "voices.bin"], r#"["af_heart"]"#);
-        let err = KokoroPackage::open(d.path()).unwrap_err();
+        let err = StylePackage::open(d.path(), Family::Kokoro).unwrap_err();
         assert!(err.to_string().contains("tokens.txt"), "{err}");
     }
 
@@ -245,7 +323,7 @@ mod tests {
             &["model.onnx", "voices.bin", "tokens.txt"],
             r#"["af_heart"]"#,
         );
-        let p = KokoroPackage::open(d.path()).unwrap();
+        let p = StylePackage::open(d.path(), Family::Kokoro).unwrap();
         assert!(p.model.ends_with("model.onnx"));
         assert_eq!(p.speakers, ["af_heart"]);
     }
@@ -253,8 +331,8 @@ mod tests {
     #[test]
     fn package_rejects_bad_speakers() {
         let files = ["model.int8.onnx", "voices.bin", "tokens.txt"];
-        assert!(KokoroPackage::open(package_dir(&files, "[]").path()).is_err());
-        assert!(KokoroPackage::open(package_dir(&files, "nope").path()).is_err());
+        assert!(StylePackage::open(package_dir(&files, "[]").path(), Family::Kokoro).is_err());
+        assert!(StylePackage::open(package_dir(&files, "nope").path(), Family::Kokoro).is_err());
     }
 
     #[test]
@@ -284,6 +362,19 @@ mod tests {
         assert_eq!(hard, vec!["abcd", "efgh", "ij"]);
         assert_eq!(hard.concat(), "abcdefghij");
         assert!(chunk_phonemes("", 4).is_empty());
+    }
+
+    #[test]
+    fn misaki_maps_to_espeak_style_ipa() {
+        assert_eq!(misaki_to_ipa("həlˈO"), "həlˈoʊ");
+        assert_eq!(misaki_to_ipa("ðə kˈæt sˈæt"), "ðə kˈæt sˈæt");
+        assert_eq!(misaki_to_ipa("wˈɑtəɹ"), "wˈɑːtɚ");
+        assert_eq!(misaki_to_ipa("bˈɜɹd"), "bˈɜːd");
+        assert_eq!(misaki_to_ipa("ʤˈʌʤ ʧˈɜɹʧ"), "dʒˈʌdʒ tʃˈɜːtʃ");
+        assert_eq!(misaki_to_ipa("sˈi tˈu"), "sˈiː tˈuː");
+        assert_eq!(misaki_to_ipa("mˈI bˈYz nˈW"), "mˈaɪ bˈɔɪz nˈaʊ");
+        // Punctuation and spaces pass through.
+        assert_eq!(misaki_to_ipa("ˈA, bˈi."), "ˈeɪ, bˈiː.");
     }
 
     #[test]
@@ -318,12 +409,12 @@ mod tests {
     #[ignore = "needs the Kokoro model (VOXA_KOKORO_DIR)"]
     fn speaks_with_the_real_model() {
         let dir = std::env::var("VOXA_KOKORO_DIR").expect("set VOXA_KOKORO_DIR");
-        let pkg = KokoroPackage::open(Path::new(&dir)).unwrap();
+        let pkg = StylePackage::open(Path::new(&dir), Family::Kokoro).unwrap();
         let g2p = Arc::new(TablePhonemizer(vec![
             ("hello", "həlˈO"),
             ("world", "wˈɜɹld"),
         ]));
-        let e = KokoroEngine::load("kokoro-en-us", &pkg, &["af_", "am_"], g2p, 2).unwrap();
+        let e = StyleEngine::load("kokoro-en-us", &pkg, &["af_", "am_"], g2p, 2).unwrap();
         assert_eq!(e.sample_rate(), 24_000);
         assert!(e.voices().contains(&"af_heart".to_string()));
         assert!(!e.voices().iter().any(|v| v.starts_with("bf_")));
@@ -342,5 +433,33 @@ mod tests {
             e.synthesize_sentence("Hello.", "bf_emma", 1.0),
             Err(EngineError::UnknownVoice(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod kitten_tests {
+    use super::*;
+
+    struct Fixed(&'static str);
+    impl Phonemizer for Fixed {
+        fn phonemize(&self, _: &str) -> Result<String, EngineError> {
+            Ok(self.0.into())
+        }
+    }
+
+    /// `VOXA_KITTEN_DIR=<package> cargo test -p voxa-engines -- --ignored`
+    #[test]
+    #[ignore = "needs the Kitten model (VOXA_KITTEN_DIR)"]
+    fn kitten_speaks_from_mapped_phonemes() {
+        let dir = std::env::var("VOXA_KITTEN_DIR").expect("set VOXA_KITTEN_DIR");
+        let pkg = StylePackage::open(Path::new(&dir), Family::Kitten).unwrap();
+        assert_eq!(pkg.speakers.len(), 8);
+        let e =
+            StyleEngine::load("kitten", &pkg, &[""], Arc::new(Fixed("həlˈO wˈɜɹld.")), 2).unwrap();
+        assert_eq!(e.voices().len(), 8);
+        let a = e
+            .synthesize_sentence("Hello world.", "expr-voice-2-f", 1.0)
+            .unwrap();
+        assert!(a.duration() > 0.4 && a.duration() < 3.0, "{}", a.duration());
     }
 }

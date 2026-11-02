@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! cargo run --release -p voxa-engines --example roundtrip -- \
-//!     <kokoro-package> <misaki-dir> <whisper-tiny.en-dir> [voice] [max-wer]
+//!     <kokoro|kitten> <package> <misaki-dir> <whisper-tiny.en-dir> [voice] [max-wer]
 //! ```
 //!
 //! `<misaki-dir>` holds us_gold.json and us_silver.json. Exits non-zero when the overall
@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig};
 use voxa_core::{Engine, SynthesisRequest};
-use voxa_engines::{KokoroEngine, KokoroPackage};
+use voxa_engines::{Family, StyleEngine, StylePackage};
 use voxa_g2p::{lexicon::Lexicon, normalize::normalize, EnglishG2p, Source, Token};
 
 const SENTENCES: &[&str] = &[
@@ -62,12 +62,21 @@ fn edits(a: &[String], b: &[String]) -> usize {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() < 3 {
-        eprintln!("usage: roundtrip <kokoro-package> <misaki-dir> <whisper-dir> [voice] [max-wer]");
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.len() < 4 {
+        eprintln!("usage: roundtrip <kokoro|kitten> <package> <misaki-dir> <whisper-dir> [voice] [max-wer]");
         std::process::exit(2);
     }
-    let voice = args.get(3).cloned().unwrap_or_else(|| "af_heart".into());
+    let family = match args.remove(0).as_str() {
+        "kitten" => Family::Kitten,
+        _ => Family::Kokoro,
+    };
+    let default_voice = if family == Family::Kitten {
+        "expr-voice-2-f"
+    } else {
+        "af_heart"
+    };
+    let voice = args.get(3).cloned().unwrap_or_else(|| default_voice.into());
     let max_wer: f64 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0.15);
 
     let misaki = Path::new(&args[1]);
@@ -75,10 +84,15 @@ fn main() {
     let lex = Lexicon::from_json(&[&read("us_silver.json"), &read("us_gold.json")]).unwrap();
     let g2p = Arc::new(EnglishG2p::new(lex));
 
-    let pkg = KokoroPackage::open(Path::new(&args[0])).unwrap();
+    let pkg = StylePackage::open(Path::new(&args[0]), family).unwrap();
     let t = Instant::now();
-    let engine = KokoroEngine::load("kokoro-en-us", &pkg, &["af_", "am_"], g2p.clone(), 4).unwrap();
-    eprintln!("Kokoro loaded in {:?}", t.elapsed());
+    let prefixes: &[&str] = if family == Family::Kitten {
+        &[""]
+    } else {
+        &["af_", "am_"]
+    };
+    let engine = StyleEngine::load("roundtrip", &pkg, prefixes, g2p.clone(), 4).unwrap();
+    eprintln!("{family:?} loaded in {:?}", t.elapsed());
 
     let w = Path::new(&args[2]);
     let mut cfg = OfflineRecognizerConfig::default();

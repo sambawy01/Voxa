@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use voxa_core::{Audio, Engine, EngineError, SynthesisRequest};
-use voxa_engines::{KokoroEngine, KokoroPackage};
+use voxa_engines::{Family, StyleEngine, StylePackage};
 use voxa_g2p::EnglishG2p;
 use voxa_models::{import_pack, InstalledModel, ModelStore, Tier, TrustedKeys};
 
@@ -16,6 +16,19 @@ const VOICES_JSON: &str = include_str!("../../../voices.json");
 
 /// Kokoro language codes in voices.json -> the speaker prefixes and model language tag.
 const KOKORO_LANGS: &[(&str, &[&str], &str)] = &[("a", &["af_", "am_"], "en-US")];
+
+/// Kitten TTS speakers -> (Voxa id, name, gender). Kept here rather than in voices.json,
+/// which the website also reads. Ids are checked against voices.json in the tests.
+const KITTEN_VOICES: &[(&str, &str, &str, &str)] = &[
+    ("expr-voice-2-f", "luna", "Luna", "female"),
+    ("expr-voice-3-f", "nell", "Nell", "female"),
+    ("expr-voice-4-f", "tess", "Tess", "female"),
+    ("expr-voice-5-f", "zoe", "Zoe", "female"),
+    ("expr-voice-2-m", "ben", "Ben", "male"),
+    ("expr-voice-3-m", "leo", "Leo", "male"),
+    ("expr-voice-4-m", "sam", "Sam", "male"),
+    ("expr-voice-5-m", "max", "Max", "male"),
+];
 
 #[derive(Debug, Clone, Deserialize)]
 struct CatalogueVoice {
@@ -109,6 +122,26 @@ impl Registry {
     }
 
     fn voices_of(&self, m: &InstalledModel) -> Vec<Voice> {
+        let voice =
+            |id: &str, name: &str, gender: &str, accent: &str, lang: &str, src: &str| Voice {
+                id: id.into(),
+                name: name.into(),
+                gender: gender.into(),
+                accent: accent.into(),
+                language: lang.into(),
+                model: m.entry.id.clone(),
+                model_version: m.entry.version.clone(),
+                tier: m.entry.tier,
+                credit: m.entry.license.credit.clone(),
+                default: false,
+                source: src.into(),
+            };
+        if m.entry.engine == "kitten" {
+            return KITTEN_VOICES
+                .iter()
+                .map(|(src, id, name, gender)| voice(id, name, gender, "American", "en-US", src))
+                .collect();
+        }
         if m.entry.engine != "kokoro" {
             return Vec::new();
         }
@@ -138,12 +171,20 @@ impl Registry {
             .collect()
     }
 
+    /// Every voice of the newest installed models. Exactly one is the default: the
+    /// catalogue's default (Harper) when installed, otherwise the first voice.
     pub fn voices(&self) -> Result<Vec<Voice>, String> {
-        Ok(self
+        let mut v: Vec<Voice> = self
             .newest()?
             .iter()
             .flat_map(|m| self.voices_of(m))
-            .collect())
+            .collect();
+        if !v.iter().any(|x| x.default) {
+            if let Some(first) = v.first_mut() {
+                first.default = true;
+            }
+        }
+        Ok(v)
     }
 
     pub fn models(&self) -> Result<Vec<ModelInfo>, String> {
@@ -188,11 +229,15 @@ impl Registry {
             return Ok(Arc::clone(e));
         }
         let e: Arc<dyn Engine> = match model.entry.engine.as_str() {
-            "kokoro" => {
-                let pkg = KokoroPackage::open(&model.dir)?;
+            "kokoro" | "kitten" => {
+                let (family, prefixes): (Family, &[&str]) = if model.entry.engine == "kitten" {
+                    (Family::Kitten, &[""])
+                } else {
+                    (Family::Kokoro, KOKORO_LANGS[0].1)
+                };
+                let pkg = StylePackage::open(&model.dir, family)?;
                 let g2p = Arc::new(EnglishG2p::from_dir(&model.dir.join("g2p"))?);
-                let (_, prefixes, _) = KOKORO_LANGS[0];
-                Arc::new(KokoroEngine::load(&key, &pkg, prefixes, g2p, self.threads)?)
+                Arc::new(StyleEngine::load(&key, &pkg, prefixes, g2p, self.threads)?)
             }
             other => {
                 return Err(EngineError::Failed(format!(
@@ -268,6 +313,37 @@ mod tests {
         assert!(us_single
             .iter()
             .any(|v| v.id == "harper" && v.source == "af_heart"));
+    }
+
+    #[test]
+    fn kitten_names_do_not_clash_with_the_catalogue() {
+        let file: VoicesFile = serde_json::from_str(VOICES_JSON).unwrap();
+        let raw: serde_json::Value = serde_json::from_str(VOICES_JSON).unwrap();
+        let lite: Vec<&str> = raw["lite"]["voices"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v["id"].as_str()).collect())
+            .unwrap_or_default();
+        for (_, id, _, _) in KITTEN_VOICES {
+            assert!(
+                !file.voices.iter().any(|v| v.id == *id),
+                "{id} is in voices.json"
+            );
+            assert!(!lite.contains(id), "{id} is a Lite voice");
+        }
+    }
+
+    /// `VOXA_KITTEN_PACK=<signed dev pack> cargo test -p voxa-app -- --ignored`
+    #[test]
+    #[ignore = "needs a signed Kitten voice pack (VOXA_KITTEN_PACK)"]
+    fn imports_kitten_and_speaks() {
+        let (_d, r) = registry();
+        let pack = std::env::var("VOXA_KITTEN_PACK").expect("set VOXA_KITTEN_PACK");
+        let m = r.import(Path::new(&pack)).unwrap();
+        assert_eq!((m.engine.as_str(), m.voices), ("kitten", 8));
+        let voices = r.voices().unwrap();
+        assert_eq!(voices.iter().filter(|v| v.default).count(), 1);
+        let a = r.synthesize("luna", "The quick brown fox.", 1.0).unwrap();
+        assert!(a.duration() > 0.5);
     }
 
     #[test]

@@ -9,8 +9,10 @@ use serde::{Deserialize, Serialize};
 use voxa_core::{Audio, Engine, EngineError, SynthesisRequest};
 use voxa_engines::consent::ConsentChecker;
 use voxa_engines::supertonic::CHECKED_LANGUAGES;
+use voxa_engines::worker::WorkerManifest;
 use voxa_engines::{
     Denoiser, DenoiserKind, Family, PocketEngine, StyleEngine, StylePackage, SupertonicEngine,
+    WorkerEngine,
 };
 use voxa_g2p::EnglishG2p;
 use voxa_models::{
@@ -249,6 +251,21 @@ impl Registry {
                 cloned: false,
                 source: src.into(),
             };
+        if m.entry.engine == "worker" {
+            // Larger models in a worker process: voices come from the pack's worker.json,
+            // so listing them doesn't start the worker.
+            let Ok(w) = WorkerManifest::load(&m.dir) else {
+                return Vec::new();
+            };
+            return w
+                .voices
+                .iter()
+                .map(|v| Voice {
+                    family: w.family.clone(),
+                    ..voice(&v.id, &v.name, &v.gender, "", &v.language, &v.id)
+                })
+                .collect();
+        }
         if m.entry.engine == "kitten" {
             return KITTEN_VOICES
                 .iter()
@@ -616,6 +633,7 @@ impl Registry {
                 CHECKED_LANGUAGES,
                 self.threads,
             )?),
+            "worker" => Arc::new(WorkerEngine::load(&key, &model.dir)?),
             other => {
                 return Err(EngineError::Failed(format!(
                     "this version of Voxa cannot run {other} models yet"
@@ -832,6 +850,67 @@ mod tests {
     fn sha(b: &[u8]) -> String {
         use sha2::Digest;
         hex::encode(sha2::Sha256::digest(b))
+    }
+
+    /// A signed pack running the reference worker (app/workers), as M11c's packs will.
+    #[test]
+    fn imports_a_worker_pack_and_speaks_through_the_worker() {
+        let python = ["python3", "python"]
+            .into_iter()
+            .find(|p| {
+                std::process::Command::new(p)
+                    .arg("--version")
+                    .output()
+                    .is_ok_and(|o| o.status.success())
+            })
+            .expect("this test needs Python 3");
+        let d = tempfile::tempdir().unwrap();
+        let pack = d.path().join("pack");
+        std::fs::create_dir_all(&pack).unwrap();
+        let workers = Path::new(env!("CARGO_MANIFEST_DIR")).join("../workers");
+        let manifest = serde_json::json!({
+            "protocol": 1, "family": "Voxa Studio",
+            "command": [python, "-I", "reference_worker.py", "--voices", "studio-low"],
+            "voices": [{"id": "studio-low", "name": "Low", "gender": "male", "language": "en-US"}],
+        });
+        let mut files = Vec::new();
+        for (name, bytes) in [
+            (
+                "voxa_worker.py",
+                std::fs::read(workers.join("voxa_worker.py")).unwrap(),
+            ),
+            (
+                "reference_worker.py",
+                std::fs::read(workers.join("reference_worker.py")).unwrap(),
+            ),
+            ("worker.json", manifest.to_string().into_bytes()),
+        ] {
+            std::fs::write(pack.join(name), &bytes).unwrap();
+            files.push(serde_json::json!({"path": name, "url": "", "sha256": sha(&bytes), "size": bytes.len()}));
+        }
+        let entry = serde_json::json!({
+            "id": "studio-test", "version": "1.0.0", "engine": "worker", "tier": "gpu",
+            "languages": ["en-US"], "cloning": false, "min_app": "0.1.0",
+            "license": {"spdx": "MIT", "credit": "test", "url": "https://example.com"},
+            "requirements": {"ram_mb": 100, "measured": false}, "files": files,
+        });
+        let json = serde_json::to_vec(&entry).unwrap();
+        std::fs::write(pack.join("voxa-pack.json"), &json).unwrap();
+        std::fs::write(pack.join("voxa-pack.json.sig"), dev_sign(&json)).unwrap();
+
+        let r = Registry::open(&d.path().join("data"), trusted_keys()).unwrap();
+        let m = r.import(&pack).unwrap();
+        assert_eq!((m.engine.as_str(), m.voices), ("worker", 1));
+        let v = r.voices().unwrap();
+        assert_eq!(
+            (v[0].id.as_str(), v[0].family.as_str(), v[0].tier),
+            ("studio-low", "Voxa Studio", Tier::Gpu)
+        );
+        let a = r
+            .synthesize("studio-low", "Three short words.", 1.0)
+            .unwrap();
+        assert_eq!(a.sample_rate, 16_000);
+        assert!(a.duration() > 0.4, "{}", a.duration());
     }
 
     #[test]

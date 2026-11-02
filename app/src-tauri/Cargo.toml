@@ -26,5 +26,7 @@ voxa-models = { path = "../crates/voxa-models" }
 [dev-dependencies]
 base64 = "0.22"
 ed25519-dalek = "2"
+sha2 = "0.10"
+voxa-models = { path = "../crates/voxa-models", features = ["test-http"] }
 tauri = { version = "2", features = ["test"] }
 tempfile = "3"

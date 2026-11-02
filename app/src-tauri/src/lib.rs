@@ -6,9 +6,10 @@ mod registry;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use registry::{ModelInfo, Registry, Voice};
+use registry::{AvailableModel, ModelInfo, Registry, Voice};
+use serde::Serialize;
 use tauri::ipc::Response;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use voxa_core::SampleFormat;
 
 type Reg<'a> = tauri::State<'a, Arc<Registry>>;
@@ -31,6 +32,59 @@ async fn import_pack(reg: Reg<'_>, path: String) -> Result<ModelInfo, String> {
     tauri::async_runtime::spawn_blocking(move || reg.import(&PathBuf::from(path)))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Whether this build has a model catalogue to download from.
+#[tauri::command]
+fn catalogue_configured(reg: Reg<'_>) -> bool {
+    reg.catalogue_configured()
+}
+
+/// Downloads and verifies the signed catalogue; returns what can be installed.
+#[tauri::command]
+async fn refresh_catalogue(reg: Reg<'_>) -> Result<Vec<AvailableModel>, String> {
+    let reg = Arc::clone(&reg);
+    tauri::async_runtime::spawn_blocking(move || reg.refresh_catalogue())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[derive(Clone, Serialize)]
+struct InstallProgress {
+    id: String,
+    version: String,
+    done: u64,
+    total: u64,
+}
+
+/// Downloads a catalogue model, emitting `install-progress` events (at most ~10 a second).
+#[tauri::command]
+async fn install_model<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    reg: Reg<'_>,
+    id: String,
+    version: String,
+) -> Result<ModelInfo, String> {
+    let reg = Arc::clone(&reg);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        reg.install(&id, &version, &mut |done, total| {
+            if done == total || last.elapsed().as_millis() >= 100 {
+                last = std::time::Instant::now();
+                let _ = app.emit(
+                    "install-progress",
+                    InstallProgress {
+                        id: id.clone(),
+                        version: version.clone(),
+                        done,
+                        total,
+                    },
+                );
+            }
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -78,7 +132,10 @@ fn setup<R: tauri::Runtime>(
         list_models,
         import_pack,
         remove_model,
-        synthesize
+        synthesize,
+        catalogue_configured,
+        refresh_catalogue,
+        install_model
     ])
 }
 
@@ -158,6 +215,28 @@ mod tests {
         )
         .expect_err("no voices installed");
         assert!(err.as_str().unwrap().contains("unknown voice"), "{err}");
+    }
+
+    #[test]
+    fn catalogue_commands_without_a_catalogue() {
+        let d = tempfile::tempdir().unwrap();
+        let (_app, w) = window(d.path());
+        let configured: bool = call(&w, "catalogue_configured", serde_json::json!({}))
+            .unwrap()
+            .deserialize()
+            .unwrap();
+        assert_eq!(configured, option_env!("VOXA_CATALOGUE_URL").is_some());
+        if !configured {
+            let err = call(&w, "refresh_catalogue", serde_json::json!({})).unwrap_err();
+            assert!(err.as_str().unwrap().contains("no model catalogue"));
+        }
+        let err = call(
+            &w,
+            "install_model",
+            serde_json::json!({"id": "kokoro-en-us", "version": "1.0.0"}),
+        )
+        .unwrap_err();
+        assert!(err.as_str().unwrap().contains("not in the catalogue"));
     }
 
     #[test]

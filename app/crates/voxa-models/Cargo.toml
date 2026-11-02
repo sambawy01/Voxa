@@ -16,5 +16,9 @@ sha2 = "0.10"
 thiserror = "2"
 ureq = "3"
 
+[features]
+# Lets tests in other crates download from a local plain-http server. Never enable in the app.
+test-http = []
+
 [dev-dependencies]
 tempfile = "3"

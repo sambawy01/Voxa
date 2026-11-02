@@ -48,15 +48,23 @@ export function formatBytes(n) {
   return `${i === 0 ? n : n.toFixed(1)} ${units[i]}`;
 }
 
-/** Groups voices for the picker: [[label, voices], ...], women first, names sorted. */
+/** Groups voices for the picker: [[label, voices], ...]. Groups are per family and
+ * accent ("Voxa Classic · American women"); within a family women come first; names sorted. */
 export function groupVoices(voices) {
   const groups = new Map();
   for (const v of voices) {
-    const label = `${v.accent} ${v.gender === 'female' ? 'women' : v.gender === 'male' ? 'men' : 'voices'}`;
+    const who = `${v.accent} ${v.gender === 'female' ? 'women' : v.gender === 'male' ? 'men' : 'voices'}`;
+    const label = v.family ? `${v.family} · ${who}` : who;
     if (!groups.has(label)) groups.set(label, []);
     groups.get(label).push(v);
   }
   return [...groups.entries()]
     .map(([label, vs]) => [label, vs.sort((a, b) => a.name.localeCompare(b.name))])
-    .sort(([a], [b]) => (a.endsWith('women') === b.endsWith('women') ? a.localeCompare(b) : a.endsWith('women') ? -1 : 1));
+    .sort(([a], [b]) => {
+      const family = (l) => (l.includes(' · ') ? l.split(' · ')[0] : '');
+      const fa = family(a), fb = family(b);
+      if (fa !== fb) return fa.localeCompare(fb);
+      if (a.endsWith('women') !== b.endsWith('women')) return a.endsWith('women') ? -1 : 1;
+      return a.localeCompare(b);
+    });
 }

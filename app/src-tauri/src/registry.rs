@@ -9,13 +9,29 @@ use serde::{Deserialize, Serialize};
 use voxa_core::{Audio, Engine, EngineError, SynthesisRequest};
 use voxa_engines::{Family, StyleEngine, StylePackage};
 use voxa_g2p::EnglishG2p;
-use voxa_models::{import_pack, InstalledModel, ModelStore, Tier, TrustedKeys};
+use voxa_models::{
+    import_pack, Catalogue, Downloader, InstalledModel, ModelEntry, ModelStore, Tier, TrustedKeys,
+};
+
+/// This app's version, compared with each model's `min_app`.
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Largest catalogue the app will read (it lists metadata only, not model files).
+const MAX_CATALOGUE_BYTES: u64 = 2_000_000;
 
 /// Voxa's voice catalogue (names for the underlying model voices), shared with the website.
 const VOICES_JSON: &str = include_str!("../../../voices.json");
 
 /// Kokoro language codes in voices.json -> the speaker prefixes and model language tag.
 const KOKORO_LANGS: &[(&str, &[&str], &str)] = &[("a", &["af_", "am_"], "en-US")];
+
+/// The product name of a model family, from the plan (Voxa Classic = Kokoro, ...).
+pub fn family_name(engine: &str) -> &'static str {
+    match engine {
+        "kokoro" => "Voxa Classic",
+        "kitten" => "Voxa Instant",
+        _ => "Voxa",
+    }
+}
 
 /// Kitten TTS speakers -> (Voxa id, name, gender). Kept here rather than in voices.json,
 /// which the website also reads. Ids are checked against voices.json in the tests.
@@ -52,6 +68,8 @@ struct VoicesFile {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Voice {
     pub id: String,
+    /// "Voxa Classic", "Voxa Instant", ...
+    pub family: String,
     pub name: String,
     pub gender: String,
     pub accent: String,
@@ -71,20 +89,42 @@ pub struct Voice {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ModelInfo {
     pub id: String,
+    pub family: String,
     pub version: String,
     pub engine: String,
     pub tier: Tier,
     pub languages: Vec<String>,
+    pub cloning: bool,
     pub size_bytes: u64,
     pub license: String,
     pub credit: String,
     pub voices: usize,
 }
 
+/// A model offered by the catalogue, for the "Available" list.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct AvailableModel {
+    pub id: String,
+    pub family: String,
+    pub version: String,
+    pub engine: String,
+    pub tier: Tier,
+    pub languages: Vec<String>,
+    pub cloning: bool,
+    pub size_bytes: u64,
+    pub license: String,
+    pub credit: String,
+    pub voices: usize,
+    pub installed: bool,
+}
+
 pub struct Registry {
     store: ModelStore,
     keys: TrustedKeys,
-    catalogue: Vec<CatalogueVoice>,
+    downloader: Downloader,
+    catalogue_url: Option<String>,
+    catalogue: Mutex<Option<Catalogue>>,
+    names: Vec<CatalogueVoice>,
     threads: i32,
     engines: Mutex<HashMap<String, Arc<dyn Engine>>>,
 }
@@ -99,7 +139,10 @@ impl Registry {
         Ok(Self {
             store,
             keys,
-            catalogue: file.voices,
+            downloader: Downloader::new(),
+            catalogue_url: option_env!("VOXA_CATALOGUE_URL").map(str::to_string),
+            catalogue: Mutex::new(None),
+            names: file.voices,
             threads,
             engines: Mutex::new(HashMap::new()),
         })
@@ -125,6 +168,7 @@ impl Registry {
         let voice =
             |id: &str, name: &str, gender: &str, accent: &str, lang: &str, src: &str| Voice {
                 id: id.into(),
+                family: family_name(&m.entry.engine).into(),
                 name: name.into(),
                 gender: gender.into(),
                 accent: accent.into(),
@@ -149,12 +193,13 @@ impl Registry {
             .iter()
             .filter(|(_, _, tag)| m.entry.languages.iter().any(|l| l == tag))
             .flat_map(|(code, _, tag)| {
-                self.catalogue
+                self.names
                     .iter()
                     .filter(move |v| v.lang == *code)
                     .filter_map(move |v| {
                         Some(Voice {
                             id: v.id.clone(),
+                            family: family_name(&m.entry.engine).into(),
                             name: v.name.clone(),
                             gender: v.gender.clone(),
                             accent: v.accent.clone(),
@@ -195,16 +240,110 @@ impl Registry {
             .iter()
             .map(|m| ModelInfo {
                 id: m.entry.id.clone(),
+                family: family_name(&m.entry.engine).into(),
                 version: m.entry.version.clone(),
                 engine: m.entry.engine.clone(),
                 tier: m.entry.tier,
                 languages: m.entry.languages.clone(),
+                cloning: m.entry.cloning,
                 size_bytes: m.entry.files.iter().map(|f| f.size).sum(),
                 license: m.entry.license.spdx.clone(),
                 credit: m.entry.license.credit.clone(),
                 voices: self.voices_of(m).len(),
             })
             .collect())
+    }
+
+    /// Points the registry at a catalogue and downloader (tests use a local server).
+    #[cfg(test)]
+    fn with_catalogue(mut self, url: &str, downloader: Downloader) -> Self {
+        self.catalogue_url = Some(url.into());
+        self.downloader = downloader;
+        self
+    }
+
+    pub fn catalogue_configured(&self) -> bool {
+        self.catalogue_url.is_some()
+    }
+
+    /// Downloads `catalogue.json` and its signature, verifies them (trusted key, schema,
+    /// never older than the last accepted one) and remembers the result.
+    pub fn refresh_catalogue(&self) -> Result<Vec<AvailableModel>, String> {
+        let url = self
+            .catalogue_url
+            .as_deref()
+            .ok_or("this build has no model catalogue configured")?;
+        let json = self
+            .downloader
+            .get_text(url, MAX_CATALOGUE_BYTES)
+            .map_err(|e| format!("catalogue: {e}"))?;
+        let sig = self
+            .downloader
+            .get_text(&format!("{url}.sig"), 1024)
+            .map_err(|e| format!("catalogue signature: {e}"))?;
+        let sig = String::from_utf8_lossy(&sig);
+        let cat = Catalogue::verify(&json, &sig, &self.keys, self.store.last_sequence())
+            .map_err(|e| e.to_string())?;
+        self.store
+            .record_sequence(cat.sequence)
+            .map_err(|e| e.to_string())?;
+        *self.catalogue.lock().unwrap() = Some(cat);
+        self.available()
+    }
+
+    /// Models the last accepted catalogue offers for this app version.
+    pub fn available(&self) -> Result<Vec<AvailableModel>, String> {
+        let guard = self.catalogue.lock().unwrap();
+        let Some(cat) = guard.as_ref() else {
+            return Ok(Vec::new());
+        };
+        Ok(cat
+            .available(APP_VERSION)
+            .into_iter()
+            .map(|e| {
+                let probe = InstalledModel {
+                    entry: e.clone(),
+                    dir: Default::default(),
+                };
+                AvailableModel {
+                    id: e.id.clone(),
+                    family: family_name(&e.engine).into(),
+                    version: e.version.clone(),
+                    engine: e.engine.clone(),
+                    tier: e.tier,
+                    languages: e.languages.clone(),
+                    cloning: e.cloning,
+                    size_bytes: e.files.iter().map(|f| f.size).sum(),
+                    license: e.license.spdx.clone(),
+                    credit: e.license.credit.clone(),
+                    voices: self.voices_of(&probe).len(),
+                    installed: self.store.is_installed(&e.id, &e.version),
+                }
+            })
+            .collect())
+    }
+
+    /// Downloads and installs a catalogue model. `on_progress(done, total)` is in bytes.
+    pub fn install(
+        &self,
+        id: &str,
+        version: &str,
+        on_progress: &mut dyn FnMut(u64, u64),
+    ) -> Result<ModelInfo, String> {
+        let entry: ModelEntry = self
+            .catalogue
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|c| c.find(id, version).cloned())
+            .ok_or_else(|| format!("{id} {version} is not in the catalogue"))?;
+        self.store
+            .install(&entry, &self.downloader, on_progress)
+            .map_err(|e| e.to_string())?;
+        self.models()?
+            .into_iter()
+            .find(|m| m.id == id && m.version == version)
+            .ok_or_else(|| "installed model not found".to_string())
     }
 
     pub fn import(&self, dir: &Path) -> Result<ModelInfo, String> {
@@ -344,6 +483,157 @@ mod tests {
         assert_eq!(voices.iter().filter(|v| v.default).count(), 1);
         let a = r.synthesize("luna", "The quick brown fox.", 1.0).unwrap();
         assert!(a.duration() > 0.5);
+    }
+
+    /// Serves fixed paths over plain http on 127.0.0.1 (test-only downloader allows it).
+    fn serve(files: Vec<(String, Vec<u8>)>) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { continue };
+                let mut reader = BufReader::new(s.try_clone().unwrap());
+                let mut first = String::new();
+                reader.read_line(&mut first).unwrap_or(0);
+                loop {
+                    let mut l = String::new();
+                    if reader.read_line(&mut l).unwrap_or(0) == 0 || l == "\r\n" {
+                        break;
+                    }
+                }
+                let path = first.split_whitespace().nth(1).unwrap_or("").to_string();
+                let body = files
+                    .iter()
+                    .find(|(p, _)| *p == path)
+                    .map(|(_, b)| b.clone());
+                let (status, body) = match body {
+                    Some(b) => ("200 OK", b),
+                    None => ("404 Not Found", Vec::new()),
+                };
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = s.write_all(&body);
+            }
+        });
+        base
+    }
+
+    fn dev_sign(msg: &[u8]) -> String {
+        use base64::Engine as _;
+        use ed25519_dalek::Signer;
+        let secret = include_str!("../../keys/dev-catalogue.key");
+        let seed: [u8; 32] = hex::decode(secret.trim()).unwrap().try_into().unwrap();
+        let sig = ed25519_dalek::SigningKey::from_bytes(&seed).sign(msg);
+        base64::engine::general_purpose::STANDARD.encode(sig.to_bytes())
+    }
+
+    fn sha(b: &[u8]) -> String {
+        use sha2::Digest;
+        hex::encode(sha2::Sha256::digest(b))
+    }
+
+    #[test]
+    fn catalogue_lists_downloads_and_installs_with_progress() {
+        let model = b"not really a model".to_vec();
+        let speakers = br#"["expr-voice-2-f"]"#.to_vec();
+        // One server for the model files; the catalogue (served by a second one) points
+        // at it.
+        let files = serve(vec![
+            ("/m".into(), model.clone()),
+            ("/s".into(), speakers.clone()),
+        ]);
+        let entry = |id: &str, min_app: &str, files_json: serde_json::Value| {
+            serde_json::json!({
+                "id": id, "version": "0.8.0", "engine": "kitten",
+                "tier": "phone", "languages": ["en-US"], "cloning": false,
+                "license": {"spdx": "Apache-2.0", "credit": "Kitten TTS by KittenML",
+                            "url": "https://huggingface.co/KittenML"},
+                "min_app": min_app,
+                "requirements": {"ram_mb": 200, "measured": false},
+                "files": files_json
+            })
+        };
+        let kitten_files = serde_json::json!([
+            {"path": "model.int8.onnx", "url": format!("{files}/m"),
+             "sha256": sha(&model), "size": model.len()},
+            {"path": "speakers.json", "url": format!("{files}/s"),
+             "sha256": sha(&speakers), "size": speakers.len()}
+        ]);
+        let cat = serde_json::to_vec(&serde_json::json!({
+            "schema": 1, "sequence": 3, "issued": "2026-11-02T00:00:00Z",
+            "models": [
+                entry("kitten-nano-en", "0.1.0", kitten_files.clone()),
+                // Needs a newer app: must not be offered.
+                entry("future-model", "99.0.0", kitten_files),
+            ]
+        }))
+        .unwrap();
+        let server = serve(vec![
+            ("/catalogue.json".into(), cat.clone()),
+            ("/catalogue.json.sig".into(), dev_sign(&cat).into_bytes()),
+        ]);
+
+        let d = tempfile::tempdir().unwrap();
+        let r = Registry::open(d.path(), trusted_keys())
+            .unwrap()
+            .with_catalogue(
+                &format!("{server}/catalogue.json"),
+                Downloader::for_local_tests(),
+            );
+        let avail = r.refresh_catalogue().unwrap();
+        assert_eq!(avail.len(), 1, "the model needing app 99 is hidden");
+        assert_eq!(avail[0].id, "kitten-nano-en");
+        assert_eq!(avail[0].voices, 8);
+        assert!(!avail[0].installed);
+
+        let mut last = (0, 0);
+        let m = r
+            .install("kitten-nano-en", "0.8.0", &mut |a, b| last = (a, b))
+            .unwrap();
+        assert_eq!(m.voices, 8);
+        let total = (model.len() + speakers.len()) as u64;
+        assert_eq!(last, (total, total));
+        assert!(r.available().unwrap()[0].installed);
+        assert!(r.install("nope", "1", &mut |_, _| {}).is_err());
+    }
+
+    #[test]
+    fn catalogue_rejects_bad_signatures_and_rollback() {
+        let cat = |seq: u64| {
+            serde_json::to_vec(&serde_json::json!({
+                "schema": 1, "sequence": seq, "issued": "", "models": []
+            }))
+            .unwrap()
+        };
+        let (new, old) = (cat(5), cat(4));
+        let base = serve(vec![
+            ("/new.json".into(), new.clone()),
+            ("/new.json.sig".into(), dev_sign(&new).into_bytes()),
+            ("/old.json".into(), old.clone()),
+            ("/old.json.sig".into(), dev_sign(&old).into_bytes()),
+            ("/forged.json".into(), new.clone()),
+            (
+                "/forged.json.sig".into(),
+                dev_sign(b"something else").into_bytes(),
+            ),
+        ]);
+        let d = tempfile::tempdir().unwrap();
+        let open = |name: &str| {
+            Registry::open(d.path(), trusted_keys())
+                .unwrap()
+                .with_catalogue(&format!("{base}/{name}"), Downloader::for_local_tests())
+        };
+        assert!(open("forged.json").refresh_catalogue().is_err());
+        assert!(open("new.json").refresh_catalogue().is_ok());
+        let err = open("old.json").refresh_catalogue().unwrap_err();
+        assert!(err.contains("older"), "{err}");
+        assert!(!Registry::open(d.path(), trusted_keys())
+            .unwrap()
+            .catalogue_configured());
     }
 
     #[test]

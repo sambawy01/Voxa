@@ -49,6 +49,8 @@ jobs:
       - run: npm test
       - name: Compile the packaging tools
         run: python3 -m py_compile tools/*.py
+      - name: Licence gate (no GPL in the app) and credits list up to date
+        run: python3 -I tools/licences.py --check
 
   build:
     strategy:

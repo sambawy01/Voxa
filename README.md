@@ -150,3 +150,19 @@ python scripts/smoke.py            # checks the live app
 ```
 
 The model is downloaded during the image build so containers start without a fetch.
+
+## Native app (in progress)
+
+`app/` is the on-device Voxa app (Tauri 2): a Rust core (`app/crates/voxa-core`), the Tauri
+shell (`app/src-tauri`) and its UI (`app/ui`). The plan is in
+[docs/NATIVE_APP_VOICES.md](docs/NATIVE_APP_VOICES.md) and the work list in
+[docs/APP_ROADMAP.md](docs/APP_ROADMAP.md). It does not change the website.
+
+```bash
+cd app
+npm ci                                  # Tauri CLI
+npm run dev                             # run the app (Linux needs libwebkit2gtk-4.1-dev etc.)
+cargo test --workspace && npm test      # Rust and UI tests
+```
+
+Until real voices land (roadmap M3) the app speaks with placeholder tones.

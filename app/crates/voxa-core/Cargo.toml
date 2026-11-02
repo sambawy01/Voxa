@@ -1,0 +1,9 @@
+[package]
+name = "voxa-core"
+description = "Voxa's on-device engine core: text handling, audio encoding and the engine interface. No GUI."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror = "2"

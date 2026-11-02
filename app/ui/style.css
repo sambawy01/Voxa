@@ -1,0 +1,74 @@
+/* Voxa app styles: same tokens as the website (web/voxa.css), trimmed for the app shell. */
+:root {
+  color-scheme: dark;
+  --bg: #030207;
+  --surface: rgba(255, 255, 255, .035);
+  --field: rgba(8, 10, 20, .72);
+  --line: rgba(255, 255, 255, .08);
+  --line-2: rgba(255, 255, 255, .14);
+  --ink: #f2f4ff;
+  --dim: #8f97b5;
+  --bad: #fb7185;
+  --grad: linear-gradient(115deg, #5e17eb 0%, #7c3aed 55%, #22d3ee 100%);
+  --grad-text: linear-gradient(95deg, #ece6ff 0%, #b69cff 30%, #8b5cf6 55%, #67e8f9 100%);
+  --radius: 22px;
+  --radius-sm: 14px;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box }
+html, body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--font) }
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(60% 40% at 20% 0%, rgba(94, 23, 235, .25), transparent 70%),
+    radial-gradient(50% 35% at 90% 10%, rgba(34, 211, 238, .12), transparent 70%),
+    var(--bg);
+}
+.wrap {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left));
+}
+h1 { font-size: 2.2rem; margin: 0; letter-spacing: -.02em }
+.grad { background: var(--grad-text); -webkit-background-clip: text; background-clip: text; color: transparent }
+.sub { margin: 4px 0 20px; color: var(--dim) }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px;
+  display: grid;
+  gap: 14px;
+}
+.lbl { font-size: .85rem; color: var(--dim); display: block; margin-bottom: 6px }
+textarea, select {
+  width: 100%;
+  background: var(--field);
+  color: var(--ink);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font: inherit;
+}
+textarea { resize: vertical; min-height: 140px }
+.row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap }
+.meta { justify-content: flex-end; margin-top: -6px }
+.controls > .field { flex: 1 1 220px }
+input[type=range] { width: 100% }
+.dim { color: var(--dim) }
+.bad { color: var(--bad) }
+.note { margin: 0; font-size: .85rem }
+.btn {
+  background: var(--grad);
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 24px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn:disabled { opacity: .45; cursor: not-allowed }
+audio { width: 100% }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important } }

@@ -1,0 +1,22 @@
+[package]
+name = "voxa-app"
+description = "Voxa: text to speech that runs on your device."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "voxa_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+voxa-core = { path = "../crates/voxa-core" }
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+serde_json = "1"

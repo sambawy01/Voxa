@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Voxa</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <main class="wrap">
+    <header class="top">
+      <h1>Vo<span class="grad">xa</span></h1>
+      <p class="sub">Text to speech that runs on this device. Nothing is uploaded.</p>
+    </header>
+
+    <section class="card">
+      <label for="text" class="lbl">Text</label>
+      <textarea id="text" rows="8" placeholder="Type or paste text to read aloud."></textarea>
+      <div class="row meta">
+        <span id="count" class="dim">0 / 4,000</span>
+      </div>
+
+      <div class="row controls">
+        <label class="field">
+          <span class="lbl">Voice</span>
+          <select id="voice"></select>
+        </label>
+        <label class="field">
+          <span class="lbl">Speed <span id="speedVal" class="dim">1.0×</span></span>
+          <input id="speed" type="range" min="0.5" max="2" step="0.05" value="1">
+        </label>
+      </div>
+
+      <p class="note dim">Preview build: voices are placeholder tones until real on-device voices arrive.</p>
+
+      <div class="row">
+        <button id="go" class="btn" disabled>Read aloud</button>
+        <span id="status" class="dim" role="status" aria-live="polite"></span>
+      </div>
+      <audio id="player" controls hidden></audio>
+    </section>
+  </main>
+</body>
+</html>

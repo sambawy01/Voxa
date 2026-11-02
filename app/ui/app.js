@@ -1,7 +1,7 @@
 // Wires the page to the Rust core through Tauri commands.
 import {
   charStatus, clampSpeed, speedLabel, friendlyError, tierLabel, formatBytes, groupVoices,
-  benchRows, benchFileName, licenceText, languagesOf, previewText,
+  benchRows, benchFileName, licenceText, languagesOf, previewText, wavSummary,
 } from './logic.js';
 
 const invoke = window.__TAURI__?.core?.invoke;
@@ -64,7 +64,8 @@ function modelItem(m) {
   title.append(badge);
   const meta = document.createElement('div');
   meta.className = 'meta';
-  meta.textContent = `${m.voices} voices · ${m.languages.join(', ')} · ${formatBytes(m.size_bytes)} · ${m.license} · ${m.id} ${m.version}`;
+  const what = m.voices ? `${m.voices} voices · ${m.languages.join(', ')}` : 'Audio clean-up';
+  meta.textContent = `${what} · ${formatBytes(m.size_bytes)} · ${m.license} · ${m.id} ${m.version}`;
   if (m.cloning) {
     const flag = document.createElement('span');
     flag.className = 'flag';
@@ -124,7 +125,8 @@ function availableItem(m) {
   title.append(badge);
   const meta = document.createElement('div');
   meta.className = 'meta';
-  meta.textContent = `${m.voices} voices · ${m.languages.join(', ')} · ${formatBytes(m.size_bytes)} · ${m.license} · ${m.id} ${m.version}`;
+  const what = m.voices ? `${m.voices} voices · ${m.languages.join(', ')}` : 'Audio clean-up';
+  meta.textContent = `${what} · ${formatBytes(m.size_bytes)} · ${m.license} · ${m.id} ${m.version}`;
   const bar = document.createElement('progress');
   bar.max = 1;
   bar.value = 0;
@@ -184,7 +186,7 @@ async function loadThirdParty() {
 }
 
 async function loadAll() {
-  await Promise.all([loadVoices(), loadModels()]);
+  await Promise.all([loadVoices(), loadModels(), loadCleanupModels()]);
 }
 
 async function importPack() {
@@ -284,6 +286,90 @@ $('reset').addEventListener('click', (ev) => licenceAction(ev.target, async () =
   showLicence(await invoke('licence_status'));
 }));
 
+// ---- Clean up audio ----
+const cl = {
+  open: $('cleanOpen'), file: $('cleanFile'), controls: $('cleanControls'), model: $('cleanModel'),
+  run: $('cleanRun'), bar: $('cleanBar'), result: $('cleanResult'), strength: $('cleanStrength'),
+  strengthVal: $('cleanStrengthVal'), orig: $('abOriginal'), clean: $('abCleaned'),
+  player: $('cleanPlayer'), save: $('cleanSave'), status: $('cleanStatus'), noModel: $('cleanNoModel'),
+};
+let abCleaned = true;
+let previewUrl = null;
+
+async function loadCleanupModels() {
+  const models = await invoke('cleanup_models');
+  cl.model.replaceChildren(...models.map((m) => new Option(m.family, m.id)));
+  cl.noModel.hidden = models.length > 0;
+  cl.open.disabled = models.length === 0;
+}
+
+async function cleanPreview() {
+  const keepTime = cl.player.currentTime || 0;
+  const wasPlaying = !cl.player.paused;
+  const buf = await invoke('cleanup_preview', {
+    cleaned: abCleaned, strength: Number(cl.strength.value), start: 0,
+  });
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewUrl = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  cl.player.src = previewUrl;
+  cl.player.addEventListener('loadedmetadata', () => {
+    cl.player.currentTime = Math.min(keepTime, cl.player.duration || keepTime);
+    if (wasPlaying) cl.player.play().catch(() => {});
+  }, { once: true });
+  cl.orig.setAttribute('aria-pressed', String(!abCleaned));
+  cl.clean.setAttribute('aria-pressed', String(abCleaned));
+}
+
+async function cleanAction(btn, fn) {
+  btn.disabled = true;
+  cl.status.textContent = '';
+  try { await fn(); } catch (e) { cl.status.textContent = friendlyError(e); } finally { btn.disabled = false; }
+}
+
+cl.open.addEventListener('click', (ev) => cleanAction(ev.target, async () => {
+  const path = await invoke('plugin:dialog|open', { options: {
+    title: 'Choose a WAV recording', filters: [{ name: 'WAV audio', extensions: ['wav', 'WAV'] }],
+  } });
+  if (!path) return;
+  const info = await invoke('cleanup_open', { path });
+  cl.file.textContent = wavSummary(info);
+  cl.controls.hidden = false;
+  cl.result.hidden = true;
+}));
+
+cl.run.addEventListener('click', (ev) => cleanAction(ev.target, async () => {
+  cl.bar.hidden = false;
+  cl.bar.value = 0;
+  cl.status.textContent = 'Cleaning… this runs on your device.';
+  try {
+    await invoke('cleanup_run', { model: cl.model.value });
+  } finally {
+    cl.bar.hidden = true;
+  }
+  cl.status.textContent = '';
+  cl.result.hidden = false;
+  abCleaned = true;
+  await cleanPreview();
+}));
+
+cl.strength.addEventListener('input', () => {
+  cl.strengthVal.textContent = `${Math.round(Number(cl.strength.value) * 100)}%`;
+});
+cl.strength.addEventListener('change', () => { if (abCleaned) cleanPreview().catch((e) => { cl.status.textContent = friendlyError(e); }); });
+cl.orig.addEventListener('click', () => { abCleaned = false; cleanPreview().catch((e) => { cl.status.textContent = friendlyError(e); }); });
+cl.clean.addEventListener('click', () => { abCleaned = true; cleanPreview().catch((e) => { cl.status.textContent = friendlyError(e); }); });
+
+cl.save.addEventListener('click', (ev) => cleanAction(ev.target, async () => {
+  const name = await invoke('cleanup_suggested_name');
+  const path = await invoke('plugin:dialog|save', { options: {
+    title: 'Save the cleaned recording', defaultPath: name ?? 'cleaned.wav',
+    filters: [{ name: 'WAV audio', extensions: ['wav'] }],
+  } });
+  if (!path) return;
+  await invoke('cleanup_save', { path, strength: Number(cl.strength.value) });
+  cl.status.textContent = `Saved ${path}: same length, sample rate, channels and timecode as the original, 24-bit.`;
+}));
+
 const previews = new Map();
 async function previewVoice() {
   const v = voiceList.find((x) => x.id === voice.value);
@@ -346,6 +432,9 @@ if (invoke) {
   invoke('catalogue_configured').then((yes) => {
     availableBox.hidden = !yes;
     if (yes) refreshCatalogue();
+  });
+  window.__TAURI__?.event?.listen('cleanup-progress', ({ payload }) => {
+    if (payload.total) cl.bar.value = payload.done / payload.total;
   });
   window.__TAURI__?.event?.listen('bench-progress', ({ payload }) => {
     if (payload.total) benchBar.value = payload.done / payload.total;

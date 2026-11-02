@@ -182,10 +182,40 @@ checks it off here in the same PR, and merges it once CI is green.**
     speaks the voice's own language.
   - **Pocket TTS moved to M9.** sherpa-onnx's build of it is the voice-cloning variant (it
     needs reference audio) and English-only, so it belongs with cloning.
-- [ ] **M8 Audio clean-up.**
+- [x] **M8 Audio clean-up.**
   - GTCRN and DeepFilterNet 3 denoise.
   - A strength (wet/dry) mix and an A/B player.
   - Output the same length as the input, kept at 48 kHz/24-bit, with tests for both.
+  - Models, both through sherpa-onnx:
+    - **Voxa Clean Studio:** DPDFNet 48 kHz HR (Ceva, Apache-2.0), full band.
+    - **Voxa Clean Fast:** GTCRN (MIT), which works at 16 kHz.
+    - DeepFilterNet 3 isn't in sherpa-onnx; DPDFNet is the full-band equivalent there.
+  - Measured with `examples/clean_check.rs` (speech plus white noise and mains hum):
+
+    | Model | Input | SNR before → after | Delay | Speed |
+    |---|---|---|---|---|
+    | Studio | 48 kHz | 0 → 17.7 dB | 0 samples | 5.3× real time |
+    | Studio | 48 kHz | 10 → 23.4 dB | 0 samples | 5.1× real time |
+    | Studio | 44.1 kHz | 0 → 17.3 dB | 0 samples | 5.3× real time |
+    | Fast | 48 kHz | 0 → 15.7 dB | 0 samples | 24× real time |
+
+    Length is always exact. The models drop a partial last frame, so the input is padded
+    and the output trimmed.
+  - WAV in: 16/24/32-bit integer and float, any channel count, WAVE_FORMAT_EXTENSIBLE.
+    WAV out: 24-bit, with the same rate, channels and frames, and every extra chunk (BWF
+    `bext` timecode, `iXML`, `LIST`) kept in order.
+  - Strength (wet/dry) is applied after cleaning, so the slider never re-runs the model. A
+    strength of 0 gives back the original.
+  - **Verified in the real window**, using the real open and save dialogs: a noisy stereo
+    48 kHz take with a `bext` chunk was opened, cleaned, auditioned A/B and saved. Checked
+    independently afterwards:
+    - same 24-bit stereo 48 kHz format
+    - 629,754 frames, identical to the input
+    - `bext` identical
+    - SNR from -2.3 to 16.0 dB
+  - **RE-USE** (NVIDIA, for badly damaged film audio) needs CUDA or Metal and is planned
+    for the GPU tier (M11).
+
 - [ ] **M9 Voice cloning with consent.**
   - A consent-recording flow and an on-device same-speaker check (speaker embeddings via
     sherpa-onnx).

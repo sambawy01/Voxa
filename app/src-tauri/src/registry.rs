@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use voxa_core::{Audio, Engine, EngineError, SynthesisRequest};
 use voxa_engines::supertonic::CHECKED_LANGUAGES;
-use voxa_engines::{Family, StyleEngine, StylePackage, SupertonicEngine};
+use voxa_engines::{Denoiser, DenoiserKind, Family, StyleEngine, StylePackage, SupertonicEngine};
 use voxa_g2p::EnglishG2p;
 use voxa_models::{
     import_pack, Catalogue, Downloader, InstalledModel, ModelEntry, ModelStore, Tier, TrustedKeys,
@@ -31,6 +31,8 @@ pub fn family_name(engine: &str) -> &'static str {
         "kokoro" => "Voxa Classic",
         "kitten" => "Voxa Instant",
         "supertonic" => "Voxa World",
+        "dpdfnet" => "Voxa Clean Studio",
+        "gtcrn" => "Voxa Clean Fast",
         _ => "Voxa",
     }
 }
@@ -169,6 +171,17 @@ pub struct Registry {
     names: Vec<CatalogueVoice>,
     threads: i32,
     engines: Mutex<HashMap<String, Arc<dyn Engine>>>,
+    denoisers: Mutex<HashMap<String, Arc<Denoiser>>>,
+}
+
+/// An installed clean-up model, for the "Clean up audio" picker.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct CleanupModel {
+    pub id: String,
+    pub version: String,
+    pub family: String,
+    /// "studio" (full band, 48 kHz) or "fast" (16 kHz).
+    pub kind: String,
 }
 
 impl Registry {
@@ -187,6 +200,7 @@ impl Registry {
             names: file.voices,
             threads,
             engines: Mutex::new(HashMap::new()),
+            denoisers: Mutex::new(HashMap::new()),
         })
     }
 
@@ -441,6 +455,58 @@ impl Registry {
             .find(|m| m.entry.id == id && m.entry.version == version)
             .ok_or_else(|| format!("{id} {version} is not installed"))?;
         self.engine(&model).map_err(|e| e.to_string())
+    }
+
+    /// Installed clean-up models (newest version each), Studio first.
+    pub fn cleanup_models(&self) -> Result<Vec<CleanupModel>, String> {
+        let mut v: Vec<CleanupModel> = self
+            .newest()?
+            .into_iter()
+            .filter(|m| matches!(m.entry.engine.as_str(), "dpdfnet" | "gtcrn"))
+            .map(|m| CleanupModel {
+                family: family_name(&m.entry.engine).into(),
+                kind: if m.entry.engine == "dpdfnet" {
+                    "studio"
+                } else {
+                    "fast"
+                }
+                .into(),
+                id: m.entry.id,
+                version: m.entry.version,
+            })
+            .collect();
+        v.sort_by(|a, b| b.kind.cmp(&a.kind));
+        Ok(v)
+    }
+
+    /// The denoiser for an installed clean-up model, loaded once.
+    pub fn denoiser(&self, id: &str) -> Result<Arc<Denoiser>, String> {
+        let m = self
+            .newest()?
+            .into_iter()
+            .find(|m| m.entry.id == id)
+            .ok_or_else(|| format!("clean-up model {id} is not installed"))?;
+        let key = format!("{}@{}", m.entry.id, m.entry.version);
+        if let Some(d) = self.denoisers.lock().unwrap().get(&key) {
+            return Ok(Arc::clone(d));
+        }
+        let kind = match m.entry.engine.as_str() {
+            "dpdfnet" => DenoiserKind::Studio,
+            "gtcrn" => DenoiserKind::Fast,
+            other => return Err(format!("{id} is not a clean-up model ({other})")),
+        };
+        let file = m
+            .entry
+            .files
+            .iter()
+            .find(|f| f.path.ends_with(".onnx"))
+            .ok_or("the clean-up model has no .onnx file")?;
+        let d = Arc::new(
+            Denoiser::load(kind, &m.dir.join(&file.path), self.threads)
+                .map_err(|e| e.to_string())?,
+        );
+        self.denoisers.lock().unwrap().insert(key, Arc::clone(&d));
+        Ok(d)
     }
 
     /// One voice per installed model (newest version), for the benchmark: the model's

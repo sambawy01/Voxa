@@ -110,6 +110,24 @@ pub fn mix(original: &[f32], cleaned: &[f32], strength: f32) -> Vec<f32> {
         .collect()
 }
 
+/// Anything that removes noise from a recording, keeping its exact length: the built-in
+/// denoisers here, or a clean-up worker (RE-USE on a GPU, see `worker`).
+pub trait Cleaner: Send + Sync {
+    fn clean(&self, samples: &[f32], rate: u32) -> Result<Vec<f32>, EngineError>;
+}
+
+impl Cleaner for Denoiser {
+    fn clean(&self, samples: &[f32], rate: u32) -> Result<Vec<f32>, EngineError> {
+        Denoiser::clean(self, samples, rate)
+    }
+}
+
+impl Cleaner for crate::worker::WorkerEngine {
+    fn clean(&self, samples: &[f32], rate: u32) -> Result<Vec<f32>, EngineError> {
+        crate::worker::WorkerEngine::clean(self, samples, rate)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import voxa_worker  # noqa: E402
-from reference_worker import ToneEngine  # noqa: E402
+from reference_worker import HalfEngine, ToneEngine  # noqa: E402
 
 
 def run(lines, engine=None):
@@ -45,6 +45,27 @@ class Protocol(unittest.TestCase):
         self.assertIn('no text', r[3]['error'])
         self.assertIn('unknown op', r[4]['error'])
         self.assertIn('out of GPU memory', r[5]['error'])
+
+
+class Clean(unittest.TestCase):
+    def test_clean_keeps_length_and_reports_capabilities(self):
+        x = voxa_worker.encode_samples([0.2, -0.4, 0.6])
+        r = run([json.dumps({'id': 1, 'op': 'hello', 'protocol': 1}),
+                 json.dumps({'id': 2, 'op': 'clean', 'sample_rate': 48000, 'samples': x}),
+                 json.dumps({'id': 3, 'op': 'synthesize', 'text': 'x', 'voice': 'low'})],
+                HalfEngine())
+        self.assertEqual(r[0]['capabilities'], ['clean'])
+        out = voxa_worker.decode_samples(r[1]['samples'])
+        self.assertEqual([round(float(v), 3) for v in out], [0.1, -0.2, 0.3])
+        self.assertIn('does not speak', r[2]['error'])
+        self.assertEqual(run([json.dumps({'id': 1, 'op': 'hello', 'protocol': 1})])[0]['capabilities'],
+                         ['synthesize'])
+
+    def test_a_length_change_is_refused(self):
+        x = voxa_worker.encode_samples([0.1] * 10)
+        r = run([json.dumps({'id': 1, 'op': 'clean', 'sample_rate': 16000, 'samples': x})],
+                HalfEngine(bad_length=True))
+        self.assertIn('changed the length', r[0]['error'])
 
 
 if __name__ == '__main__':

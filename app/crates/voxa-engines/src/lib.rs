@@ -19,7 +19,7 @@ pub mod supertonic;
 pub mod watermark;
 pub mod worker;
 
-pub use cleanup::{mix, Denoiser, DenoiserKind};
+pub use cleanup::{mix, Cleaner, Denoiser, DenoiserKind};
 pub use pocket::PocketEngine;
 pub use style::{misaki_to_ipa, Family, StyleEngine, StylePackage};
 pub use supertonic::SupertonicEngine;

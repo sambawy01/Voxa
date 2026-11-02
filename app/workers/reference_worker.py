@@ -5,6 +5,8 @@ client can be tested on any machine. See voxa_worker.py for the protocol.
     python3 -I reference_worker.py [--voices a,b] [--fail-after N] [--crash-after N]
 
 --voices names its voices (default: low,high); each one is a step higher in pitch.
+--clean makes it a clean-up worker instead: it halves the level ("removes noise").
+--bad-length makes --clean return one sample too few (tests the length check).
 
 --fail-after N reports an error from the Nth synthesis on; --crash-after N exits during
 the Nth synthesis (tests restart and error handling).
@@ -41,6 +43,17 @@ class ToneEngine:
         return out
 
 
+class HalfEngine:
+    """A clean-up worker: halves the signal. Length is kept, as Voxa requires."""
+
+    def __init__(self, bad_length=False):
+        self.bad_length = bad_length
+
+    def clean(self, samples, sample_rate):
+        out = [0.5 * x for x in samples]
+        return out[:-1] if self.bad_length else out
+
+
 def arg(name):
     if name in sys.argv:
         return sys.argv[sys.argv.index(name) + 1]
@@ -49,5 +62,8 @@ def arg(name):
 
 if __name__ == '__main__':
     n = lambda v: int(v) if v is not None else None  # noqa: E731
-    voices = (arg('--voices') or 'low,high').split(',')
-    voxa_worker.serve(ToneEngine(n(arg('--fail-after')), n(arg('--crash-after')), voices))
+    if '--clean' in sys.argv:
+        voxa_worker.serve(HalfEngine('--bad-length' in sys.argv))
+    else:
+        voices = (arg('--voices') or 'low,high').split(',')
+        voxa_worker.serve(ToneEngine(n(arg('--fail-after')), n(arg('--crash-after')), voices))

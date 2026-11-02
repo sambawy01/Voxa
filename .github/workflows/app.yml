@@ -63,6 +63,7 @@ jobs:
         run: |
           python3 -I workers/test_voxa_worker.py
           python3 -I workers/test_studio.py
+          python3 -I workers/test_reuse.py
 
   build:
     strategy:

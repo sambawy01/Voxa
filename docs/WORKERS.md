@@ -36,9 +36,10 @@ same `id`. Logs go to **stderr only**; anything else on stdout is ignored.
 
 | Request | Reply |
 |---|---|
-| `{"id":1,"op":"hello","protocol":1}` | `{"id":1,"ok":true,"protocol":1,"sample_rate":24000,"voices":["aria"]}` |
+| `{"id":1,"op":"hello","protocol":1}` | `{"id":1,"ok":true,"protocol":1,"sample_rate":24000,"voices":["aria"],"capabilities":["synthesize"]}` |
 | `{"id":2,"op":"synthesize","text":"…","voice":"aria","speed":1.0}` | `{"id":2,"ok":true,"sample_rate":24000,"samples":"<base64 float32 LE>"}` |
-| `{"id":3,"op":"shutdown"}` | `{"id":3,"ok":true}` |
+| `{"id":3,"op":"clean","sample_rate":48000,"samples":"<base64 float32 LE>"}` | `{"id":3,"ok":true,"sample_rate":48000,"samples":"…"}` |
+| `{"id":4,"op":"shutdown"}` | `{"id":4,"ok":true}` |
 | any failure | `{"id":2,"ok":false,"error":"plain words"}` |
 
 The app sends one sentence per `synthesize` and joins the sentences itself.
@@ -48,10 +49,19 @@ The app sends one sentence per `synthesize` and joins the sentences itself.
 - **Worker dies** (a crash, or running out of memory): it is started again once.
 - **Worker stops answering:** past the timeout it is killed.
 
+## Clean-up workers
+
+A worker with `"kind": "cleanup"` in `worker.json` removes noise instead of speaking. It
+lists no voices, reports `"capabilities": ["clean"]`, and answers `clean` with exactly as
+many samples as it got. The app refuses any other length, because cleaned dialogue must
+stay in sync with the picture. Clean-up workers appear in **Clean up audio** as
+"Voxa Clean Film", ahead of Studio and Fast. The app cleans each channel separately, and
+the WAV keeps its rate, length and chunks (BWF, iXML), as with the built-in models.
+
 ## Writing a worker
 
 `app/workers/voxa_worker.py` holds the protocol loop. A worker is a class with
 `sample_rate`, `voices` and `synthesize(text, voice, speed)`, which returns floats in
 [-1, 1] (a list or a NumPy array). It passes an instance to `voxa_worker.serve`.
-`app/workers/reference_worker.py` is a complete example with no dependencies (it plays
-tones). The app's tests use it on every OS.
+`app/workers/reference_worker.py` is a complete example with no dependencies: it plays
+tones, or with `--clean` halves the level. The app's tests use it on every OS.

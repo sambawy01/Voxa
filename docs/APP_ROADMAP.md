@@ -342,8 +342,21 @@ checks it off here in the same PR, and merges it once CI is green.**
       the GPU tier.
     - The MLX build (mlx-audio) was not written: it can't be run here. On Apple Silicon
       the PyTorch worker uses MPS for now (see Blocked on owner).
-  - [ ] **M11d RE-USE on the GPU worker.** Film-dialogue clean-up for the GPU tier. This
-    needs a GPU to measure.
+  - [x] **M11d RE-USE on the GPU worker (Voxa Clean Film).**
+    - The worker protocol gains `clean` (audio in, exactly as long out). A pack with
+      `"kind": "cleanup"` appears in **Clean up audio** as "Voxa Clean Film", before
+      Studio and Fast, behind one `Cleaner` interface with the built-in models.
+    - Tested on every OS with the reference worker. A stereo take with a timecode chunk
+      was cleaned through a signed worker pack, keeping rate, length, channels and `bext`.
+      A worker that changes the length is refused.
+    - `app/workers/reuse_worker.py` follows NVIDIA's `inference_chunk.py` (5 s chunks,
+      50% overlap). Each chunk is padded to a multiple of the STFT hop first. NVIDIA's
+      script lost the end of every chunk at 44.1 kHz (-1.2% with an identity model);
+      `check_reuse_chunking.py` now measures 1e-7 at 16, 22.05, 44.1 and 48 kHz.
+    - `tools/build_reuse_package.py` builds the pack and keeps NVIDIA's licence and
+      notices.
+    - **RE-USE itself has not been run.** It needs CUDA (mamba-ssm), and NVIDIA's own
+      script refuses CPU mode (see Blocked on owner).
 - [ ] **M12 Launch changes to the website.** Only when the owner says the app is launching:
   - remove the paid tier, billing and the GPU path from the site
   - make the free site a demo with a "Get the app" button
@@ -421,6 +434,14 @@ store listings, legal review.)
   - On the Mac, also try mlx-audio's Qwen3-TTS. If it is clearly faster than MPS, it
     becomes a second worker.
   - Listen to the Chinese, Japanese and Korean voices with native speakers.
+- **Voxa Clean Film (RE-USE) on an NVIDIA GPU** (from M11d). The worker follows
+  NVIDIA's script but couldn't run here, because there is no CUDA:
+  - Build the pack with a CUDA environment that has mamba-ssm
+    (`build_reuse_package.py --env`).
+  - Install it and clean a few real noisy film takes in **Clean up audio**.
+  - Check the length is exact, then send the speed and a listening verdict compared with
+    Voxa Clean Studio on the same takes.
+  - Keep NVIDIA's OpenMDW notices in the pack; they are kept as `RE-USE-*` files.
 - **Model mirror hosting** (from M2). Somewhere to host model files over https, for example
   Cloudflare R2, a Hugging Face organisation, or both as primary and backup. Needs an account
   in Voxa's name.

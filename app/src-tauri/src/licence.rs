@@ -44,7 +44,7 @@ impl Licensing {
                 .and_then(parse_key)
                 .into_iter()
                 .collect(),
-            device_id(),
+            device_id(data_dir),
         )
     }
 

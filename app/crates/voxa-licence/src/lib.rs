@@ -55,11 +55,31 @@ pub struct Payload {
     pub issued: String,
 }
 
-/// A stable, anonymous id for this machine: a hash of the OS machine id with a Voxa
+/// A stable, anonymous id for this device: a hash of a device identifier with a Voxa
 /// prefix, so it can't be matched with ids other apps send.
-pub fn device_id() -> String {
-    let raw = machine_uid::get().unwrap_or_else(|_| fallback_machine_id());
-    device_id_from(&raw)
+///
+/// Desktops use the OS machine id (falling back to a random id kept in the home folder).
+/// Phones expose no machine id to apps, so there it is a random id kept in `app_dir`, the
+/// app's own data folder: reinstalling the app makes a new id, which counts as a new
+/// device until the old one is deactivated or released.
+pub fn device_id(app_dir: &Path) -> String {
+    device_id_from(&raw_device_id(app_dir))
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn raw_device_id(_app_dir: &Path) -> String {
+    machine_uid::get().unwrap_or_else(|_| {
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        stored_id(&home, ".voxa-machine-id")
+    })
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn raw_device_id(app_dir: &Path) -> String {
+    stored_id(app_dir, "device-id")
 }
 
 pub fn device_id_from(machine: &str) -> String {
@@ -67,20 +87,16 @@ pub fn device_id_from(machine: &str) -> String {
     hex::encode(&h[..16])
 }
 
-/// Used only where the OS exposes no machine id: a random id kept in the user's config so
-/// it stays stable for this user account.
-fn fallback_machine_id() -> String {
-    let dir = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    let path = dir.join(".voxa-machine-id");
+/// A random id kept in `dir/name`, created on first use, so it stays stable for this
+/// user account (desktop fallback) or this app install (phones).
+fn stored_id(dir: &Path, name: &str) -> String {
+    let path = dir.join(name);
     if let Ok(s) = std::fs::read_to_string(&path) {
         if !s.trim().is_empty() {
             return s.trim().to_string();
         }
     }
-    // Time, process id and a stack address: enough for a per-account identifier.
+    // Time, process id and a stack address: enough for a per-install identifier.
     let t = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -88,6 +104,7 @@ fn fallback_machine_id() -> String {
     let marker = 0u8;
     let digest = Sha256::digest(format!("{t}:{}:{:p}", std::process::id(), &marker));
     let id = hex::encode(&digest[..16]);
+    let _ = std::fs::create_dir_all(dir);
     let _ = std::fs::write(&path, &id);
     id
 }
@@ -303,8 +320,25 @@ mod tests {
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
         // The raw machine id is not recoverable from, nor equal to, the hash.
         assert!(!a.contains("machine"));
-        let here = device_id();
-        assert_eq!(here, device_id(), "same machine, same id");
+        let d = tempfile::tempdir().unwrap();
+        let here = device_id(d.path());
+        assert_eq!(here, device_id(d.path()), "same machine, same id");
+    }
+
+    #[test]
+    fn stored_ids_are_created_once_and_kept() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("app-data");
+        let a = stored_id(&dir, "device-id");
+        assert_eq!(a.len(), 32);
+        assert_eq!(std::fs::read_to_string(dir.join("device-id")).unwrap(), a);
+        assert_eq!(stored_id(&dir, "device-id"), a, "kept across launches");
+        let other = tempfile::tempdir().unwrap();
+        assert_ne!(
+            stored_id(other.path(), "device-id"),
+            a,
+            "a new install, a new id"
+        );
     }
 
     #[test]

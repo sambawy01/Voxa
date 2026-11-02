@@ -98,8 +98,8 @@ jobs:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: app
-          cache-directories: app/target/sherpa-onnx-prebuilt
+          workspaces: app -> src-tauri/target
+          cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
           prefix-key: v2-sherpa-android
       - uses: actions/setup-node@v4
         with:
@@ -111,6 +111,12 @@ jobs:
           npx tauri android init --ci
           python3 -I tools/android_setup.py src-tauri/gen/android
       - name: Build an unsigned release APK (arm64)
+        # sherpa-onnx-sys copies its Android libraries (sherpa-onnx, ONNX Runtime) into
+        # gen/android/.../jniLibs only when Cargo's target dir sits next to tauri.conf.json;
+        # the workspace's own target dir (app/target) does not, and the APK then ships
+        # without them. Build into src-tauri/target instead.
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/app/src-tauri/target
         run: |
           export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           npx tauri android build --apk --target aarch64 --ci

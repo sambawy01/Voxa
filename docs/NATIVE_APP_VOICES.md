@@ -1,6 +1,6 @@
 # Voxa native app: voices, models and how they stay up to date
 
-**Status: proposal.** Licences were checked against model cards and LICENSE files on
+**Status: proposal; cloning and purchase model decided 2026-11-02.** Licences were checked against model cards and LICENSE files on
 2026-11-02. Speed and memory requirements are **not measured yet**: every "requirement" below
 is a target to confirm on real devices before it goes on a voice card.
 
@@ -97,14 +97,33 @@ your network.
 
 ## Voice cloning policy
 
-Cloning runs on the device, so Voxa cannot moderate it afterwards. Rules:
+**Decided: cloning ships in v1.**
 
-- Clone only from a live recording of a short consent sentence spoken in the app, not from an
-  uploaded file of someone else.
-- Prefer models that watermark their output (Chatterbox has a built-in watermark).
-- The terms forbid impersonation.
+Cloning runs on the device, so Voxa cannot moderate it afterwards. The safeguards are built
+into the app:
 
-Decide before launch whether cloning ships in v1.
+- **Consent recording.** Before a voice is cloned, the person reads a short consent sentence
+  aloud in the app, live. The sentence includes their name and the date.
+- **Same-speaker check.** An on-device speaker-verification model compares the consent
+  recording with the cloning sample. The voice is created only if they match. Example model:
+  3D-Speaker embeddings via sherpa-onnx, Apache-2.0; licence to be confirmed.
+  - This allows the film use case (an actor records consent once, and the voice is used for
+    ADR) and blocks cloning a stranger from a downloaded clip.
+- **Watermark.** Prefer cloning models with a built-in watermark (Chatterbox has one). Add an
+  inaudible watermark to all cloned output where the model has none.
+- **Labelled voices.** Cloned voices are marked as cloned in the app and in exported file
+  metadata.
+- **Terms.** Impersonation, fraud and cloning without consent are forbidden. The terms
+  include the use restrictions that model licences require Voxa to pass on (OpenRAIL-M,
+  Pocket TTS's prohibited uses).
+
+Cloning-capable models, by tier:
+
+| Tier | Models |
+|---|---|
+| 📱 | Pocket TTS (cloning build, gated) and Chatterbox Nano. Both need testing on phones |
+| 💻 | Chatterbox Nano/Flash, MOSS-TTS-Nano, Marvis, NeuTTS Air |
+| 🖥️ | Qwen3-TTS, Chatterbox Multilingual, Dia2, CosyVoice3 |
 
 ## Keeping the models updated
 
@@ -145,11 +164,50 @@ Decide before launch whether cloning ships in v1.
   downloads and says so in the catalogue.
 - Cadence: quarterly catalogue releases, with fixes at any time.
 
-### Business tie-in (proposal)
+## Purchase and licence (decided)
 
-- The purchase includes every catalogue voice the installed app version can run, forever.
-- Major app versions, which add new architectures and features, are an optional discounted
-  upgrade.
+**Decided:**
+- One payment buys the whole application: every voice, every tier, cloning and clean-up.
+- No subscription.
+- You install it on your machine and use it as much as you want.
+- If you change machines, you deactivate the old installation and get a new activation.
+
+### How activation works (proposed design)
+
+- **Activate once, then fully offline.**
+  - On first launch the app sends the licence key and an anonymous device ID to Voxa's
+    licence server once.
+  - The server returns a **signed licence file** (Ed25519) bound to that device.
+  - From then on the app checks the signature locally. It never needs the internet again
+    to run.
+  - This keeps the "works forever, offline" promise even if Voxa's servers are down.
+- **Transfer.**
+  - "Deactivate this device" in the app frees the activation; the server records it.
+  - If the old machine is dead or lost, the user requests a reset on Voxa's account page
+    or by emailing support.
+  - Self-service resets are rate-limited (for example 3 a year); support can always do more.
+- **Activations per licence: two (decided).** Any two devices, for example one computer and
+  one phone. Deactivating one frees its slot.
+- **If Voxa ever shuts down**, publish a final update or unlock that removes the activation
+  check, so buyers keep what they paid for.
+- **Model downloads still need a server** the first time. Mirror the catalogue to a second
+  host (for example a Voxa organisation on Hugging Face) so downloads survive an outage. The
+  app also lets users export and import model packs.
+
+### App stores are different
+
+- On **iPhone/iPad, Mac App Store and Google Play**, the store sells the app. A purchase is
+  tied to the person's Apple or Google account, and they can install it on all their own
+  devices. Store rules don't allow Voxa to add its own per-device activation on top.
+- So the store versions use the store's one-time purchase as-is.
+- The **activation system above applies to copies sold directly** (Paddle) for Mac, Windows
+  and Linux.
+
+### Updates
+
+- Every catalogue voice the installed app version can run is included, forever.
+- **To be decided before launch:** whether major app versions that add new model
+  architectures are free for existing buyers or an optional discounted upgrade.
 
 ## First steps
 

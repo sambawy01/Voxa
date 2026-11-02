@@ -300,8 +300,11 @@ checks it off here in the same PR, and merges it once CI is green.**
       [MOBILE.md](MOBILE.md).
     - The licence device ID on phones is a random per-install ID, because phones give
       apps no machine ID.
-  - [ ] **M10c iOS build in CI.** An unsigned build on a macOS runner, with the microphone
-    usage description.
+  - [x] **M10c iOS build in CI.**
+    - An unsigned iPhone (arm64) build, 34 MB, is made on every change and kept as a CI
+      artifact.
+    - Each build is checked: it must contain sherpa-onnx's framework and the microphone
+      usage description. See [MOBILE.md](MOBILE.md).
 - [ ] **M11 Computer and GPU tiers, and headless mode.**
   - A model-worker interface for larger models (MLX on Apple Silicon; a PyTorch/CUDA
     worker elsewhere).
@@ -367,6 +370,13 @@ store listings, legal review.)
     - the microphone prompt and recording for Your voices
     - activation
   - Also run **Speed test** on each phone and send the results.
+- **iPhone testing and the App Store** (from M10c). CI builds an unsigned app. Before
+  release:
+  - Join the Apple Developer Program.
+  - Set the bundle id (it is `app.voxa.desktop` now, so pick the final one), the team and
+    signing.
+  - Send a build through TestFlight to 2-3 iPhones (an iPhone 12 or older, and a recent
+    one) and run the same checks as on Android, including **Speed test**.
 - **Model mirror hosting** (from M2). Somewhere to host model files over https, for example
   Cloudflare R2, a Hugging Face organisation, or both as primary and backup. Needs an account
   in Voxa's name.

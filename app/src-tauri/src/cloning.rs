@@ -362,6 +362,45 @@ impl Cloning {
 mod tests {
     use super::*;
 
+    fn norm_words(s: &str) -> Vec<String> {
+        s.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Word-level edit distance (substitutions, insertions, deletions).
+    fn word_edits(a: &[String], b: &[String]) -> usize {
+        let mut prev: Vec<usize> = (0..=b.len()).collect();
+        for (i, x) in a.iter().enumerate() {
+            let mut cur = vec![i + 1];
+            for (j, y) in b.iter().enumerate() {
+                cur.push(
+                    (prev[j] + usize::from(x != y))
+                        .min(prev[j + 1] + 1)
+                        .min(cur[j] + 1),
+                );
+            }
+            prev = cur;
+        }
+        prev[b.len()]
+    }
+
+    #[test]
+    fn word_edits_counts_word_errors() {
+        let w = |s: &str| norm_words(s);
+        assert_eq!(
+            word_edits(&w("thank you for calling"), &w("Thank you, for calling.")),
+            0
+        );
+        assert_eq!(
+            word_edits(&w("thank you for calling"), &w("but keep recalling")),
+            3
+        );
+        assert_eq!(word_edits(&w("a b c"), &w("a c")), 1);
+    }
+
     #[test]
     fn dates_read_naturally() {
         assert_eq!(date_of(0), "1 January 1970");
@@ -495,29 +534,43 @@ mod tests {
             serde_json::from_slice(&std::fs::read(dir.join("consent.json")).unwrap()).unwrap();
         assert_eq!(record["passed"], true);
 
-        let text = "Thank you for calling. Please leave a message after the tone.";
-        let a = c.synthesize(&reg, &v.id, text, 1.0).unwrap();
-        let out = d.path().join("message.wav");
-        std::fs::write(&out, labelled_wav(&a)).unwrap();
-        let rep = check_file(&out).unwrap();
-        assert!(rep.found && rep.labelled, "{rep:?}");
-        // The words come through.
-        let heard = reg
-            .consent_checker()
-            .unwrap()
-            .transcribe(&a.samples, a.sample_rate);
-        let heard = heard.to_lowercase();
-        for w in ["thank", "calling", "message", "tone"] {
-            assert!(
-                heard.contains(w),
-                "{w:?} not in {heard:?} ({:.2} s)",
+        // Intelligibility: the word error rate over several sentences, as in the round-trip
+        // quality gate. Pocket is sampled, so a single clip can slur a word ("thank you"
+        // heard as "but keep" at full length); the gate is on the rate, not one clip.
+        let sentences = [
+            "Thank you for calling. Please leave a message after the tone.",
+            "The meeting has moved to Thursday afternoon at noon.",
+            "Turn left at the bakery and the station is on your right.",
+            "We will send the new schedule to everyone by Friday.",
+        ];
+        let asr = reg.consent_checker().unwrap();
+        let (mut errors, mut total, mut worst) = (0usize, 0usize, 0f32);
+        for (k, text) in sentences.iter().enumerate() {
+            let a = c.synthesize(&reg, &v.id, text, 1.0).unwrap();
+            if k == 0 {
+                let out = d.path().join("message.wav");
+                std::fs::write(&out, labelled_wav(&a)).unwrap();
+                let rep = check_file(&out).unwrap();
+                assert!(rep.found && rep.labelled, "{rep:?}");
+                worst = rep.score;
+            }
+            let heard = asr.transcribe(&a.samples, a.sample_rate);
+            let (want, got) = (norm_words(text), norm_words(&heard));
+            let e = word_edits(&want, &got);
+            eprintln!(
+                "clone said {text:?}, heard {heard:?} ({e} errors, {:.2} s)",
                 a.duration()
             );
+            errors += e;
+            total += want.len();
         }
+        let wer = errors as f32 / total as f32;
         eprintln!(
-            "clone: similarity {:.2}, watermark score {:.1}, heard {heard:?}",
-            record["similarity"], rep.score
+            "clone: similarity {:.2}, watermark score {worst:.1}, WER {:.1}%",
+            record["similarity"],
+            100.0 * wer
         );
+        assert!(wer <= 0.15, "word error rate {:.1}%", 100.0 * wer);
 
         c.remove(&reg, &v.id).unwrap();
         assert!(c.voices(&reg).is_empty());
@@ -599,28 +652,37 @@ mod tests {
         let e = reg.pocket().unwrap();
         e.set_voice("r", reference);
         let asr = reg.consent_checker().unwrap();
-        for t in [
+        let sentences = [
             "Thank you for calling. Please leave a message after the tone.",
-            "Welcome back to the show.",
-            "Good morning, everyone.",
+            "The meeting has moved to Thursday afternoon at noon.",
+            "Turn left at the bakery and the station is on your right.",
+            "We will send the new schedule to everyone by Friday.",
             "Hello there.",
-        ] {
-            for _ in 0..3 {
+        ];
+        let (mut errors, mut total) = (0, 0);
+        for _ in 0..3 {
+            for t in sentences {
                 let req = SynthesisRequest {
                     text: t.into(),
                     voice: "r".into(),
                     speed: 1.0,
                 };
-                let a = voxa_core::Engine::synthesize(e.as_ref(), &req, &mut |_, _| {}).unwrap();
-                let lead = (a.sample_rate as usize / 4).min(a.samples.len());
-                let rms0 =
-                    (a.samples[..lead].iter().map(|x| x * x).sum::<f32>() / lead as f32).sqrt();
-                eprintln!(
-                    "POCKET {t:?} -> {:?} ({:.2} s, first 0.25 s rms {rms0:.4})",
-                    asr.transcribe(&a.samples, a.sample_rate),
-                    a.duration()
-                );
+                let mut a =
+                    voxa_core::Engine::synthesize(e.as_ref(), &req, &mut |_, _| {}).unwrap();
+                a.samples
+                    .splice(0..0, std::iter::repeat_n(0.0, a.sample_rate as usize / 5));
+                let heard = asr.transcribe(&a.samples, a.sample_rate);
+                let n = word_edits(&norm_words(t), &norm_words(&heard));
+                errors += n;
+                total += norm_words(t).len();
+                if n > 0 {
+                    eprintln!("POCKET {t:?} -> {heard:?} ({:.2} s)", a.duration());
+                }
             }
         }
+        eprintln!(
+            "POCKET WER {:.1}% ({errors}/{total})",
+            100.0 * errors as f32 / total as f32
+        );
     }
 }

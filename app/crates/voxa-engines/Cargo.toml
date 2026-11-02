@@ -10,6 +10,8 @@ publish.workspace = true
 sherpa-onnx = "=2.0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
 voxa-core = { path = "../voxa-core" }
 
 [dev-dependencies]

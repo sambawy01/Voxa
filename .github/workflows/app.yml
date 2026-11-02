@@ -100,8 +100,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app -> src-tauri/target
-          cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
-          prefix-key: v2-sherpa-android
+          # Registry only. A restored target dir brought back sherpa-onnx-sys's build output
+          # without its downloaded Android libraries, so linking failed; with no cached target
+          # the build script always runs and fetches them.
+          cache-targets: false
+          prefix-key: v3-sherpa-android
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -157,8 +160,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app -> src-tauri/target
-          cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
-          prefix-key: v2-sherpa-ios
+          # Registry only. A restored target dir brought back sherpa-onnx-sys's build output
+          # without its downloaded framework, so linking failed; with no cached target
+          # the build script always runs and fetches them.
+          cache-targets: false
+          prefix-key: v3-sherpa-ios
       - uses: actions/setup-node@v4
         with:
           node-version: 22

@@ -112,9 +112,34 @@ checks it off here in the same PR, and merges it once CI is green.**
   - `tools/licences.py` is now a **CI licence gate**: the build fails if any dependency's
     licence cannot be met with permissive licences (no GPL, AGPL or LGPL), or if the
     credits list is stale.
-- [ ] **M5 Device benchmark.** An in-app benchmark: speed (real-time factor), first-audio
+- [x] **M5 Device benchmark.** An in-app benchmark: speed (real-time factor), first-audio
   latency and peak memory per voice, exportable as JSON. These numbers feed the voice-card
   labels.
+  - The **Speed test** section runs every installed model on a fixed paragraph and
+    reports:
+    - cold load time
+    - time to first audio (the first sentence)
+    - speed (1/RTF)
+    - peak and model memory
+    - device details (OS, CPU, cores, RAM)
+
+    Results save as JSON.
+  - Measured in the app on the 4-core cloud dev box (Intel Xeon, 16 GB), with the webview
+    running:
+
+    | Model | Load | First audio | Speed | Memory |
+    |---|---|---|---|---|
+    | Voxa Instant (Kitten nano) | 3.0 s | 0.6 s | 5.5× real time | 206 MB |
+    | Voxa Classic (Kokoro int8) | 7.5 s | 1.9 s | 1.4× real time | 402 MB |
+
+  - **Found and fixed:** Kitten's voices speak at very different rates for the same
+    setting. On the benchmark paragraph they took 21–32 s, against Kokoro's 18 s. Each
+    Kitten voice now has a measured pace factor (1.15–1.73) applied after the user's
+    speed. With it, all eight read the paragraph within 15% of each other, and the
+    Whisper round trip at those paces scores 0–2.6% WER.
+  - The phone, laptop and GPU numbers for the voice cards need runs on real devices
+    (blocked on owner).
+
 - [ ] **M6 Licence and activation.**
   - Licence server endpoints: activate, deactivate, reset; two activations per licence; a
     signed Ed25519 licence file bound to the device.
@@ -154,6 +179,11 @@ store listings, legal review.)
 - **Catalogue signing key** (from M2). Run `voxa-catalogue keygen` on your own machine, keep
   the secret key offline, and send the public key so it can be built into the app. See
   [CATALOGUE.md](CATALOGUE.md). Until then the app is built with a development key.
+- **Speed tests on real devices** (from M5). Install the app on 3–5 devices: an old
+  phone and a new one once M10 makes mobile builds, an Apple Silicon Mac, a Windows
+  laptop, and an NVIDIA machine. Run **Speed test** on each and send the saved JSON
+  files. They become the measured requirements in the catalogue
+  (`requirements.measured: true`) and the numbers on the voice cards.
 - **Model mirror hosting** (from M2). Somewhere to host model files over https, for example
   Cloudflare R2, a Hugging Face organisation, or both as primary and backup. Needs an account
   in Voxa's name.

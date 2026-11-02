@@ -1254,6 +1254,12 @@
 "repository": "https://github.com/Gilnaa/memoffset"
 },
 {
+"name": "memory-stats",
+"version": "1.2.0",
+"license": "MIT OR Apache-2.0",
+"repository": "https://github.com/Arc-blroth/memory-stats"
+},
+{
 "name": "mime",
 "version": "0.3.17",
 "license": "MIT OR Apache-2.0",
@@ -1312,6 +1318,12 @@
 "version": "0.31.3",
 "license": "MIT",
 "repository": "https://github.com/nix-rust/nix"
+},
+{
+"name": "ntapi",
+"version": "0.4.3",
+"license": "Apache-2.0 OR MIT",
+"repository": "https://github.com/MSxDOS/ntapi"
 },
 {
 "name": "num-conv",
@@ -1407,6 +1419,12 @@
 "name": "objc2-foundation",
 "version": "0.3.2",
 "license": "MIT",
+"repository": "https://github.com/madsmtm/objc2"
+},
+{
+"name": "objc2-io-kit",
+"version": "0.3.2",
+"license": "Zlib OR Apache-2.0 OR MIT",
 "repository": "https://github.com/madsmtm/objc2"
 },
 {
@@ -2056,6 +2074,12 @@
 "version": "0.14.0",
 "license": "MIT",
 "repository": "https://github.com/mystor/synstructure"
+},
+{
+"name": "sysinfo",
+"version": "0.40.1",
+"license": "MIT",
+"repository": "https://github.com/GuillaumeGomez/sysinfo"
 },
 {
 "name": "system-deps",

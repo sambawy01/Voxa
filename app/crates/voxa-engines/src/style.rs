@@ -100,6 +100,9 @@ pub struct StyleEngine {
     /// (Kokoro speaker name, sid) for the speakers this engine offers.
     voices: Vec<(String, i32)>,
     phonemizer: Arc<dyn Phonemizer>,
+    /// Per-voice speed multipliers that bring every voice to the same baseline pace (some
+    /// Kitten voices speak ~1.7x slower than others at the same setting).
+    pace: std::collections::HashMap<String, f32>,
 }
 
 impl StyleEngine {
@@ -136,7 +139,15 @@ impl StyleEngine {
             sample_rate,
             voices,
             phonemizer,
+            pace: Default::default(),
         })
+    }
+
+    /// Sets per-voice pace multipliers (measured; see the app's voice tables). The user's
+    /// speed is validated first, then multiplied, so "1.0x" sounds the same for every voice.
+    pub fn with_pace(mut self, pace: &[(&str, f32)]) -> Self {
+        self.pace = pace.iter().map(|(v, p)| (v.to_string(), *p)).collect();
+        self
     }
 
     fn sid(&self, voice: &str) -> Option<i32> {
@@ -273,6 +284,7 @@ impl Engine for StyleEngine {
         if phonemes.trim().is_empty() {
             return Ok(Audio::new(self.sample_rate, Vec::new()));
         }
+        let speed = speed * self.pace.get(voice).copied().unwrap_or(1.0);
         let mut audio = Audio::new(self.sample_rate, Vec::new());
         for piece in chunk_phonemes(&phonemes, MAX_PHONEMES) {
             let cfg = GenerationConfig {
@@ -461,5 +473,16 @@ mod kitten_tests {
             .synthesize_sentence("Hello world.", "expr-voice-2-f", 1.0)
             .unwrap();
         assert!(a.duration() > 0.4 && a.duration() < 3.0, "{}", a.duration());
+        // A pace of 2 makes the voice clearly faster at the same user speed.
+        let e = e.with_pace(&[("expr-voice-2-f", 2.0)]);
+        let fast = e
+            .synthesize_sentence("Hello world.", "expr-voice-2-f", 1.0)
+            .unwrap();
+        assert!(
+            fast.duration() < a.duration() * 0.75,
+            "{} vs {}",
+            fast.duration(),
+            a.duration()
+        );
     }
 }

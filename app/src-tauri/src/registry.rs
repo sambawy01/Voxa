@@ -33,17 +33,24 @@ pub fn family_name(engine: &str) -> &'static str {
     }
 }
 
-/// Kitten TTS speakers -> (Voxa id, name, gender). Kept here rather than in voices.json,
-/// which the website also reads. Ids are checked against voices.json in the tests.
-const KITTEN_VOICES: &[(&str, &str, &str, &str)] = &[
-    ("expr-voice-2-f", "luna", "Luna", "female"),
-    ("expr-voice-3-f", "nell", "Nell", "female"),
-    ("expr-voice-4-f", "tess", "Tess", "female"),
-    ("expr-voice-5-f", "zoe", "Zoe", "female"),
-    ("expr-voice-2-m", "ben", "Ben", "male"),
-    ("expr-voice-3-m", "leo", "Leo", "male"),
-    ("expr-voice-4-m", "sam", "Sam", "male"),
-    ("expr-voice-5-m", "max", "Max", "male"),
+/// Kitten TTS speakers -> (Voxa id, name, gender, pace). Kept here rather than in
+/// voices.json, which the website also reads. Ids are checked against voices.json in the
+/// tests.
+///
+/// `pace` brings each voice to Kokoro's speaking rate: Kitten's voices differ a lot at the
+/// same speed setting (expr-voice-2-f took 31.8 s for the benchmark paragraph, Kokoro's
+/// reference 18.3 s). Measured for kitten-nano 0.8 int8 on the benchmark paragraph
+/// (duration / Kokoro's); intelligibility at these paces checked with the Whisper round trip
+/// (WER 0.9-2.6%). Re-measure when the model version changes.
+const KITTEN_VOICES: &[(&str, &str, &str, &str, f32)] = &[
+    ("expr-voice-2-f", "luna", "Luna", "female", 1.73),
+    ("expr-voice-3-f", "nell", "Nell", "female", 1.33),
+    ("expr-voice-4-f", "tess", "Tess", "female", 1.28),
+    ("expr-voice-5-f", "zoe", "Zoe", "female", 1.15),
+    ("expr-voice-2-m", "ben", "Ben", "male", 1.21),
+    ("expr-voice-3-m", "leo", "Leo", "male", 1.34),
+    ("expr-voice-4-m", "sam", "Sam", "male", 1.17),
+    ("expr-voice-5-m", "max", "Max", "male", 1.67),
 ];
 
 #[derive(Debug, Clone, Deserialize)]
@@ -183,7 +190,7 @@ impl Registry {
         if m.entry.engine == "kitten" {
             return KITTEN_VOICES
                 .iter()
-                .map(|(src, id, name, gender)| voice(id, name, gender, "American", "en-US", src))
+                .map(|(src, id, name, gender, _)| voice(id, name, gender, "American", "en-US", src))
                 .collect();
         }
         if m.entry.engine != "kokoro" {
@@ -355,11 +362,42 @@ impl Registry {
     }
 
     pub fn remove(&self, id: &str, version: &str) -> Result<(), String> {
+        self.unload(id, version);
+        self.store.remove(id, version).map_err(|e| e.to_string())
+    }
+
+    /// Drops a loaded engine so the next use loads it from disk again (the benchmark
+    /// measures cold loads).
+    pub fn unload(&self, id: &str, version: &str) {
         self.engines
             .lock()
             .unwrap()
             .remove(&format!("{id}@{version}"));
-        self.store.remove(id, version).map_err(|e| e.to_string())
+    }
+
+    /// The engine for an installed model version, loading it if needed.
+    pub fn engine_for(&self, id: &str, version: &str) -> Result<Arc<dyn Engine>, String> {
+        let model = self
+            .store
+            .installed()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|m| m.entry.id == id && m.entry.version == version)
+            .ok_or_else(|| format!("{id} {version} is not installed"))?;
+        self.engine(&model).map_err(|e| e.to_string())
+    }
+
+    /// One voice per installed model (newest version), for the benchmark: the model's
+    /// default voice when it has one, otherwise its first.
+    pub fn benchmark_voices(&self) -> Result<Vec<Voice>, String> {
+        Ok(self
+            .newest()?
+            .iter()
+            .filter_map(|m| {
+                let vs = self.voices_of(m);
+                vs.iter().find(|v| v.default).or(vs.first()).cloned()
+            })
+            .collect())
     }
 
     fn engine(&self, model: &InstalledModel) -> Result<Arc<dyn Engine>, EngineError> {
@@ -376,7 +414,16 @@ impl Registry {
                 };
                 let pkg = StylePackage::open(&model.dir, family)?;
                 let g2p = Arc::new(EnglishG2p::from_dir(&model.dir.join("g2p"))?);
-                Arc::new(StyleEngine::load(&key, &pkg, prefixes, g2p, self.threads)?)
+                let engine = StyleEngine::load(&key, &pkg, prefixes, g2p, self.threads)?;
+                let pace: Vec<(&str, f32)> = if family == Family::Kitten {
+                    KITTEN_VOICES
+                        .iter()
+                        .map(|(src, .., p)| (*src, *p))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                Arc::new(engine.with_pace(&pace))
             }
             other => {
                 return Err(EngineError::Failed(format!(
@@ -462,7 +509,7 @@ mod tests {
             .as_array()
             .map(|a| a.iter().filter_map(|v| v["id"].as_str()).collect())
             .unwrap_or_default();
-        for (_, id, _, _) in KITTEN_VOICES {
+        for (_, id, _, _, _) in KITTEN_VOICES {
             assert!(
                 !file.voices.iter().any(|v| v.id == *id),
                 "{id} is in voices.json"
@@ -483,6 +530,20 @@ mod tests {
         assert_eq!(voices.iter().filter(|v| v.default).count(), 1);
         let a = r.synthesize("luna", "The quick brown fox.", 1.0).unwrap();
         assert!(a.duration() > 0.5);
+        // After pace correction every Kitten voice speaks the benchmark paragraph within
+        // 15% of the same length (uncorrected they spread 21-32 s).
+        let lens: Vec<f64> = KITTEN_VOICES
+            .iter()
+            .map(|(_, id, ..)| {
+                r.synthesize(id, crate::bench::BENCH_TEXT, 1.0)
+                    .unwrap()
+                    .duration()
+            })
+            .collect();
+        let (lo, hi) = lens
+            .iter()
+            .fold((f64::MAX, 0f64), |(a, b), x| (a.min(*x), b.max(*x)));
+        assert!(hi / lo < 1.15, "spread {lo:.1}-{hi:.1} s: {lens:?}");
     }
 
     /// Serves fixed paths over plain http on 127.0.0.1 (test-only downloader allows it).

@@ -68,3 +68,19 @@ export function groupVoices(voices) {
       return a.localeCompare(b);
     });
 }
+
+/** Rows for the speed-test table from a benchmark report. */
+export function benchRows(report) {
+  return report.results.map((r) => ({
+    model: `${r.family} (${r.voice})`,
+    load: `${(r.load_ms / 1000).toFixed(1)} s`,
+    first: `${(r.first_audio_ms / 1000).toFixed(1)} s`,
+    speed: r.rtf > 0 ? `${(1 / r.rtf).toFixed(1)}× real time` : '–',
+    memory: `${r.model_rss_mb} MB`,
+  }));
+}
+
+/** File name for saving a report, e.g. "voxa-speed-test-x86_64-2026-11-02.json". */
+export function benchFileName(report, date = new Date()) {
+  return `voxa-speed-test-${report.device.arch}-${date.toISOString().slice(0, 10)}.json`;
+}

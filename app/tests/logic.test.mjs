@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   charStatus, clampSpeed, speedLabel, friendlyError, MAX_CHARS, tierLabel, formatBytes, groupVoices,
+  benchRows, benchFileName,
 } from '../ui/logic.js';
 
 test('charStatus counts trimmed characters, not UTF-16 units', () => {
@@ -69,4 +70,20 @@ test('groupVoices separates families, women first within each', () => {
     'Voxa Classic · American women', 'Voxa Classic · American men',
     'Voxa Instant · American women', 'Voxa Instant · American men',
   ]);
+});
+
+test('benchRows formats a report', () => {
+  const rows = benchRows({ results: [{
+    family: 'Voxa Instant', voice: 'Luna', load_ms: 932, first_audio_ms: 967, rtf: 0.178, model_rss_mb: 277,
+  }] });
+  assert.deepEqual(rows, [{
+    model: 'Voxa Instant (Luna)', load: '0.9 s', first: '1.0 s', speed: '5.6× real time', memory: '277 MB',
+  }]);
+});
+
+test('benchFileName', () => {
+  assert.equal(
+    benchFileName({ device: { arch: 'aarch64' } }, new Date('2026-11-02T12:00:00Z')),
+    'voxa-speed-test-aarch64-2026-11-02.json',
+  );
 });

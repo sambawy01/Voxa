@@ -99,3 +99,7 @@ summary { cursor: pointer }
 .credits.small { font-size: .82rem; color: var(--dim) }
 progress { width: 100%; height: 6px; accent-color: #7c3aed }
 .flag { font-size: .8rem; color: var(--dim); margin-left: 6px }
+table.results { width: 100%; border-collapse: collapse; font-size: .85rem }
+table.results th, table.results td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line) }
+table.results th { color: var(--dim); font-weight: 500 }
+.scroll-x { overflow-x: auto }

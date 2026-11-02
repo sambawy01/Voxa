@@ -1,0 +1,11 @@
+[package]
+name = "voxa-g2p"
+description = "Voxa's English grapheme-to-phoneme front end (misaki symbols, no GPL)."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+regex = "1"
+serde_json = "1"
+voxa-core = { path = "../voxa-core" }

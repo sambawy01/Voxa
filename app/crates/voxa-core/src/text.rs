@@ -43,6 +43,31 @@ fn is_closer(c: char) -> bool {
     )
 }
 
+/// Abbreviations whose period does not end a sentence. Words like "etc." that often do end
+/// one are left out on purpose.
+const ABBREVIATIONS: &[&str] = &[
+    "Mr", "Mrs", "Ms", "Dr", "Prof", "St", "Jr", "Sr", "vs", "Mt", "Ave", "No", "Fig", "e.g",
+    "i.e", "approx",
+];
+
+/// True if the period at `chars[i]` closes an abbreviation or an initial ("J. R. R.").
+fn is_abbreviation(chars: &[char], i: usize) -> bool {
+    let start = chars[..i]
+        .iter()
+        .rposition(|c| c.is_whitespace() || "(\"'“".contains(*c))
+        .map_or(0, |p| p + 1);
+    let word: String = chars[start..i].iter().collect();
+    if word.chars().count() == 1 && word.chars().all(char::is_uppercase) {
+        return true;
+    }
+    // "No." is an abbreviation only before a number ("No. 5").
+    if word == "No" {
+        let next = chars[i + 1..].iter().find(|c| !c.is_whitespace());
+        return next.is_some_and(|c| c.is_ascii_digit());
+    }
+    ABBREVIATIONS.contains(&word.as_str())
+}
+
 /// Characters after which a terminal ends a sentence without needing a space.
 fn is_cjk_terminal(c: char) -> bool {
     matches!(c, '。' | '！' | '？')
@@ -75,7 +100,8 @@ pub fn split_sentences(text: &str) -> Vec<String> {
                 j += 1;
             }
             let at_end = j >= chars.len();
-            if at_end || cjk || chars[j].is_whitespace() {
+            let abbreviation = c == '.' && j == i + 1 && is_abbreviation(&chars, i);
+            if !abbreviation && (at_end || cjk || chars[j].is_whitespace()) {
                 push_trimmed(&mut out, &mut cur);
             }
             i = j;
@@ -135,6 +161,23 @@ mod tests {
         assert_eq!(
             split_sentences("It costs 3.50 today. version1.2 ships."),
             vec!["It costs 3.50 today.", "version1.2 ships."]
+        );
+    }
+
+    #[test]
+    fn abbreviations_and_initials_do_not_end_sentences() {
+        assert_eq!(
+            split_sentences("Mr. Smith met Dr. Jones. They talked."),
+            vec!["Mr. Smith met Dr. Jones.", "They talked."]
+        );
+        assert_eq!(
+            split_sentences("J. R. R. Tolkien wrote it. Read No. 5 first."),
+            vec!["J. R. R. Tolkien wrote it.", "Read No. 5 first."]
+        );
+        // "No." not before a number, and "etc.", still end sentences.
+        assert_eq!(
+            split_sentences("I said No. Then left, etc. Bye."),
+            vec!["I said No.", "Then left, etc.", "Bye."]
         );
     }
 

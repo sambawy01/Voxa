@@ -3,6 +3,7 @@
 
 mod bench;
 mod cleanup;
+mod cloning;
 mod licence;
 mod registry;
 
@@ -18,10 +19,13 @@ use voxa_core::SampleFormat;
 type Reg<'a> = tauri::State<'a, Arc<Registry>>;
 type Lic<'a> = tauri::State<'a, Arc<licence::Licensing>>;
 type Clean<'a> = tauri::State<'a, cleanup::Shared>;
+type Clones<'a> = tauri::State<'a, Arc<cloning::Cloning>>;
 
 #[tauri::command]
-fn list_voices(reg: Reg<'_>) -> Result<Vec<Voice>, String> {
-    reg.voices()
+fn list_voices(reg: Reg<'_>, clones: Clones<'_>) -> Result<Vec<Voice>, String> {
+    let mut v = reg.voices()?;
+    v.extend(clones.voices(&reg));
+    Ok(v)
 }
 
 #[tauri::command]
@@ -126,13 +130,20 @@ fn remove_model(reg: Reg<'_>, id: String, version: String) -> Result<(), String>
 async fn synthesize(
     reg: Reg<'_>,
     lic: Lic<'_>,
+    clones: Clones<'_>,
     text: String,
     voice: String,
     speed: f32,
 ) -> Result<Response, String> {
     lic.require()?;
-    let reg = Arc::clone(&reg);
+    let (reg, clones) = (Arc::clone(&reg), Arc::clone(&clones));
     tauri::async_runtime::spawn_blocking(move || {
+        if voice.starts_with(cloning::ID_PREFIX) {
+            // Cloned voices: watermarked, and labelled in the file.
+            return clones
+                .synthesize(&reg, &voice, &text, speed)
+                .map(|a| Response::new(cloning::labelled_wav(&a)));
+        }
         reg.synthesize(&voice, &text, speed)
             .map(|a| Response::new(a.to_wav(SampleFormat::Pcm16)))
     })
@@ -250,6 +261,76 @@ async fn cleanup_save(
         .map_err(|e| e.to_string())?
 }
 
+/// A new consent sentence to read aloud (name, today's date, fresh code words).
+#[tauri::command]
+fn clone_challenge(
+    clones: Clones<'_>,
+    name: String,
+) -> Result<voxa_engines::consent::Challenge, String> {
+    clones.challenge(&name)
+}
+
+fn recording(samples: Vec<i16>, rate: u32) -> voxa_core::Audio {
+    voxa_core::Audio::new(
+        rate,
+        samples.into_iter().map(|s| s as f32 / 32768.0).collect(),
+    )
+}
+
+/// Checks the two live recordings (consent sentence, voice sample; 16-bit samples) and
+/// creates the voice if the consent passes.
+#[tauri::command]
+async fn clone_create(
+    reg: Reg<'_>,
+    lic: Lic<'_>,
+    clones: Clones<'_>,
+    consent: Vec<i16>,
+    consent_rate: u32,
+    sample: Vec<i16>,
+    sample_rate: u32,
+) -> Result<cloning::CreateResult, String> {
+    lic.require()?;
+    let (reg, clones) = (Arc::clone(&reg), Arc::clone(&clones));
+    tauri::async_runtime::spawn_blocking(move || {
+        clones.create(
+            &reg,
+            &recording(consent, consent_rate),
+            &recording(sample, sample_rate),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Whether both cloning models (voice cloning, consent check) are installed.
+#[tauri::command]
+fn cloning_ready(reg: Reg<'_>) -> bool {
+    reg.cloning_ready()
+}
+
+#[tauri::command]
+fn remove_cloned(reg: Reg<'_>, clones: Clones<'_>, id: String) -> Result<(), String> {
+    clones.remove(&reg, &id)
+}
+
+/// Checks a WAV file for the cloned-voice watermark and label.
+#[tauri::command]
+async fn watermark_check(path: String) -> Result<cloning::WatermarkReport, String> {
+    tauri::async_runtime::spawn_blocking(move || cloning::check_file(std::path::Path::new(&path)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The webview may use the microphone (live recordings for "Your voices"; the OS still asks
+/// the person on macOS, Windows and mobile) and nothing else: no camera, screen, location.
+fn permission(kind: tauri::webview::PermissionKind) -> tauri::webview::PermissionResponse {
+    use tauri::webview::{PermissionKind, PermissionResponse};
+    match kind {
+        PermissionKind::Microphone => PermissionResponse::Allow,
+        _ => PermissionResponse::Deny,
+    }
+}
+
 /// Registers Voxa's state and commands. `root` overrides the data directory (tests).
 fn setup<R: tauri::Runtime>(
     builder: tauri::Builder<R>,
@@ -266,17 +347,23 @@ fn setup<R: tauri::Runtime>(
                 None,
                 Vec::new(),
                 voxa_licence::device_id(),
-            ))),
+            )))
+            .manage(Arc::new(
+                cloning::Cloning::open(&root).expect("open cloned voices"),
+            )),
         // The app's data directory is only known once the app exists.
         None => builder.setup(|app| {
             let root = app.path().app_data_dir()?;
             let reg = Registry::open(&root, registry::trusted_keys())?;
             app.manage(Arc::new(reg));
             app.manage(Arc::new(licence::Licensing::from_build(&root)));
+            app.manage(Arc::new(cloning::Cloning::open(&root)?));
             Ok(())
         }),
     };
-    let builder = builder.manage(cleanup::Shared::default());
+    let builder = builder
+        .manage(cleanup::Shared::default())
+        .on_permission_request(|_, kind| permission(kind));
     builder.invoke_handler(tauri::generate_handler![
         list_voices,
         list_models,
@@ -296,7 +383,12 @@ fn setup<R: tauri::Runtime>(
         cleanup_run,
         cleanup_preview,
         cleanup_suggested_name,
-        cleanup_save
+        cleanup_save,
+        cloning_ready,
+        clone_challenge,
+        clone_create,
+        remove_cloned,
+        watermark_check
     ])
 }
 
@@ -350,6 +442,62 @@ mod tests {
                 invoke_key: INVOKE_KEY.to_string(),
             },
         )
+    }
+
+    #[test]
+    fn only_the_microphone_is_allowed() {
+        use tauri::webview::{PermissionKind, PermissionResponse};
+        assert!(matches!(
+            permission(PermissionKind::Microphone),
+            PermissionResponse::Allow
+        ));
+        for k in [
+            PermissionKind::Camera,
+            PermissionKind::DisplayCapture,
+            PermissionKind::Geolocation,
+        ] {
+            assert!(matches!(permission(k), PermissionResponse::Deny));
+        }
+    }
+
+    #[test]
+    fn cloning_commands_without_models() {
+        let d = tempfile::tempdir().unwrap();
+        let (_app, w) = window(d.path());
+        let ready: bool = call(&w, "cloning_ready", serde_json::json!({}))
+            .unwrap()
+            .deserialize()
+            .unwrap();
+        assert!(!ready);
+        let c: serde_json::Value = call(&w, "clone_challenge", serde_json::json!({"name": "Sam"}))
+            .unwrap()
+            .deserialize()
+            .unwrap();
+        assert!(c["sentence"].as_str().unwrap().contains("I am Sam"));
+        let rec = vec![0i16; 16_000 * 11];
+        let err = call(
+            &w,
+            "clone_create",
+            serde_json::json!({"consent": rec, "consentRate": 16000, "sample": rec, "sampleRate": 16000}),
+        )
+        .unwrap_err();
+        assert!(err.as_str().unwrap().contains("not installed"), "{err}");
+        let err = call(
+            &w,
+            "synthesize",
+            serde_json::json!({"text": "Hi.", "voice": "clone-00ff", "speed": 1.0}),
+        )
+        .unwrap_err();
+        assert!(err.as_str().unwrap().contains("unknown voice"), "{err}");
+        let err = call(&w, "remove_cloned", serde_json::json!({"id": "../models"})).unwrap_err();
+        assert!(err.as_str().unwrap().contains("unknown voice"), "{err}");
+        let err = call(
+            &w,
+            "watermark_check",
+            serde_json::json!({"path": "/nonexistent.wav"}),
+        )
+        .unwrap_err();
+        assert!(err.as_str().unwrap().contains("nonexistent"), "{err}");
     }
 
     #[test]

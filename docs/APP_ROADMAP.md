@@ -248,14 +248,34 @@ checks it off here in the same PR, and merges it once CI is green.**
       - a recording without the right code words fails
     - Small recognition slips are forgiven ("harbour" for "harbor"); different words are
       not ("tigress" for "tiger").
-  - [ ] **M9b Cloned voices.**
-    - A Pocket TTS engine that takes reference audio.
-    - "Your voices" are stored with their consent records, shown as cloned, and
-      removable.
-  - [ ] **M9c Recording UI, watermark and labels.**
-    - Live microphone recording only; no uploaded files for consent.
-    - An inaudible keyed watermark on cloned output, with a detector.
-    - Exported files are labelled as a cloned voice (WAV INFO chunk).
+  - [x] **M9b Cloned voices.**
+    - A Pocket TTS engine that takes reference audio (`voxa-engines/src/pocket.rs`), run
+      from a signed pack built by `app/tools/build_clone_packages.py pocket` (engine
+      `pocket`, "Your voices"). The consent check models are their own pack (engine
+      `consent`: Whisper tiny.en + CAM++, `build_clone_packages.py consent`).
+    - "Your voices" live in `<data>/cloned/<id>/`: the voice sample, the consent record
+      (sentence, transcript, similarity, recording hashes) and the name. They are listed
+      as cloned in the voice picker and can be deleted.
+    - A consent sentence is good once, for today only; every attempt gets new code words.
+    - The code words were swept with Whisper over 8 voices. Seven that were misheard
+      ("quartz" heard as "courts", "kettle" as "cattle", ...) were replaced, and split
+      words ("or bit") now match.
+    - Result (`cloning_e2e`, Kokoro standing in for a person): consent passed with speaker
+      similarity 0.96; the clone's speech was transcribed word for word; deleting removes
+      everything.
+  - [x] **M9c Recording UI, watermark and labels.**
+    - Live microphone recording only: the consent sentence, then 10 s or more of normal
+      speech. There is no file upload. The app allows the microphone and denies every
+      other webview permission; macOS shows `NSMicrophoneUsageDescription`.
+    - An inaudible keyed watermark on all cloned output, at -40 dB relative to the speech
+      (`voxa-engines/src/watermark.rs`). The detector folds audio onto the pattern
+      period and whitens it, so it still finds the mark in a 3 s excerpt that has been
+      cropped, made quieter and mixed with other speech. Real clone output scored 24-25
+      against a threshold of 6; clean audio stays below 6. It is not designed to survive
+      MP3 compression or resampling, and the app says so.
+    - Files made with a cloned voice carry a RIFF `LIST/INFO` comment: "Made with a cloned
+      voice in Voxa".
+    - **Check a WAV file** reports whether the watermark and the label are present.
 
 - [ ] **M10 Mobile builds.** Android build in CI, iOS build in CI on a macOS runner
   (unsigned). Mobile layout. Signing and stores go under **Blocked on owner**.
@@ -299,6 +319,20 @@ store listings, legal review.)
   laptop, and an NVIDIA machine. Run **Speed test** on each and send the saved JSON
   files. They become the measured requirements in the catalogue
   (`requirements.measured: true`) and the numbers on the voice cards.
+- **Voice cloning on real devices** (from M9). The microphone can't be tested in CI.
+  On a Mac, a Windows PC and Linux, make a voice end to end and send what fails:
+  - the microphone prompt
+  - recording
+  - the consent check with real people (including a few accents)
+  - deleting the voice
+- **Cloning quality** (from M9). Listen to Pocket TTS clones before selling. Voxa's
+  checks measured weak resemblance (similarity 0.27-0.37) and an occasional dropped
+  first word, so cloning ships as **Preview**.
+- **Pocket TTS licence wording** (from M9). The model and its ONNX export are CC-BY-4.0,
+  and Kyutai's prohibited-use notice (no cloning without consent, no passing audio off as
+  genuine) is shown in Credits. sherpa-onnx's README for the int8 build says "It is for
+  non-commercial". That probably refers to its test recordings, which Voxa doesn't ship.
+  Confirm with a lawyer, or with k2-fsa, before selling.
 - **Model mirror hosting** (from M2). Somewhere to host model files over https, for example
   Cloudflare R2, a Hugging Face organisation, or both as primary and backup. Needs an account
   in Voxa's name.

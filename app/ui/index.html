@@ -101,6 +101,48 @@
       <span id="cleanStatus" class="dim" role="status" aria-live="polite"></span>
     </section>
 
+    <section class="card" id="cloneBox">
+      <h2>Your voices <span class="badge">Preview</span></h2>
+      <p class="dim note">Make a voice from your own voice. You record two things live, here and now: a consent sentence with today's date and three code words, then at least 10 seconds of your normal speech. Voxa checks that the words were said and that both recordings are the same person, all on this device. Only clone your own voice, or a voice whose owner is with you and records the consent themselves.</p>
+      <p class="dim note">Everything made with a cloned voice carries an inaudible watermark and a "cloned voice" label in the file. Anyone can check a file below.</p>
+      <p id="cloneNoModel" class="note" hidden>Install the voice cloning model and the consent check model in the voice library first.</p>
+      <ul id="cloned" class="models"></ul>
+      <div id="cloneSteps" hidden>
+        <h3>Make a new voice</h3>
+        <div class="row">
+          <input id="cloneName" class="key" placeholder="Your name, as you'll say it" autocomplete="name" maxlength="60">
+          <button id="cloneStart" class="btn ghost small" type="button">Get my consent sentence</button>
+        </div>
+        <div id="cloneConsentStep" hidden>
+          <p class="lbl">1. Read this aloud, then stop the recording:</p>
+          <p id="cloneSentence" class="sentence"></p>
+          <div class="row">
+            <button id="cloneRecConsent" class="btn small" type="button">Record consent</button>
+            <span id="cloneConsentTime" class="dim"></span>
+          </div>
+        </div>
+        <div id="cloneSampleStep" hidden>
+          <p class="lbl">2. Now talk for at least 10 seconds in your normal voice. You can read this:</p>
+          <p class="sentence dim">I've lived here for a few years now. In the mornings I like a slow coffee and a walk before work, and in the evenings I cook something simple and read until it gets late. My favourite time of year is autumn, when the light turns gold and the air gets crisp.</p>
+          <div class="row">
+            <button id="cloneRecSample" class="btn small" type="button">Record voice sample</button>
+            <span id="cloneSampleTime" class="dim"></span>
+          </div>
+        </div>
+        <div id="cloneCreateStep" class="row" hidden>
+          <button id="cloneCreate" class="btn" type="button">Check consent and make my voice</button>
+        </div>
+        <ul id="cloneProblems" class="problems" hidden></ul>
+      </div>
+      <span id="cloneStatus" class="dim" role="status" aria-live="polite"></span>
+
+      <h3>Check a file for the watermark</h3>
+      <div class="row">
+        <button id="wmCheck" class="btn ghost small" type="button">Check a WAV file…</button>
+        <span id="wmResult" class="dim" role="status" aria-live="polite"></span>
+      </div>
+    </section>
+
     <section id="licenceBox" class="card" hidden>
       <h2>Licence</h2>
       <p id="licenceState" class="note"></p>

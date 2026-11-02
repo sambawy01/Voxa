@@ -5,14 +5,19 @@
 
 //! - [`cleanup`]: noise removal for recorded speech (DPDFNet 48 kHz, GTCRN), exact length.
 //! - [`consent`]: consent checks before voice cloning (speech recognition + speaker match).
+//! - [`pocket`]: Pocket TTS, speech in a cloned voice from a reference recording (Preview).
+//! - [`watermark`]: the inaudible watermark on cloned-voice audio, and its detector.
 //! - [`supertonic`]: Supertonic 3 through sherpa-onnx, 31 languages from plain text (Voxa
 //!   offers the ones it has checked).
 
 pub mod cleanup;
 pub mod consent;
+pub mod pocket;
 pub mod style;
 pub mod supertonic;
+pub mod watermark;
 
 pub use cleanup::{mix, Denoiser, DenoiserKind};
+pub use pocket::PocketEngine;
 pub use style::{misaki_to_ipa, Family, StyleEngine, StylePackage};
 pub use supertonic::SupertonicEngine;

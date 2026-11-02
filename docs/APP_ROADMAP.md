@@ -326,8 +326,9 @@ store listings, legal review.)
   - the consent check with real people (including a few accents)
   - deleting the voice
 - **Cloning quality** (from M9). Listen to Pocket TTS clones before selling. Voxa's
-  checks measured weak resemblance (similarity 0.27-0.37) and an occasional dropped
-  first word, so cloning ships as **Preview**.
+  checks measured weak resemblance (similarity 0.27-0.37), and in 1 of 12 generations
+  Pocket dropped a short opening word ("Hello there." -> "There."). Cloning ships as
+  **Preview**.
 - **Pocket TTS licence wording** (from M9). The model and its ONNX export are CC-BY-4.0,
   and Kyutai's prohibited-use notice (no cloning without consent, no passing audio off as
   genuine) is shown in Credits. sherpa-onnx's README for the int8 build says "It is for

@@ -216,12 +216,47 @@ checks it off here in the same PR, and merges it once CI is green.**
   - **RE-USE** (NVIDIA, for badly damaged film audio) needs CUDA or Metal and is planned
     for the GPU tier (M11).
 
-- [ ] **M9 Voice cloning with consent.**
+- **M9 Voice cloning with consent.**
   - A consent-recording flow and an on-device same-speaker check (speaker embeddings via
     sherpa-onnx).
   - Cloned voices labelled in the app and in file metadata, and a watermark.
   - First cloning model: the Chatterbox family or Pocket TTS, whichever runs through the
     stack.
+  - Prototype findings (2026-11-02):
+    - **Speaker check (CAM++, Apache-2.0).** Halves of the same real recording score
+      0.92–0.97 cosine similarity; different real speakers score 0.13–0.62. A 0.75
+      threshold separates them.
+    - **Synthetic voices fool the speaker check:** Supertonic voices score 0.82–0.91
+      against each other. So consent must be a **live recording with random code words**
+      that speech recognition checks; a pre-made clip then fails.
+    - **Pocket TTS** (CC-BY-4.0, English, sherpa int8 build): clones run about 2× real
+      time, but similarity to the reference is weak (0.27–0.37). Cloning ships as
+      **Preview**, after a listening check.
+    - **ZipVoice was rejected:** the only sherpa build is trained on Emilia, which is
+      CC-BY-NC.
+  - [x] **M9a Consent engine.**
+    - A challenge sentence with the person's name, today's date and three random code
+      words.
+    - Whisper tiny.en (MIT) transcribes the recording; the name and every code word must
+      be heard.
+    - The CAM++ speaker embedding must match the cloning sample at 0.75 or more.
+    - Minimum lengths: 4 s for consent, 10 s for the sample.
+    - The result is a consent record holding hashes of both recordings.
+    - Done as `voxa-engines::consent`. Tested on real speech:
+      - the same speaker passes, with similarity above 0.9
+      - a different speaker fails
+      - a recording without the right code words fails
+    - Small recognition slips are forgiven ("harbour" for "harbor"); different words are
+      not ("tigress" for "tiger").
+  - [ ] **M9b Cloned voices.**
+    - A Pocket TTS engine that takes reference audio.
+    - "Your voices" are stored with their consent records, shown as cloned, and
+      removable.
+  - [ ] **M9c Recording UI, watermark and labels.**
+    - Live microphone recording only; no uploaded files for consent.
+    - An inaudible keyed watermark on cloned output, with a detector.
+    - Exported files are labelled as a cloned voice (WAV INFO chunk).
+
 - [ ] **M10 Mobile builds.** Android build in CI, iOS build in CI on a macOS runner
   (unsigned). Mobile layout. Signing and stores go under **Blocked on owner**.
 - [ ] **M11 Computer and GPU tiers, and headless mode.**

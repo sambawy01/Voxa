@@ -4421,8 +4421,10 @@ dependencies = [
 name = "voxa-engines"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sherpa-onnx",
  "tempfile",
  "voxa-core",

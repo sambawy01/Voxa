@@ -4,10 +4,12 @@
 //!   G2P (never a sherpa lexicon: lexicon mode silently drops unknown words).
 
 //! - [`cleanup`]: noise removal for recorded speech (DPDFNet 48 kHz, GTCRN), exact length.
+//! - [`consent`]: consent checks before voice cloning (speech recognition + speaker match).
 //! - [`supertonic`]: Supertonic 3 through sherpa-onnx, 31 languages from plain text (Voxa
 //!   offers the ones it has checked).
 
 pub mod cleanup;
+pub mod consent;
 pub mod style;
 pub mod supertonic;
 

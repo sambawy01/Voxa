@@ -396,7 +396,7 @@ mod tests {
         );
         assert_eq!(
             word_edits(&w("thank you for calling"), &w("but keep recalling")),
-            3
+            4
         );
         assert_eq!(word_edits(&w("a b c"), &w("a c")), 1);
     }

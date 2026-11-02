@@ -41,6 +41,8 @@ jobs:
       - run: cargo test --workspace
       - run: npm ci
       - run: npm test
+      - name: Compile the packaging tools
+        run: python3 -m py_compile tools/*.py
 
   build:
     strategy:

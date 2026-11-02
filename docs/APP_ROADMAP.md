@@ -44,11 +44,33 @@ checks it off here in the same PR, and merges it once CI is green.**
   - Model downloader with sha256 verification, resume, and a store that keeps old versions
     (never deletes silently).
   - Unit tests with a local test server.
-- [ ] **M3 First on-device voice.**
-  - sherpa-onnx (Apache-2.0) linked from Rust.
-  - Kitten TTS nano and Kokoro English synthesis.
-  - An espeak-free English G2P (lexicon plus rules; no GPL). Record its licence.
-  - Text in, WAV out, from the UI.
+- **M3 First on-device voice.** Split after a prototype on 2026-11-02:
+  - Kokoro int8 runs through the official `sherpa-onnx` 2.0.1 crate at RTF 0.71 on 4 CPU
+    cores.
+  - Lexicon mode silently **skips every word not in the dictionary**: names, plurals,
+    numbers, dates.
+  - The sherpa-onnx `lexicon-us-en.txt` is exactly misaki's `us_gold` + `us_silver`
+    (Apache-2.0), so Voxa builds its own copy from misaki.
+  - [x] **M3a Kokoro engine.** A `voxa-engines` crate wrapping sherpa-onnx (static libs)
+    behind the `Engine` trait. Kokoro takes phoneme input from Voxa's G2P, never from a
+    lexicon. A script builds the misaki lexicon with its licence recorded. An integration
+    test that needs the model is `#[ignore]`d in CI and run locally.
+  - [ ] **M3b English G2P** (`voxa-g2p`, no GPL):
+    - normalisation: numbers, ordinals, years, money, times, dates, common abbreviations
+    - punctuation passed through
+    - misaki lexicon lookup with case and possessives
+    - suffix morphology (-s/-es, -ed, -ing)
+    - fallback for unknown words: letter names for acronyms, letter-to-sound rules
+      otherwise
+    - quality gate: no word may be silently dropped
+  - [ ] **M3c Wire into the app.**
+    - A development catalogue (dev signing key) listing Kokoro int8.
+    - Install with progress from the UI.
+    - Voices come from installed models, using their Voxa names (`voices.json`), and
+      replace the tone engine.
+  - [ ] **M3d Kitten nano.** Kitten was trained on espeak-style IPA, so it needs its own
+    permissive lexicon (CMUdict → IPA, or misaki → espeak-IPA mapping). The sherpa-onnx
+    release has kitten-nano v0.2; check for 0.8.
 - [ ] **M4 Voice library UI.** Voice cards with the device label (📱/💻/🖥️), languages,
   size, cloning flag, licence and credit; download/remove; Credits screen. Voices carry
   their Voxa names from `voices.json` where they exist.

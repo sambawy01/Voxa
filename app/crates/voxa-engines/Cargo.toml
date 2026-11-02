@@ -1,0 +1,16 @@
+[package]
+name = "voxa-engines"
+description = "On-device voice model engines for Voxa (sherpa-onnx: Kokoro, ...)."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Apache-2.0; links sherpa-onnx and onnxruntime (MIT) statically. No espeak-ng since 2.0.
+sherpa-onnx = "=2.0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+voxa-core = { path = "../voxa-core" }
+
+[dev-dependencies]
+tempfile = "3"

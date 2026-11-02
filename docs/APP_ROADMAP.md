@@ -38,7 +38,7 @@ checks it off here in the same PR, and merges it once CI is green.**
 - [x] **M1 Scaffold.** Tauri 2 app in `app/`: Rust workspace, minimal UI (text box, voice
   picker placeholder, play), `app.yml` CI building and testing on Linux plus a macOS and
   Windows build check. README section on running it.
-- [ ] **M2 Catalogue and downloads.**
+- [x] **M2 Catalogue and downloads.**
   - The `catalogue.json` schema from the plan.
   - Ed25519 signature check of the catalogue.
   - Model downloader with sha256 verification, resume, and a store that keeps old versions
@@ -90,3 +90,10 @@ checks it off here in the same PR, and merges it once CI is green.**
 
 (The loop adds items here: accounts, signing certificates, real-device test results,
 store listings, legal review.)
+
+- **Catalogue signing key** (from M2). Run `voxa-catalogue keygen` on your own machine, keep
+  the secret key offline, and send the public key so it can be built into the app. See
+  [CATALOGUE.md](CATALOGUE.md). Until then the app is built with a development key.
+- **Model mirror hosting** (from M2). Somewhere to host model files over https, for example
+  Cloudflare R2, a Hugging Face organisation, or both as primary and backup. Needs an account
+  in Voxa's name.

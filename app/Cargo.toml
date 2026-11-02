@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/voxa-core", "src-tauri"]
+members = ["crates/voxa-core", "crates/voxa-models", "src-tauri"]
 resolver = "2"
 
 [workspace.package]

@@ -2,6 +2,7 @@
 //! Logic lives in `registry` and the voxa-* crates so it can be tested without a window.
 
 mod bench;
+mod licence;
 mod registry;
 
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ use tauri::{Emitter, Manager};
 use voxa_core::SampleFormat;
 
 type Reg<'a> = tauri::State<'a, Arc<Registry>>;
+type Lic<'a> = tauri::State<'a, Arc<licence::Licensing>>;
 
 #[tauri::command]
 fn list_voices(reg: Reg<'_>) -> Result<Vec<Voice>, String> {
@@ -99,7 +101,9 @@ struct BenchProgress {
 async fn run_benchmark<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     reg: Reg<'_>,
+    lic: Lic<'_>,
 ) -> Result<bench::Report, String> {
+    lic.require()?;
     let reg = Arc::clone(&reg);
     tauri::async_runtime::spawn_blocking(move || {
         bench::run(&reg, &mut |done, total| {
@@ -119,10 +123,12 @@ fn remove_model(reg: Reg<'_>, id: String, version: String) -> Result<(), String>
 #[tauri::command]
 async fn synthesize(
     reg: Reg<'_>,
+    lic: Lic<'_>,
     text: String,
     voice: String,
     speed: f32,
 ) -> Result<Response, String> {
+    lic.require()?;
     let reg = Arc::clone(&reg);
     tauri::async_runtime::spawn_blocking(move || {
         reg.synthesize(&voice, &text, speed)
@@ -132,6 +138,41 @@ async fn synthesize(
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+fn licence_status(lic: Lic<'_>) -> licence::Status {
+    lic.status()
+}
+
+/// Activates this device with a licence key (online, once).
+#[tauri::command]
+async fn activate_licence(lic: Lic<'_>, key: String) -> Result<licence::Status, String> {
+    let lic = Arc::clone(&lic);
+    let name = std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .unwrap_or_else(|_| std::env::consts::OS.to_string());
+    tauri::async_runtime::spawn_blocking(move || lic.activate(&key, &name))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Frees this device's activation so the licence can move to another device.
+#[tauri::command]
+async fn deactivate_licence(lic: Lic<'_>) -> Result<licence::Status, String> {
+    let lic = Arc::clone(&lic);
+    tauri::async_runtime::spawn_blocking(move || lic.deactivate())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Releases every device on the licence (lost or broken machine). Rate-limited.
+#[tauri::command]
+async fn reset_licence(lic: Lic<'_>, key: String) -> Result<i64, String> {
+    let lic = Arc::clone(&lic);
+    tauri::async_runtime::spawn_blocking(move || lic.reset(&key))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Registers Voxa's state and commands. `root` overrides the data directory (tests).
 fn setup<R: tauri::Runtime>(
     builder: tauri::Builder<R>,
@@ -139,14 +180,22 @@ fn setup<R: tauri::Runtime>(
 ) -> tauri::Builder<R> {
     let builder = match root {
         // Known data directory (tests): register the state up front.
-        Some(root) => builder.manage(Arc::new(
-            Registry::open(&root, registry::trusted_keys()).expect("open model store"),
-        )),
+        Some(root) => builder
+            .manage(Arc::new(
+                Registry::open(&root, registry::trusted_keys()).expect("open model store"),
+            ))
+            .manage(Arc::new(licence::Licensing::new(
+                &root,
+                None,
+                Vec::new(),
+                voxa_licence::device_id(),
+            ))),
         // The app's data directory is only known once the app exists.
         None => builder.setup(|app| {
             let root = app.path().app_data_dir()?;
             let reg = Registry::open(&root, registry::trusted_keys())?;
             app.manage(Arc::new(reg));
+            app.manage(Arc::new(licence::Licensing::from_build(&root)));
             Ok(())
         }),
     };
@@ -159,7 +208,11 @@ fn setup<R: tauri::Runtime>(
         catalogue_configured,
         refresh_catalogue,
         install_model,
-        run_benchmark
+        run_benchmark,
+        licence_status,
+        activate_licence,
+        deactivate_licence,
+        reset_licence
     ])
 }
 
@@ -239,6 +292,20 @@ mod tests {
         )
         .expect_err("no voices installed");
         assert!(err.as_str().unwrap().contains("unknown voice"), "{err}");
+    }
+
+    #[test]
+    fn test_builds_do_not_use_activation() {
+        let d = tempfile::tempdir().unwrap();
+        let (_app, w) = window(d.path());
+        let s: serde_json::Value = call(&w, "licence_status", serde_json::json!({}))
+            .unwrap()
+            .deserialize()
+            .unwrap();
+        assert_eq!(s["enabled"], false);
+        assert_eq!(s["active"], true);
+        let err = call(&w, "activate_licence", serde_json::json!({"key": "VOXA-X"})).unwrap_err();
+        assert!(err.as_str().unwrap().contains("does not use activation"));
     }
 
     #[test]

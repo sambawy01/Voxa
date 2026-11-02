@@ -140,12 +140,24 @@ checks it off here in the same PR, and merges it once CI is green.**
   - The phone, laptop and GPU numbers for the voice cards need runs on real devices
     (blocked on owner).
 
-- [ ] **M6 Licence and activation.**
+- [x] **M6 Licence and activation.**
   - Licence server endpoints: activate, deactivate, reset; two activations per licence; a
     signed Ed25519 licence file bound to the device.
   - Offline verification in the app.
   - The server runs separately from the live site, or behind a flag that is off by default.
   - Tests cover the activation limit, transfer and tampered files.
+  - Done:
+    - `licence-server/`: Python stdlib plus `cryptography`, SQLite, keys stored as hashes
+      only. Two seats, free re-activation on the same device, deactivate, and reset limited
+      to 3 a year (admin reset unlimited).
+    - `app/crates/voxa-licence`: offline verification, an anonymous device id, the client.
+    - In the app, enabled only when the build sets `VOXA_LICENCE_URL` and
+      `VOXA_LICENCE_PUBKEY`. Development and store builds never ask.
+  - **Verified:**
+    - A Python-signed test vector is checked by both sides.
+    - An end-to-end test of the Rust client against the real server runs in CI: two seats,
+      the third refused, deactivate, reset, and offline use afterwards.
+    - In the real window: activate with a key, and reading aloud works once activated.
 - [ ] **M7 Multilingual phone voices.** Supertonic 3 and Pocket TTS (no-cloning build)
   through sherpa-onnx for es, fr, it, pt, de and hi. Pass on OpenRAIL-M and CC-BY terms in
   the app's terms and credits.
@@ -179,6 +191,16 @@ store listings, legal review.)
 - **Catalogue signing key** (from M2). Run `voxa-catalogue keygen` on your own machine, keep
   the secret key offline, and send the public key so it can be built into the app. See
   [CATALOGUE.md](CATALOGUE.md). Until then the app is built with a development key.
+- **Licence server hosting and key** (from M6):
+  - Run `licence-server/` on a small host with HTTPS (for example the Fly or Railway setup
+    the site already uses).
+  - Generate its signing key with `licence_server.py keygen` and keep the secret safe.
+  - Send the public key, which is built into release builds as `VOXA_LICENCE_PUBKEY`.
+- **Selling licences** (from M6, for launch):
+  - Connect the Paddle checkout to `licence_server.py create`, so each purchase emails a
+    licence key.
+  - Write the licence and refund terms, including the 2-device rule and resets. This
+    needs legal review.
 - **Speed tests on real devices** (from M5). Install the app on 3–5 devices: an old
   phone and a new one once M10 makes mobile builds, an Apple Silicon Mac, a Windows
   laptop, and an NVIDIA machine. Run **Speed test** on each and send the saved JSON

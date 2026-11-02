@@ -312,6 +312,12 @@
 "repository": "https://github.com/SergioBenitez/cookie-rs"
 },
 {
+"name": "cookie_store",
+"version": "0.22.1",
+"license": "MIT OR Apache-2.0",
+"repository": "https://github.com/pfernie/cookie_store"
+},
+{
 "name": "core-foundation",
 "version": "0.10.1",
 "license": "MIT OR Apache-2.0",
@@ -538,6 +544,12 @@
 "version": "0.4.3",
 "license": "MIT",
 "repository": "https://github.com/OpenByteDev/dlopen2"
+},
+{
+"name": "document-features",
+"version": "0.2.12",
+"license": "MIT OR Apache-2.0",
+"repository": "https://github.com/slint-ui/document-features"
 },
 {
 "name": "dom_query",
@@ -1218,6 +1230,12 @@
 "repository": "https://github.com/unicode-org/icu4x"
 },
 {
+"name": "litrs",
+"version": "1.0.1",
+"license": "MIT OR Apache-2.0",
+"repository": "https://github.com/LukasKalbertodt/litrs"
+},
+{
 "name": "lock_api",
 "version": "0.4.14",
 "license": "MIT OR Apache-2.0",
@@ -1234,6 +1252,12 @@
 "version": "0.23.0",
 "license": "Apache-2.0",
 "repository": "https://github.com/hasenbanck/lzma-rust2/"
+},
+{
+"name": "machine-uid",
+"version": "0.6.0",
+"license": "MIT",
+"repository": "https://github.com/Hanaasagi/machine-uid"
 },
 {
 "name": "markup5ever",
@@ -2666,6 +2690,12 @@
 {
 "name": "windows-numerics",
 "version": "0.3.1",
+"license": "MIT OR Apache-2.0",
+"repository": "https://github.com/microsoft/windows-rs"
+},
+{
+"name": "windows-registry",
+"version": "0.6.1",
 "license": "MIT OR Apache-2.0",
 "repository": "https://github.com/microsoft/windows-rs"
 },

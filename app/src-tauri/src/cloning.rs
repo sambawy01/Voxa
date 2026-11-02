@@ -508,7 +508,11 @@ mod tests {
             .transcribe(&a.samples, a.sample_rate);
         let heard = heard.to_lowercase();
         for w in ["thank", "calling", "message", "tone"] {
-            assert!(heard.contains(w), "{w:?} not in {heard:?} ({:.2} s)", a.duration());
+            assert!(
+                heard.contains(w),
+                "{w:?} not in {heard:?} ({:.2} s)",
+                a.duration()
+            );
         }
         eprintln!(
             "clone: similarity {:.2}, watermark score {:.1}, heard {heard:?}",

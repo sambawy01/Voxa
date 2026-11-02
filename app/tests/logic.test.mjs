@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   charStatus, clampSpeed, speedLabel, friendlyError, MAX_CHARS, tierLabel, formatBytes, groupVoices,
-  benchRows, benchFileName, licenceText, languagesOf, languageName, previewText,
+  benchRows, benchFileName, licenceText, languagesOf, languageName, previewText, wavSummary,
 } from '../ui/logic.js';
 
 test('charStatus counts trimmed characters, not UTF-16 units', () => {
@@ -112,4 +112,15 @@ test('previewText speaks the voice language', () => {
   assert.equal(previewText('Ana', 'es'), 'Hola, soy Ana. Así es como sueno.');
   assert.equal(previewText('Harper', 'en-US'), "Hi, I'm Harper. This is how I sound.");
   assert.match(previewText('Nina', 'hi'), /Nina/);
+});
+
+test('wavSummary', () => {
+  assert.equal(
+    wavSummary({ name: 'take3.wav', channels: 2, sample_rate: 48000, seconds: 62.4, kept_chunks: ['bext', 'iXML'] }),
+    'take3.wav · Stereo · 48 kHz · 1:02 · keeps bext, iXML',
+  );
+  assert.equal(
+    wavSummary({ name: 'memo.wav', channels: 1, sample_rate: 44100, seconds: 5, kept_chunks: [] }),
+    'memo.wav · Mono · 44.1 kHz · 0:05',
+  );
 });

@@ -2,6 +2,7 @@
 //! Logic lives in `registry` and the voxa-* crates so it can be tested without a window.
 
 mod bench;
+mod cleanup;
 mod licence;
 mod registry;
 
@@ -16,6 +17,7 @@ use voxa_core::SampleFormat;
 
 type Reg<'a> = tauri::State<'a, Arc<Registry>>;
 type Lic<'a> = tauri::State<'a, Arc<licence::Licensing>>;
+type Clean<'a> = tauri::State<'a, cleanup::Shared>;
 
 #[tauri::command]
 fn list_voices(reg: Reg<'_>) -> Result<Vec<Voice>, String> {
@@ -173,6 +175,81 @@ async fn reset_licence(lic: Lic<'_>, key: String) -> Result<i64, String> {
         .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+fn cleanup_models(reg: Reg<'_>) -> Result<Vec<registry::CleanupModel>, String> {
+    reg.cleanup_models()
+}
+
+#[tauri::command]
+async fn cleanup_open(clean: Clean<'_>, path: String) -> Result<cleanup::OpenedFile, String> {
+    let clean = Arc::clone(&clean);
+    tauri::async_runtime::spawn_blocking(move || clean.open(std::path::Path::new(&path)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[derive(Clone, Serialize)]
+struct CleanupProgress {
+    done: usize,
+    total: usize,
+}
+
+/// Cleans the open file with a clean-up model, emitting `cleanup-progress` per channel.
+#[tauri::command]
+async fn cleanup_run<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    reg: Reg<'_>,
+    lic: Lic<'_>,
+    clean: Clean<'_>,
+    model: String,
+) -> Result<(), String> {
+    lic.require()?;
+    let (reg, clean) = (Arc::clone(&reg), Arc::clone(&clean));
+    tauri::async_runtime::spawn_blocking(move || {
+        clean.run(&reg, &model, &mut |done, total| {
+            let _ = app.emit("cleanup-progress", CleanupProgress { done, total });
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Up to 30 s of the original or the cleaned mix, as a WAV for the A/B player.
+#[tauri::command]
+async fn cleanup_preview(
+    clean: Clean<'_>,
+    cleaned: bool,
+    strength: f32,
+    start: f64,
+) -> Result<Response, String> {
+    let clean = Arc::clone(&clean);
+    tauri::async_runtime::spawn_blocking(move || {
+        clean.preview(cleaned, strength, start).map(Response::new)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn cleanup_suggested_name(clean: Clean<'_>) -> Option<String> {
+    clean.suggested_name()
+}
+
+/// Saves the cleaned file (same rate, channels, length and BWF/iXML chunks; 24-bit).
+#[tauri::command]
+async fn cleanup_save(
+    lic: Lic<'_>,
+    clean: Clean<'_>,
+    path: String,
+    strength: f32,
+) -> Result<(), String> {
+    lic.require()?;
+    let clean = Arc::clone(&clean);
+    tauri::async_runtime::spawn_blocking(move || clean.save(std::path::Path::new(&path), strength))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Registers Voxa's state and commands. `root` overrides the data directory (tests).
 fn setup<R: tauri::Runtime>(
     builder: tauri::Builder<R>,
@@ -199,6 +276,7 @@ fn setup<R: tauri::Runtime>(
             Ok(())
         }),
     };
+    let builder = builder.manage(cleanup::Shared::default());
     builder.invoke_handler(tauri::generate_handler![
         list_voices,
         list_models,
@@ -212,7 +290,13 @@ fn setup<R: tauri::Runtime>(
         licence_status,
         activate_licence,
         deactivate_licence,
-        reset_licence
+        reset_licence,
+        cleanup_models,
+        cleanup_open,
+        cleanup_run,
+        cleanup_preview,
+        cleanup_suggested_name,
+        cleanup_save
     ])
 }
 

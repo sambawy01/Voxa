@@ -128,3 +128,11 @@ export function previewText(name, tag) {
   };
   return lines[tag] ?? `Hi, I'm ${name}. This is how I sound.`;
 }
+
+/** "Stereo · 48 kHz · 1:02 · keeps bext, iXML" style summary of an opened WAV. */
+export function wavSummary(f) {
+  const ch = f.channels === 1 ? 'Mono' : f.channels === 2 ? 'Stereo' : `${f.channels} channels`;
+  const m = Math.floor(f.seconds / 60), s = Math.floor(f.seconds % 60);
+  const keeps = f.kept_chunks?.length ? ` · keeps ${f.kept_chunks.join(', ')}` : '';
+  return `${f.name} · ${ch} · ${(f.sample_rate / 1000).toFixed(f.sample_rate % 1000 ? 1 : 0)} kHz · ${m}:${String(s).padStart(2, '0')}${keeps}`;
+}

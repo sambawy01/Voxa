@@ -66,6 +66,41 @@
       </div>
     </section>
 
+    <section class="card">
+      <h2>Clean up audio</h2>
+      <p class="dim note">Remove background noise from recorded speech: film dialogue, interviews, voice memos. The cleaned file keeps the exact length, sample rate, channels and timecode, so it stays in sync with your picture. Nothing is uploaded.</p>
+      <p id="cleanNoModel" class="note" hidden>Install a clean-up model (Voxa Clean Studio or Voxa Clean Fast) in the voice library first.</p>
+      <div class="row">
+        <button id="cleanOpen" class="btn ghost small" type="button">Open WAV…</button>
+        <span id="cleanFile" class="dim"></span>
+      </div>
+      <div id="cleanControls" hidden>
+        <div class="row controls">
+          <label class="field narrow">
+            <span class="lbl">Model</span>
+            <select id="cleanModel"></select>
+          </label>
+          <button id="cleanRun" class="btn small" type="button">Clean</button>
+        </div>
+        <progress id="cleanBar" max="1" value="0" hidden></progress>
+        <div id="cleanResult" hidden>
+          <label class="field">
+            <span class="lbl">Strength <span id="cleanStrengthVal" class="dim">100%</span></span>
+            <input id="cleanStrength" type="range" min="0" max="1" step="0.05" value="1">
+          </label>
+          <div class="row">
+            <span class="lbl">Listen</span>
+            <button id="abOriginal" class="btn ghost small" type="button" aria-pressed="false">Original</button>
+            <button id="abCleaned" class="btn ghost small" type="button" aria-pressed="true">Cleaned</button>
+            <span class="dim note">First 30 seconds. Switching keeps your place.</span>
+          </div>
+          <audio id="cleanPlayer" controls></audio>
+          <button id="cleanSave" class="btn small" type="button">Save cleaned WAV…</button>
+        </div>
+      </div>
+      <span id="cleanStatus" class="dim" role="status" aria-live="polite"></span>
+    </section>
+
     <section id="licenceBox" class="card" hidden>
       <h2>Licence</h2>
       <p id="licenceState" class="note"></p>

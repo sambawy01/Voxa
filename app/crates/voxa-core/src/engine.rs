@@ -28,6 +28,13 @@ pub enum EngineError {
     Failed(String),
 }
 
+/// Turns one sentence of text into the phoneme string a model was trained on (for Kokoro,
+/// misaki's symbols). Implemented by the G2P crate; engines that read raw text (Supertonic,
+/// Pocket TTS) don't need one.
+pub trait Phonemizer: Send + Sync {
+    fn phonemize(&self, sentence: &str) -> Result<String, EngineError>;
+}
+
 /// A voice model that turns one sentence into audio.
 ///
 /// Implementations do the model work in [`Engine::synthesize_sentence`]; the provided

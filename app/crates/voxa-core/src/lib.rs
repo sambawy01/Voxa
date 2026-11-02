@@ -12,5 +12,5 @@ pub mod engine;
 pub mod text;
 
 pub use audio::{Audio, SampleFormat};
-pub use engine::{Engine, EngineError, SynthesisRequest, ToneEngine};
+pub use engine::{Engine, EngineError, Phonemizer, SynthesisRequest, ToneEngine};
 pub use text::{split_sentences, validate_text, TextError, MAX_CHARS};

@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 use voxa_core::{Audio, Engine, EngineError, SynthesisRequest};
 use voxa_engines::consent::ConsentChecker;
 use voxa_engines::supertonic::CHECKED_LANGUAGES;
-use voxa_engines::worker::WorkerManifest;
+use voxa_engines::worker::{WorkerKind, WorkerManifest};
 use voxa_engines::{
-    Denoiser, DenoiserKind, Family, PocketEngine, StyleEngine, StylePackage, SupertonicEngine,
-    WorkerEngine,
+    Cleaner, Denoiser, DenoiserKind, Family, PocketEngine, StyleEngine, StylePackage,
+    SupertonicEngine, WorkerEngine,
 };
 use voxa_g2p::EnglishG2p;
 use voxa_models::{
@@ -181,7 +181,7 @@ pub struct Registry {
     names: Vec<CatalogueVoice>,
     threads: i32,
     engines: Mutex<HashMap<String, Arc<dyn Engine>>>,
-    denoisers: Mutex<HashMap<String, Arc<Denoiser>>>,
+    denoisers: Mutex<HashMap<String, Arc<dyn Cleaner>>>,
     pocket: Mutex<Option<(String, Arc<PocketEngine>)>>,
     consent: Mutex<Option<(String, Arc<ConsentChecker>)>>,
 }
@@ -488,30 +488,46 @@ impl Registry {
         self.engine(&model).map_err(|e| e.to_string())
     }
 
-    /// Installed clean-up models (newest version each), Studio first.
+    /// Installed clean-up models (newest version each): Film (a GPU worker such as
+    /// RE-USE) first, then Studio, then Fast.
     pub fn cleanup_models(&self) -> Result<Vec<CleanupModel>, String> {
         let mut v: Vec<CleanupModel> = self
             .newest()?
             .into_iter()
-            .filter(|m| matches!(m.entry.engine.as_str(), "dpdfnet" | "gtcrn"))
-            .map(|m| CleanupModel {
-                family: family_name(&m.entry.engine).into(),
-                kind: if m.entry.engine == "dpdfnet" {
-                    "studio"
-                } else {
-                    "fast"
-                }
-                .into(),
-                id: m.entry.id,
-                version: m.entry.version,
+            .filter_map(|m| {
+                let (family, kind) = match m.entry.engine.as_str() {
+                    "dpdfnet" | "gtcrn" => (
+                        family_name(&m.entry.engine).to_string(),
+                        if m.entry.engine == "dpdfnet" {
+                            "studio"
+                        } else {
+                            "fast"
+                        },
+                    ),
+                    "worker" => {
+                        let w = WorkerManifest::load(&m.dir).ok()?;
+                        if w.kind != WorkerKind::Cleanup {
+                            return None;
+                        }
+                        (w.family, "film")
+                    }
+                    _ => return None,
+                };
+                Some(CleanupModel {
+                    family,
+                    kind: kind.into(),
+                    id: m.entry.id,
+                    version: m.entry.version,
+                })
             })
             .collect();
-        v.sort_by(|a, b| b.kind.cmp(&a.kind));
+        let rank = |k: &str| ["film", "studio", "fast"].iter().position(|x| *x == k);
+        v.sort_by_key(|m| rank(&m.kind));
         Ok(v)
     }
 
     /// The denoiser for an installed clean-up model, loaded once.
-    pub fn denoiser(&self, id: &str) -> Result<Arc<Denoiser>, String> {
+    pub fn denoiser(&self, id: &str) -> Result<Arc<dyn Cleaner>, String> {
         let m = self
             .newest()?
             .into_iter()
@@ -520,6 +536,15 @@ impl Registry {
         let key = format!("{}@{}", m.entry.id, m.entry.version);
         if let Some(d) = self.denoisers.lock().unwrap().get(&key) {
             return Ok(Arc::clone(d));
+        }
+        if m.entry.engine == "worker" {
+            let w = WorkerEngine::load(&key, &m.dir).map_err(|e| e.to_string())?;
+            if w.manifest().kind != WorkerKind::Cleanup {
+                return Err(format!("{id} is not a clean-up model"));
+            }
+            let d: Arc<dyn Cleaner> = Arc::new(w);
+            self.denoisers.lock().unwrap().insert(key, Arc::clone(&d));
+            return Ok(d);
         }
         let kind = match m.entry.engine.as_str() {
             "dpdfnet" => DenoiserKind::Studio,
@@ -532,7 +557,7 @@ impl Registry {
             .iter()
             .find(|f| f.path.ends_with(".onnx"))
             .ok_or("the clean-up model has no .onnx file")?;
-        let d = Arc::new(
+        let d: Arc<dyn Cleaner> = Arc::new(
             Denoiser::load(kind, &m.dir.join(&file.path), self.threads)
                 .map_err(|e| e.to_string())?,
         );
@@ -687,7 +712,7 @@ pub fn trusted_keys() -> TrustedKeys {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn registry() -> (tempfile::TempDir, Registry) {
@@ -852,10 +877,8 @@ mod tests {
         hex::encode(sha2::Sha256::digest(b))
     }
 
-    /// A signed pack running the reference worker (app/workers), as M11c's packs will.
-    #[test]
-    fn imports_a_worker_pack_and_speaks_through_the_worker() {
-        let python = ["python3", "python"]
+    pub(crate) fn python() -> &'static str {
+        ["python3", "python"]
             .into_iter()
             .find(|p| {
                 std::process::Command::new(p)
@@ -863,16 +886,14 @@ mod tests {
                     .output()
                     .is_ok_and(|o| o.status.success())
             })
-            .expect("this test needs Python 3");
-        let d = tempfile::tempdir().unwrap();
-        let pack = d.path().join("pack");
-        std::fs::create_dir_all(&pack).unwrap();
+            .expect("this test needs Python 3")
+    }
+
+    /// Writes a signed (dev key) pack at `pack` running the reference worker (app/workers)
+    /// with `manifest` as its worker.json, as the real worker packs will be.
+    pub(crate) fn reference_worker_pack(pack: &Path, id: &str, manifest: serde_json::Value) {
+        std::fs::create_dir_all(pack).unwrap();
         let workers = Path::new(env!("CARGO_MANIFEST_DIR")).join("../workers");
-        let manifest = serde_json::json!({
-            "protocol": 1, "family": "Voxa Studio",
-            "command": [python, "-I", "reference_worker.py", "--voices", "studio-low"],
-            "voices": [{"id": "studio-low", "name": "Low", "gender": "male", "language": "en-US"}],
-        });
         let mut files = Vec::new();
         for (name, bytes) in [
             (
@@ -889,7 +910,7 @@ mod tests {
             files.push(serde_json::json!({"path": name, "url": "", "sha256": sha(&bytes), "size": bytes.len()}));
         }
         let entry = serde_json::json!({
-            "id": "studio-test", "version": "1.0.0", "engine": "worker", "tier": "gpu",
+            "id": id, "version": "1.0.0", "engine": "worker", "tier": "gpu",
             "languages": ["en-US"], "cloning": false, "min_app": "0.1.0",
             "license": {"spdx": "MIT", "credit": "test", "url": "https://example.com"},
             "requirements": {"ram_mb": 100, "measured": false}, "files": files,
@@ -897,7 +918,21 @@ mod tests {
         let json = serde_json::to_vec(&entry).unwrap();
         std::fs::write(pack.join("voxa-pack.json"), &json).unwrap();
         std::fs::write(pack.join("voxa-pack.json.sig"), dev_sign(&json)).unwrap();
+    }
 
+    #[test]
+    fn imports_a_worker_pack_and_speaks_through_the_worker() {
+        let d = tempfile::tempdir().unwrap();
+        let pack = d.path().join("pack");
+        reference_worker_pack(
+            &pack,
+            "studio-test",
+            serde_json::json!({
+                "protocol": 1, "family": "Voxa Studio",
+                "command": [python(), "-I", "reference_worker.py", "--voices", "studio-low"],
+                "voices": [{"id": "studio-low", "name": "Low", "gender": "male", "language": "en-US"}],
+            }),
+        );
         let r = Registry::open(&d.path().join("data"), trusted_keys()).unwrap();
         let m = r.import(&pack).unwrap();
         assert_eq!((m.engine.as_str(), m.voices), ("worker", 1));

@@ -47,11 +47,23 @@ pub struct WorkerManifest {
     #[serde(default = "default_family")]
     pub family: String,
     pub command: Vec<String>,
+    /// "voice" (speaks; the default) or "cleanup" (removes noise from recordings).
+    #[serde(default)]
+    pub kind: WorkerKind,
+    #[serde(default)]
     pub voices: Vec<WorkerVoice>,
     #[serde(default = "default_start")]
     pub start_timeout_s: u64,
     #[serde(default = "default_request")]
     pub request_timeout_s: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkerKind {
+    #[default]
+    Voice,
+    Cleanup,
 }
 
 fn default_family() -> String {
@@ -97,7 +109,7 @@ impl WorkerManifest {
                 )));
             }
         }
-        if m.voices.is_empty() {
+        if m.kind == WorkerKind::Voice && m.voices.is_empty() {
             return Err(EngineError::Failed("worker.json lists no voices".into()));
         }
         Ok(m)
@@ -141,6 +153,8 @@ struct Reply {
     voices: Option<Vec<String>>,
     #[serde(default)]
     samples: Option<String>,
+    #[serde(default)]
+    capabilities: Option<Vec<String>>,
 }
 
 fn failed(msg: impl Into<String>) -> EngineError {
@@ -214,10 +228,24 @@ impl WorkerEngine {
         if hello.protocol != Some(PROTOCOL) {
             return Err(failed("the voice worker speaks a different protocol"));
         }
-        let rate = hello
-            .sample_rate
-            .filter(|r| *r > 0)
-            .ok_or_else(|| failed("the voice worker gave no sample rate"))?;
+        // Workers from before capabilities were reported could only speak.
+        let caps = hello
+            .capabilities
+            .clone()
+            .unwrap_or_else(|| vec!["synthesize".into()]);
+        let needed = match self.manifest.kind {
+            WorkerKind::Voice => "synthesize",
+            WorkerKind::Cleanup => "clean",
+        };
+        if !caps.iter().any(|c| c == needed) {
+            return Err(failed(format!(
+                "the worker can't {needed}, which its pack says it does"
+            )));
+        }
+        let rate = hello.sample_rate.unwrap_or(0);
+        if self.manifest.kind == WorkerKind::Voice && rate == 0 {
+            return Err(failed("the voice worker gave no sample rate"));
+        }
         let have = hello.voices.unwrap_or_default();
         if let Some(v) = self.manifest.voices.iter().find(|v| !have.contains(&v.id)) {
             return Err(failed(format!(
@@ -276,44 +304,42 @@ impl WorkerEngine {
         }
     }
 
-    fn synthesize_once(
-        &self,
-        sentence: &str,
-        voice: &str,
-        speed: f32,
-    ) -> Result<Audio, EngineError> {
-        let mut guard = self.running.lock().unwrap();
-        if guard.is_none() {
-            let (r, rate) = self.start()?;
-            self.sample_rate.store(rate, Ordering::Relaxed);
-            *guard = Some(r);
-        }
-        let r = guard.as_mut().expect("started");
-        let reply = Self::call(
-            r,
-            serde_json::json!({"op": "synthesize", "text": sentence, "voice": voice, "speed": speed}),
-            Duration::from_secs(self.manifest.request_timeout_s),
-        );
-        let reply = match reply {
-            Ok(rep) => rep,
-            Err(e) => {
-                // A dead or stuck worker is dropped (killed). Don't ask the OS whether it has
-                // exited: its output closes before it is reaped. An error reply leaves it running.
+    /// Sends a request, starting the worker if needed. A dead or stuck worker is dropped
+    /// (killed), and one that died is started again once. Don't ask the OS whether it has
+    /// exited: its output closes before it is reaped. An error reply leaves it running.
+    fn request(&self, req: serde_json::Value) -> Result<Reply, EngineError> {
+        let attempt = |req: serde_json::Value| -> Result<Reply, EngineError> {
+            let mut guard = self.running.lock().unwrap();
+            if guard.is_none() {
+                let (r, rate) = self.start()?;
+                self.sample_rate.store(rate, Ordering::Relaxed);
+                *guard = Some(r);
+            }
+            let r = guard.as_mut().expect("started");
+            let reply = Self::call(r, req, Duration::from_secs(self.manifest.request_timeout_s));
+            if let Err(e) = &reply {
                 let msg = e.to_string();
                 if msg.contains("stopped") || msg.contains("did not answer") {
                     *guard = None;
                 }
-                return Err(e);
             }
+            reply
         };
+        match attempt(req.clone()) {
+            Err(e) if e.to_string().contains("stopped") => attempt(req),
+            r => r,
+        }
+    }
+
+    fn decode(reply: Reply) -> Result<Audio, EngineError> {
         let rate = reply
             .sample_rate
             .ok_or_else(|| failed("no sample rate in the reply"))?;
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(reply.samples.unwrap_or_default())
-            .map_err(|_| failed("the voice worker sent malformed audio"))?;
+            .map_err(|_| failed("the worker sent malformed audio"))?;
         if bytes.len() % 4 != 0 {
-            return Err(failed("the voice worker sent malformed audio"));
+            return Err(failed("the worker sent malformed audio"));
         }
         let samples = bytes
             .as_chunks::<4>()
@@ -322,6 +348,30 @@ impl WorkerEngine {
             .map(|c| f32::from_le_bytes(*c))
             .collect();
         Ok(Audio::new(rate, samples))
+    }
+
+    /// Removes noise from a recording (a clean-up worker). The result has exactly as many
+    /// samples as the input, or this fails: cleaned dialogue must stay in sync with film.
+    pub fn clean(&self, samples: &[f32], rate: u32) -> Result<Vec<f32>, EngineError> {
+        if self.manifest.kind != WorkerKind::Cleanup {
+            return Err(failed("this worker doesn't clean audio"));
+        }
+        if samples.is_empty() {
+            return Ok(Vec::new());
+        }
+        let bytes: Vec<u8> = samples.iter().flat_map(|x| x.to_le_bytes()).collect();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let reply =
+            self.request(serde_json::json!({"op": "clean", "sample_rate": rate, "samples": b64}))?;
+        let out = Self::decode(reply)?;
+        if out.samples.len() != samples.len() {
+            return Err(failed(format!(
+                "the clean-up changed the length ({} to {} samples)",
+                samples.len(),
+                out.samples.len()
+            )));
+        }
+        Ok(out.samples)
     }
 }
 
@@ -345,13 +395,10 @@ impl Engine for WorkerEngine {
         voice: &str,
         speed: f32,
     ) -> Result<Audio, EngineError> {
-        match self.synthesize_once(sentence, voice, speed) {
-            Err(e) if e.to_string().contains("stopped") => {
-                // The worker died (crash, out of memory): start it again, once.
-                self.synthesize_once(sentence, voice, speed)
-            }
-            r => r,
-        }
+        let reply = self.request(
+            serde_json::json!({"op": "synthesize", "text": sentence, "voice": voice, "speed": speed}),
+        )?;
+        Self::decode(reply)
     }
 
     fn synthesize(
@@ -520,6 +567,58 @@ mod tests {
         assert!(write(serde_json::json!(["./bin/worker"]), 1).is_ok());
         let err = write(serde_json::json!(["python3"]), 2).unwrap_err();
         assert!(err.to_string().contains("update Voxa"), "{err}");
+    }
+
+    fn cleanup_pack(extra: &[&str]) -> tempfile::TempDir {
+        let d = pack(extra, "[]");
+        let mut command = vec![
+            python(),
+            "-I".into(),
+            "reference_worker.py".into(),
+            "--clean".into(),
+        ];
+        command.extend(extra.iter().map(|s| s.to_string()));
+        let m = serde_json::json!({
+            "protocol": 1, "kind": "cleanup", "family": "Voxa Clean Film",
+            "command": command, "start_timeout_s": 20, "request_timeout_s": 20,
+        });
+        std::fs::write(d.path().join("worker.json"), m.to_string()).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_cleanup_worker_cleans_at_exactly_the_same_length() {
+        let d = cleanup_pack(&[]);
+        let e = WorkerEngine::load("film", d.path()).unwrap();
+        assert!(e.voices().is_empty());
+        let x: Vec<f32> = (0..48_123).map(|i| (i as f32 * 0.01).sin() * 0.4).collect();
+        let y = e.clean(&x, 48_000).unwrap();
+        assert_eq!(y.len(), x.len());
+        for (a, b) in x.iter().zip(&y) {
+            assert!((b - 0.5 * a).abs() < 1e-6);
+        }
+        assert!(e.clean(&[], 48_000).unwrap().is_empty());
+        // A cleanup worker doesn't speak.
+        assert!(e.synthesize(&req("Hi.", "low"), &mut |_, _| {}).is_err());
+    }
+
+    #[test]
+    fn a_cleanup_that_changes_the_length_is_refused() {
+        let d = cleanup_pack(&["--bad-length"]);
+        let e = WorkerEngine::load("film", d.path()).unwrap();
+        let err = e.clean(&[0.1; 1000], 16_000).unwrap_err();
+        assert!(err.to_string().contains("changed the length"), "{err}");
+    }
+
+    #[test]
+    fn a_voice_worker_does_not_clean() {
+        let d = pack(&[], VOICES);
+        let e = WorkerEngine::load("ref", d.path()).unwrap();
+        assert!(e
+            .clean(&[0.1; 100], 16_000)
+            .unwrap_err()
+            .to_string()
+            .contains("doesn't clean"));
     }
 
     #[test]

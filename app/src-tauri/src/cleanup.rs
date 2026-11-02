@@ -206,6 +206,49 @@ mod tests {
         assert!(c.open(&bad).unwrap_err().contains("not a WAV"));
     }
 
+    /// A clean-up worker pack (as RE-USE ships) is listed first and cleans a take end to
+    /// end, keeping length, channels, rate and the timecode chunk.
+    #[test]
+    fn a_cleanup_worker_cleans_a_take() {
+        use crate::registry::tests::{python, reference_worker_pack};
+        let d = tempfile::tempdir().unwrap();
+        let reg = Registry::open(&d.path().join("data"), crate::registry::trusted_keys()).unwrap();
+        let pack = d.path().join("film");
+        reference_worker_pack(
+            &pack,
+            "clean-film-test",
+            serde_json::json!({"protocol": 1, "kind": "cleanup", "family": "Voxa Clean Film",
+                "command": [python(), "-I", "reference_worker.py", "--clean"]}),
+        );
+        reg.import(&pack).unwrap();
+        assert!(
+            reg.voices().unwrap().is_empty(),
+            "a clean-up worker has no voices"
+        );
+        let models = reg.cleanup_models().unwrap();
+        assert_eq!(
+            (models[0].kind.as_str(), models[0].family.as_str()),
+            ("film", "Voxa Clean Film")
+        );
+        let c = Cleanup::default();
+        let src = write_take(d.path());
+        c.open(&src).unwrap();
+        c.run(&reg, "clean-film-test", &mut |_, _| {}).unwrap();
+        let out = d.path().join("cleaned.wav");
+        c.save(&out, 1.0).unwrap();
+        let a = WavFile::parse(&std::fs::read(&src).unwrap()).unwrap();
+        let b = WavFile::parse(&std::fs::read(&out).unwrap()).unwrap();
+        assert_eq!(
+            (b.sample_rate, b.channels.len(), b.frames()),
+            (a.sample_rate, a.channels.len(), a.frames())
+        );
+        assert_eq!(b.extra_chunks, a.extra_chunks);
+        // The reference worker halves the level.
+        for (x, y) in a.channels[1].iter().zip(&b.channels[1]).step_by(997) {
+            assert!((y - 0.5 * x).abs() < 1e-4, "{x} -> {y}");
+        }
+    }
+
     /// `VOXA_DPDFNET_PACK=<signed dev pack> cargo test -p voxa-app -- --ignored cleanup_e2e`
     #[test]
     #[ignore = "needs a signed DPDFNet clean-up pack (VOXA_DPDFNET_PACK)"]

@@ -58,6 +58,7 @@ jobs:
       - name: Licence gate (no GPL in the app) and credits list up to date
         run: python3 -I tools/licences.py --check
       - run: python3 -I tools/android_setup.py --self-test
+      - run: python3 -I tools/ios_setup.py --self-test
 
   build:
     strategy:
@@ -138,4 +139,58 @@ jobs:
         with:
           name: voxa-android-unsigned
           path: app/${{ env.APK_PATH }}
+          retention-days: 14
+
+  # Unsigned iOS device build (roadmap M10c). Signing and the App Store need the owner's
+  # Apple developer account.
+  ios:
+    runs-on: macos-latest
+    env:
+      # As for Android: sherpa-onnx-sys copies its xcframework into src-tauri/ only when
+      # Cargo's target dir is next to tauri.conf.json.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/app/src-tauri/target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app -> src-tauri/target
+          cache-directories: app/src-tauri/target/sherpa-onnx-prebuilt
+          prefix-key: v2-sherpa-ios
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Fetch sherpa-onnx's iOS framework (Xcode needs it before it builds)
+        run: |
+          cargo build -p voxa-app --lib --target aarch64-apple-ios --release
+          test -d src-tauri/sherpa-onnx.xcframework
+      - name: Generate the iOS project
+        run: |
+          npx tauri ios init --ci
+          python3 -I tools/ios_setup.py src-tauri/gen/apple
+      - name: Build for iPhone, unsigned
+        run: |
+          cd src-tauri/gen/apple
+          project=$(ls -d *.xcodeproj | head -n 1)
+          scheme=$(basename "$project" .xcodeproj)_iOS
+          xcodebuild -project "$project" -scheme "$scheme" -configuration release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build | tail -n 40
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Check the app (framework and microphone description)
+        run: |
+          app=$(find src-tauri/gen/apple/build -name '*.app' -path '*iphoneos*' | head -n 1)
+          test -n "$app" || { echo "no .app built"; exit 1; }
+          echo "App: $app ($(du -sh "$app" | cut -f1))"
+          ls "$app/Frameworks"
+          test -d "$app/Frameworks/SherpaOnnxC.framework"
+          /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$app/Info.plist"
+          echo "APP_PATH=$app" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxa-ios-unsigned
+          path: app/${{ env.APP_PATH }}
           retention-days: 14

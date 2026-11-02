@@ -1,3 +1,6 @@
 target/
 node_modules/
 src-tauri/gen/
+# Copied in by sherpa-onnx-sys for iOS builds (see docs/MOBILE.md).
+src-tauri/sherpa-onnx.xcframework/
+src-tauri/.sherpa-onnx-xcframework-version

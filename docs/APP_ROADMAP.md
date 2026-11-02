@@ -327,8 +327,21 @@ checks it off here in the same PR, and merges it once CI is green.**
     - Tested against a reference worker with no dependencies: speech, errors in plain
       words, a restart after a crash, a timeout, and a signed worker pack installed and
       spoken through the registry.
-  - [ ] **M11c Qwen3-TTS workers.** CUDA and MLX workers for Qwen3-TTS (Voxa Studio),
-    shipped as signed packs. Measuring them needs a GPU and an Apple Silicon Mac (owner).
+  - [x] **M11c Qwen3-TTS worker (Voxa Studio).**
+    - `app/workers/qwen3_tts_worker.py` runs Qwen3-TTS-12Hz CustomVoice (0.6B or 1.7B,
+      Apache-2.0) with the `qwen-tts` package. It runs on PyTorch: CUDA on NVIDIA, MPS on
+      Apple Silicon, or CPU.
+    - It offers 9 voices, each in its speaker's native language: 2 English, 5 Chinese, 1
+      Japanese and 1 Korean.
+    - `tools/build_studio_package.py` builds the pack: the model, the worker and
+      `worker.json`, plus optionally a bundled Python environment (`env/`), so the pack
+      needs nothing installed on the machine.
+    - Result (`studio_e2e`, 0.6B, CPU only): two English sentences in two voices went
+      through the real worker. Whisper heard them word for word (0% WER), at 24 kHz. On
+      this CPU it ran at 0.28× real time, including the model load, which is why it is
+      the GPU tier.
+    - The MLX build (mlx-audio) was not written: it can't be run here. On Apple Silicon
+      the PyTorch worker uses MPS for now (see Blocked on owner).
   - [ ] **M11d RE-USE on the GPU worker.** Film-dialogue clean-up for the GPU tier. This
     needs a GPU to measure.
 - [ ] **M12 Launch changes to the website.** Only when the owner says the app is launching:
@@ -398,6 +411,16 @@ store listings, legal review.)
     signing.
   - Send a build through TestFlight to 2-3 iPhones (an iPhone 12 or older, and a recent
     one) and run the same checks as on Android, including **Speed test**.
+- **Voxa Studio on real GPUs** (from M11c). The worker passed on CPU. Before offering
+  it:
+  - Build the pack per platform with a bundled environment (`build_studio_package.py
+    --env`): CUDA PyTorch on Windows and Linux, and PyTorch with MPS on macOS.
+  - Run `studio_e2e` and **Speed test** on an NVIDIA 8-16 GB card and on an Apple
+    Silicon Mac, with both 0.6B and 1.7B, and send the numbers. They set the
+    requirements in the catalogue.
+  - On the Mac, also try mlx-audio's Qwen3-TTS. If it is clearly faster than MPS, it
+    becomes a second worker.
+  - Listen to the Chinese, Japanese and Korean voices with native speakers.
 - **Model mirror hosting** (from M2). Somewhere to host model files over https, for example
   Cloudflare R2, a Hugging Face organisation, or both as primary and backup. Needs an account
   in Voxa's name.

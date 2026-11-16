@@ -10,7 +10,9 @@ models for English, German, Spanish and French, Hojo TTS Light for English and C
 HOJO_REPO points at a checkout of github.com/HojoAI/Hojo-TTS-Light, MOSS-TTS-Nano (100M, ONNX,
 20 languages) when MOSS_NANO_REPO points at a checkout of github.com/OpenMOSS/MOSS-TTS-Nano, and
 LFM3-Omni-2B (Liquid AI's speech-to-speech model, here in its text-to-speech mode; needs
-transformers>=5.20.2, torch and torchvision). Clips and timings are added
+transformers>=5.20.2, torch and torchvision), and tiny-voca (4.5M, English, two voices) when
+TINY_VOCA_DIR holds its ONNX files and phonemizer data (huggingface.co/n4ze3m/tiny-voca; needs
+the dizione package from github.com/n4ze3m/dizione). Clips and timings are added
 to results.json beside the GPU engines' (gpu/compare.py), so one page compares them all.
 Timings are CPU seconds on this machine, a rough guide to phone speed, not a measurement of it.
 """
@@ -203,11 +205,50 @@ def lfm3_rows():
     return [timed('lfm3', 'LFM3-Omni 2B (speech mode)', lang, speak_in(lang)) for lang in LFM3_LANGS]
 
 
+def tiny_voca_rows():
+    model_dir = os.environ.get('TINY_VOCA_DIR')
+    if not model_dir:
+        print('tiny_voca: skipped (set TINY_VOCA_DIR to a download of n4ze3m/tiny-voca)', flush=True)
+        return []
+    import numpy as np
+    import onnxruntime as ort
+
+    os.environ.setdefault('DIZIONE_DATA', os.path.join(model_dir, 'phonemizer'))
+    import dizione
+
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 4
+    session = ort.InferenceSession(os.path.join(model_dir, 'onnx', 'model.onnx'), options)
+    one = lambda value: np.array([value], dtype=np.float32)
+
+    def say(sentence, voice):
+        phones = dizione.phonemize(sentence)
+        audio, _ = session.run(None, {
+            'tokens': np.array([phones.ids], dtype=np.int64), 'stress': np.array([phones.stress], dtype=np.int64),
+            'voice': np.array([voice], dtype=np.int64), 'speed': one(1.0), 'pitch_shift': one(0.0), 'pitch_range': one(1.0)})
+        audio = audio[0]
+        return audio * min(1.0, 0.99 / max(float(np.abs(audio).max()), 1e-6))  # the model can peak above 1.0
+
+    def speak_as(voice, name):
+        def speak(text):
+            gap = np.zeros(int(24000 * 0.2), dtype='float32')
+            parts = []
+            for piece in sentences(text):  # each utterance ends with a mark, as the model needs
+                if parts:
+                    parts.append(gap)
+                parts.append(say(piece, voice))
+            return np.concatenate(parts), 24000, name
+        return speak
+    say('Warm-up.', 0)
+    return [timed('tiny_voca_f2', 'tiny-voca 4.5M (F2)', 'en', speak_as(0, 'F2 (female)')),
+            timed('tiny_voca_m2', 'tiny-voca 4.5M (M2)', 'en', speak_as(1, 'M2 (male)'))]
+
+
 def main(out):
     os.makedirs(out, exist_ok=True)
     rows = []
     only = {e for e in os.environ.get('DEVICE_ENGINES', '').split(',') if e}
-    for make in (supertonic_rows, pocket_rows, hojo_rows, moss_nano_rows, lfm3_rows):
+    for make in (supertonic_rows, pocket_rows, hojo_rows, moss_nano_rows, lfm3_rows, tiny_voca_rows):
         if only and make.__name__.replace('_rows', '') not in only:
             continue
         try:

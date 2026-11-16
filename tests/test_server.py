@@ -704,7 +704,10 @@ class LiteCatalogueTest(ServerTestCase):
         voices = [v for k in ('a', 'b', 'z') for v in lite['voices'][k]]
         phonon = [v for v in voices if v['engine'] == 'phonon']
         hojo = [v for v in voices if v['engine'] == 'hojo']
+        tiny = [v for v in voices if v['engine'] == 'tinyvoca']
         self.assertEqual(len(phonon), 8)
+        self.assertEqual(sorted((v['source'], v['gender'], v['lang']) for v in tiny),
+                         [('F2', 'female', 'a'), ('M2', 'male', 'a')])
         self.assertEqual(sorted(v['source'] for v in hojo),
                          [f'hojo_en_f_0{i}' for i in range(1, 8)] + [f'hojo_en_m_0{i}' for i in range(1, 6)]
                          + ['hojo_en_u_01', 'hojo_zh_f_01', 'hojo_zh_f_02'])
@@ -727,10 +730,17 @@ class LiteCatalogueTest(ServerTestCase):
         self.assertNotIn(b'{{', js)
         self.assertIn(f'/static/{server.HOJO_DIR}/'.encode(), js)
         self.assertIn(f'/static/onnxruntime-web-{server.ORT_VERSION}/'.encode(), js)
-        for path in ('/lite.js', '/hojo-text.js'):
+        for path in ('/lite.js', '/hojo-text.js', '/tiny-voca-text.js'):
             code, headers, _ = self.req(path)
             self.assertEqual(code, 200)
             self.assertTrue(headers['Content-Type'].startswith('text/javascript'))
+        # tiny-voca's worker takes its pinned folder and the runtime that runs it
+        code, headers, js = self.req('/tiny-voca-worker.js')
+        self.assertEqual(code, 200)
+        self.assertEqual(headers['Cross-Origin-Embedder-Policy'], 'require-corp')
+        self.assertNotIn(b'{{', js)
+        self.assertIn(f'/static/{server.TINYVOCA_DIR}/pyodide/pyodide.js'.encode(), js)
+        self.assertIn(f'/static/onnxruntime-web-{server.ORT_VERSION}/'.encode(), js)
         # Model files are streamed from static/ with the same long-lived, isolated headers.
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
@@ -745,6 +755,19 @@ class LiteCatalogueTest(ServerTestCase):
         self.assertEqual((code, len(body), headers['Content-Length']), (200, 3_000_000, '3000000'))
         self.assertIn('immutable', headers['Cache-Control'])
         self.assertEqual(headers['Cross-Origin-Resource-Policy'], 'same-origin')
+
+    def test_tiny_voca_runtime_files_are_served_with_their_types(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, data in (('a.zip', b'PK'), ('b.whl', b'PK'), ('c.wasm', b'\0asm')):
+                with open(os.path.join(tmp, name), 'wb') as f:
+                    f.write(data)
+            old, server.STATIC_DIR = server.STATIC_DIR, tmp
+            try:
+                types = {n: self.req(f'/static/{n}')[1]['Content-Type'] for n in ('a.zip', 'b.whl', 'c.wasm')}
+            finally:
+                server.STATIC_DIR = old
+        self.assertEqual(types, {'a.zip': 'application/zip', 'b.whl': 'application/zip', 'c.wasm': 'application/wasm'})
 
     def test_main_page_is_isolated_for_threads(self):
         _, headers, _ = self.req('/')
@@ -763,6 +786,8 @@ class LiteCatalogueTest(ServerTestCase):
             'Chinese \\(z\\) only': ([dict(voice, engine='hojo', source='hojo_en_f_01', lang='z')], base),
             'Hojo speaks': ([dict(voice, engine='hojo', source='hojo_ja_f_01')], base),
             'unknown engine': ([dict(voice, engine='other')], base),
+            'F2 and M2 only': ([dict(voice, engine='tinyvoca', source='F3')], base),
+            'English voices F2': ([dict(voice, engine='tinyvoca', source='F2', lang='b')], base),
             'unexpected file path': ([dict(voice, file='../../etc/passwd')], base),
             'default': ([voice], dict(base, expressiveness=[{'id': 'n', 'name': 'N', 'temperature': 0.3}])),
         }

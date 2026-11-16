@@ -1,11 +1,13 @@
-// On-device voices, shared by every page: two engines behind one call.
+// On-device voices, shared by every page: three engines behind one call.
 //   Phonon 31m (Gradium) for its English voices: ~65 MB, loaded from Hugging Face.
 //   Hojo TTS Light 40M (HojoAI) for Voxa's other English voices and Chinese: ~126 MB, served
 //   from static/ and run in web/hojo-worker.js.
+//   tiny-voca (4.5M, English, two voices): ~50 MB with its Python phonemizer, served from static/
+//   and run in web/tiny-voca-worker.js. By far the fastest of the three.
 // Each engine loads the first time one of its voices speaks, then comes from the cache.
 import { normalizeForHojo, splitForHojo } from '/hojo-text.js';
 
-const ABOUT_MB = { phonon: 65, hojo: 126 };
+const ABOUT_MB = { phonon: 65, hojo: 126, tinyvoca: 50 };
 
 function statusText(engine, files, cached) {
   const mb = Object.values(files).reduce((a, b) => a + b, 0) / 1e6;
@@ -13,15 +15,16 @@ function statusText(engine, files, cached) {
     : `Downloading the on-device voice (once)… ${mb.toFixed(0)} MB of about ${ABOUT_MB[engine]}`;
 }
 
-class Hojo {
-  constructor() {
-    this.worker = new Worker('/hojo-worker.js', { type: 'module' });
+// A model in its own worker: loads once, then says one piece of text at a time.
+class WorkerEngine {
+  constructor(engine, url, options) {
+    this.worker = new Worker(url, options);
     this.jobs = new Map();
     this.next = 1;
     this.onStatus = () => {};
     this.ready = new Promise((resolve, reject) => { this.loaded = { resolve, reject }; });
     this.worker.onmessage = ({ data }) => {
-      if (data.type === 'progress') return this.onStatus(statusText('hojo', { all: data.total }, data.cached));
+      if (data.type === 'progress') return this.onStatus(statusText(engine, { all: data.total }, data.cached));
       if (data.type === 'ready') return this.loaded.resolve(data);
       const job = this.jobs.get(data.job);
       if (data.type === 'error' && !job) return this.loaded.reject(new Error(data.message));
@@ -45,6 +48,10 @@ class Hojo {
       this.worker.postMessage({ type: 'speak', job, text, voice, opts });
     });
   }
+}
+
+class Hojo extends WorkerEngine {
+  constructor() { super('hojo', '/hojo-worker.js', { type: 'module' }); }
 
   // Long text is said a few sentences at a time, joined with a short pause.
   async synth(text, voice, lang, { temperature, seed, signal }) {
@@ -63,12 +70,22 @@ class Hojo {
   }
 }
 
+// tiny-voca splits long text itself, so a whole text goes to the worker in one job.
+class TinyVoca extends WorkerEngine {
+  constructor() { super('tinyvoca', '/tiny-voca-worker.js'); }
+
+  async synth(text, voice, { signal }) {
+    await this.ready;
+    return this.piece(text, voice, {}, signal);
+  }
+}
+
 /**
  * The on-device voices for a page. config() returns the page's /api/voices answer (its
  * `lite` section and `phonon_version`); voices are entries of config().lite.voices.
  */
 export function createLite(config) {
-  let phonon = null, hojo = null;
+  let phonon = null, hojo = null, tinyVoca = null;
   const phononVoices = new Set();
 
   async function phononEngine(status) {
@@ -97,6 +114,12 @@ export function createLite(config) {
         hojo.onStatus = status;
         try { await hojo.ready; } catch (e) { hojo = null; throw e; }
         return hojo.synth(text, voice.source, voice.lang, { temperature: hojoTemperature(temperature), seed, signal });
+      }
+      if (voice.engine === 'tinyvoca') {
+        if (!tinyVoca) tinyVoca = new TinyVoca();
+        tinyVoca.onStatus = status;
+        try { await tinyVoca.ready; } catch (e) { tinyVoca = null; throw e; }
+        return tinyVoca.synth(text, voice.source, { signal });
       }
       const tts = await phononEngine(status);
       if (!phononVoices.has(voice.id)) { await tts.addVoice(voice.id, voice.url); phononVoices.add(voice.id); }

@@ -7,6 +7,12 @@ RUN pip install --no-cache-dir numpy==2.3.5 onnx==1.23.2 onnxruntime==1.21.1
 COPY scripts/build_hojo.py /tmp/build_hojo.py
 RUN python /tmp/build_hojo.py /out
 
+# tiny-voca (and the Python phonemizer it runs on under Pyodide), pinned and checked.
+FROM python:3.11-slim AS tinyvoca
+COPY scripts/build_tiny_voca.py /tmp/build_tiny_voca.py
+COPY vendor/dizione /app/vendor/dizione
+RUN mkdir -p /app/scripts && cp /tmp/build_tiny_voca.py /app/scripts/ && python /app/scripts/build_tiny_voca.py /out
+
 # The model, all 54 voices and every language's G2P data are baked into the image, so
 # the running server never fetches from Hugging Face (which rate-limits anonymous pulls).
 FROM python:3.11-slim
@@ -53,6 +59,8 @@ COPY scripts/fetch_vendor.py /tmp/fetch_vendor.py
 RUN python /tmp/fetch_vendor.py /app/static && rm /tmp/fetch_vendor.py
 # The on-device Hojo voices' model files (~126 MB), served from static/ like the packages.
 COPY --from=hojo /out /app/static
+# tiny-voca's files (~50 MB), likewise.
+COPY --from=tinyvoca /out /app/static
 
 # Everything is local now; fail fast rather than reach the network at runtime.
 ENV HF_HUB_OFFLINE=1

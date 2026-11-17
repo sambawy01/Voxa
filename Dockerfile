@@ -57,7 +57,7 @@ COPY --from=hojo /out /app/static
 # Everything is local now; fail fast rather than reach the network at runtime.
 ENV HF_HUB_OFFLINE=1
 
-COPY server.py billing.py podcast.py voices.json /app/
+COPY server.py billing.py podcast.py plans.py apikeys.py longjobs.py agentapi.py voices.json /app/
 COPY web /app/web
 
 EXPOSE 8080

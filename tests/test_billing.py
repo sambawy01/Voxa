@@ -208,6 +208,17 @@ class BillingHTTPTest(ServerTestCase):
         self.webhook(sub_event('subscription.paused', status='paused', sub='sub_2', at='2026-10-27T10:00:00Z'))
         self.assertEqual(self.fake.users['alice']['tier'], 'free')
 
+    def test_api_keys_follow_the_tier_the_moment_a_subscription_changes(self):
+        import apikeys
+        server._keys = apikeys.ApiKeys(':memory:')
+        try:
+            self.webhook(sub_event('subscription.created'))
+            self.assertEqual(server._keys.tier('alice'), 'paid')
+            self.webhook(sub_event('subscription.canceled', status='canceled', at='2026-10-25T10:00:00Z'))
+            self.assertEqual(server._keys.tier('alice'), 'free')
+        finally:
+            server._keys = None
+
     def test_late_or_stale_events_do_not_undo_newer_ones(self):
         self.webhook(sub_event('subscription.created', sub='sub_new', at='2026-10-23T10:00:00Z'))
         # An old subscription ending, or an event delivered late, leaves the account paid.

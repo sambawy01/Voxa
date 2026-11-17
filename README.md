@@ -53,6 +53,9 @@ pages/           GitHub Pages redirect to the Fly app
 | GET | `/api/audio/<key>` | the finished `audio/wav` |
 | POST | `/api/tts` | `{text, lang, voice, speed}` → `audio/wav`, waits up to 300 s |
 
+Agents: speech, audiobooks and podcasts over REST and MCP, with API keys, are described in
+[docs/API.md](docs/API.md) and live at `/developers`, `/api/openapi.json`, `/llms.txt` and `/mcp`.
+
 The page uses the job endpoints: submit, poll progress, then fetch the audio. `/api/tts` is
 the same queue in one call, for scripts; its `X-Voxa-Cache: hit|miss` header says whether
 the audio was cached.

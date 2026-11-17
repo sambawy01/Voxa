@@ -15,7 +15,7 @@ jobs:
       - name: Install test dependencies
         run: pip install cryptography
       - name: Compile
-        run: python -m py_compile server.py billing.py podcast.py scripts/smoke.py
+        run: python -m py_compile server.py billing.py podcast.py plans.py apikeys.py longjobs.py agentapi.py scripts/smoke.py
       - uses: actions/setup-node@v4
         with:
           node-version: 22

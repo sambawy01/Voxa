@@ -40,10 +40,14 @@ import shutil
 import sqlite3
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 
+import agentapi
+import apikeys
 import billing
+import longjobs
 import plans
 import podcast
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -83,6 +87,7 @@ FREE_DAILY_CHARS = int(os.environ.get('VOXA_FREE_DAILY_CHARS', '1500'))
 PODCAST_MAX_MINUTES = {tier: rule[2] for tier, rule in plans.PODCAST_RULES.items()}
 # Document text for a podcast script is far bigger than a speech request.
 MAX_PODCAST_BODY = 1024 * 1024
+MAX_BOOK_BODY = 3 * 1024 * 1024   # an audiobook's text, as JSON
 # Sign-in (Supabase). SUPABASE_URL and the public anon key turn accounts on; the page uses
 # them to sign people in. Tokens signed with the project's asymmetric keys are checked
 # against its published JWKS; SUPABASE_JWT_SECRET covers projects on the older shared secret.
@@ -128,7 +133,7 @@ PLAIN_PAGES = {'/checkout'}
 WEB_PAGES = {'/': 'index.html', '/voxa.css': 'voxa.css', '/checkout': 'checkout.html', '/pricing': 'pricing.html', '/terms': 'terms.html',
              '/privacy': 'privacy.html', '/refunds': 'refunds.html', '/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
              '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html',
-             '/podcast': 'podcast.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
+             '/developers': 'developers.html', '/podcast': 'podcast.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
              '/listen': 'listen.html', '/listen.js': 'listen.js', '/manifest.webmanifest': 'manifest.webmanifest',
              '/lite.js': 'lite.js', '/hojo-text.js': 'hojo-text.js', '/hojo-worker.js': 'hojo-worker.js'}
 # Binary files from web/: the app icons for home screens.
@@ -475,6 +480,10 @@ class AudioCache:
 _cache = AudioCache(MAX_CACHE_BYTES)
 
 
+class KeyRejected(Exception):
+    """An API key that is unknown or revoked."""
+
+
 class AuthError(Exception):
     """A sign-in token we cannot accept."""
 
@@ -618,8 +627,9 @@ class Identity:
     cookie id, or by IP when there is no cookie (scripts)."""
 
     def __init__(self, ip, visitor=None, user=None, tier='guest', email=None, customer=None,
-                 subscription=None):
+                 subscription=None, via=None):
         self.ip, self.visitor, self.user, self.tier, self.email = ip, visitor, user, tier, email
+        self.via = via  # 'key' for an API key; None for a session or a guest
         # Paddle ids, once the account has subscribed: for "Manage plan".
         self.customer, self.subscription = customer, subscription
 
@@ -760,6 +770,15 @@ def open_plans():
         return plans.Plans(':memory:')
 
 
+def open_keys():
+    path = os.path.join(DATA_DIR, 'voxa.sqlite3')
+    try:
+        return apikeys.ApiKeys(path)
+    except sqlite3.Error as e:
+        log.warning('cannot open %s (%s); API keys will reset on restart', path, e)
+        return apikeys.ApiKeys(':memory:')
+
+
 def open_quota(limits=None, table='usage'):
     limits = tier_limits() if limits is None else limits
     path = os.path.join(DATA_DIR, 'voxa.sqlite3')
@@ -773,6 +792,297 @@ def open_quota(limits=None, table='usage'):
 _quota = None  # visitors' daily characters; opened in main(), so importing touches no files
 _plans = None  # wallets, monthly allowances, podcast and audiobook counts, in the same file
 _scripts = podcast.ScriptJobs()
+
+
+# --- the agent API: keys, speech, audiobooks and podcasts ----------------------------------------
+# Operations take who (an Identity) and a dict of arguments and return a JSON-able result or raise
+# agentapi.ApiError. The REST routes and the MCP tools both call them, so they behave alike.
+
+class RateLimited(Exception):
+    def __init__(self, retry_after):
+        super().__init__('Too many requests. Slow down and retry shortly.')
+        self.retry_after = retry_after
+
+
+_keys = None    # apikeys.ApiKeys, opened in main()
+_longs = None   # longjobs.LongJobs: audiobooks and podcasts being made
+_rate = apikeys.RateLimit(int(os.environ.get('VOXA_API_RATE', '120')), 60)
+API_WAIT_MAX = 50  # the most seconds get_job will wait for a change
+
+
+def _translate(e):
+    """The ApiError for an error the plan rules or a request check raised, else None."""
+    if isinstance(e, agentapi.ApiError):
+        return e
+    if isinstance(e, KeyRejected):
+        return agentapi.ApiError(401, str(e))
+    if isinstance(e, (BadRequest, podcast.BadRequest, longjobs.BadJob)):
+        return agentapi.ApiError(400, str(e))
+    if isinstance(e, SignInRequired):
+        return agentapi.ApiError(401, 'Send your Voxa API key as "Authorization: Bearer vx_live_…". '
+                                      'Make one at /developers (it needs a free account).')
+    if isinstance(e, QuotaExceeded):
+        return agentapi.ApiError(429, str(e), {'quota': e.status})
+    if isinstance(e, plans.WalletEmpty):
+        return agentapi.ApiError(429, str(e), {'quota': e.status, 'wallet': True})
+    if isinstance(e, plans.LimitReached):
+        return agentapi.ApiError(429, str(e))
+    if isinstance(e, Busy):
+        return agentapi.ApiError(503, 'The server is busy. Please try again in a minute.')
+    return None
+
+
+def api_operation(fn):
+    """Turn the errors an operation may raise into ApiError."""
+    def run(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            t = _translate(e)
+            if t is None:
+                raise
+            raise t from None
+    run.__name__ = fn.__name__
+    return run
+
+
+def _need_account(who):
+    if not who.user:
+        raise agentapi.ApiError(401, 'Audiobooks and podcasts need a Voxa account. Send your API key as '
+                                     '"Authorization: Bearer vx_live_…" (make one at /developers).')
+
+
+def submit_speech(who, text, lang, voice, speed):
+    """Queue one generation for `who`, charged to their plan (or visitor quota)."""
+    if _auth and not who.user:
+        raise SignInRequired('generate speech')
+    if _plans and who.user:
+        cls = voice_class(voice)
+        charge = lambda n: _plans.charge(who, n, cls)
+    else:
+        charge = (lambda n: _quota.charge(who, n)) if _quota else None
+    return _jobs.submit(text, lang, voice, speed, charge=charge, who=who)
+
+
+def speak_wait(who, text, lang, voice, patience=900):
+    """The WAV for text, already paid for by the caller; waits for the queue. For long jobs."""
+    deadline = time.time() + patience
+    while True:
+        try:
+            job = _jobs.submit(text, lang, voice, 1.0, who=who)
+            break
+        except Busy:
+            if time.time() > deadline:
+                raise longjobs.JobError('The server stayed busy. Nothing was charged; please try again.')
+            time.sleep(2)
+    if not job.done.wait(max(1, deadline - time.time())) or job.status != 'done':
+        raise longjobs.JobError('Speech generation failed on the server. Nothing was charged; please try again.')
+    audio = _cache.get(job.key)
+    if audio is None:
+        raise longjobs.JobError('Speech generation failed on the server. Nothing was charged; please try again.')
+    return audio
+
+
+def _default_voices(lang):
+    """(woman's voice, man's voice) ids for a language: its Standard voices, defaults first."""
+    pick = lambda gender: next((v for v in VOICES[lang] if VOICE_BY_ID[v]['gender'] == gender
+                                and voice_class(v) == 'standard'), VOICES[lang][0])
+    return pick('female'), pick('male')
+
+
+@api_operation
+def op_list_voices(who, args):
+    lang = args.get('lang')
+    if lang is not None and lang not in LANG_LABELS:
+        raise BadRequest(f'unknown language {lang!r}; one of {", ".join(LANG_LABELS)}')
+    return {'voices': [{'id': v['id'], 'name': v['name'], 'lang': v['lang'], 'language': LANG_LABELS[v['lang']],
+                        'gender': v['gender'], 'accent': v['accent'], 'class': voice_class(v['id']),
+                        'default': bool(v.get('default')), 'description': v['description']}
+                       for v in CATALOGUE if lang in (None, v['lang'])]}
+
+
+@api_operation
+def op_account(who, args):
+    if not who.user:
+        raise SignInRequired('see an account')
+    out = {'email': who.email or (_keys.email(who.user) if _keys else None), 'tier': who.tier,
+           'plan': TIERS[plan_tier(who)]}
+    if _plans:
+        out['studio'] = _plans.status(who)
+        out['podcasts'] = _plans.podcast_status(_owner_of(who), plan_tier(who))
+    out['audiobooks'] = {'limit_per_day': (plans.BOOK_RULES.get(plan_tier(who)) or (None,))[0]}
+    out['rate_limit_per_minute'] = _rate.limit
+    return out
+
+
+def _owner_of(who):
+    return f'u:{who.user}' if who.user else f'v:{who.visitor}' if who.visitor else f'a:{who.ip}'
+
+
+@api_operation
+def op_speech(who, args):
+    """(audio bytes, format, details). REST sends the bytes; MCP stores them and returns a link."""
+    fmt = args.get('format', 'mp3')
+    if fmt not in ('mp3', 'wav'):
+        raise BadRequest('format must be "mp3" or "wav"')
+    text, lang, voice, speed = parse_request(args)
+    job = submit_speech(who, text, lang, voice, speed)
+    if not job.done.wait(SYNC_TIMEOUT):
+        raise agentapi.ApiError(504, 'Still generating; try a shorter text, or use make_audiobook.')
+    if job.status == 'error':
+        raise agentapi.ApiError(500, job.error)
+    wav = _cache.get(job.key)
+    if wav is None:
+        raise agentapi.ApiError(500, 'The audio expired before it could be sent; please try again.')
+    data = wav if fmt == 'wav' else longjobs.wav_to_mp3(wav)
+    return data, fmt, {'characters': len(text), 'voice': voice, 'lang': lang}
+
+
+def _file_url(base):
+    return lambda job: f'{base}/api/v1/files/{job.id}.mp3'
+
+
+@api_operation
+def op_make_audiobook(who, args, base):
+    _need_account(who)
+    _, lang, voice, _ = parse_request({'text': 'x', 'lang': args.get('lang'), 'voice': args.get('voice')})
+    book = longjobs.parse_book(args)
+    owner, tier, cls = _owner_of(who), plan_tier(who), voice_class(voice)
+    book_id = hashlib.sha256(json.dumps([book['title'], [c['chunks'] for c in book['chapters']], lang, voice]).encode()).hexdigest()[:32]
+    refund = lambda: None
+    if _plans:
+        refund = _plans.charge(who, book['characters'], cls)
+        try:
+            _plans.start_book(owner, tier, book_id)   # counts a new book; may say Lite's one a day is used
+        except Exception:
+            refund()
+            raise
+
+    def work(job):
+        def progress(fraction, message):
+            job.progress, job.stage = fraction, message
+        job.stage = 'Reading'
+        job.result = longjobs.build_audiobook(book, lambda t: speak_wait(who, t, lang, voice), job.path,
+                                              progress, job.cancel.is_set)
+        job.result['title'] = book['title']
+    try:
+        job = _longs.submit('audiobook', owner, work, refund)
+    except Exception:
+        refund()
+        raise
+    log.info('audiobook %s: %s chars, %s chapters, voice %s', job.id, book['characters'], len(book['chapters']), voice)
+    return job.to_json(_file_url(base))
+
+
+@api_operation
+def op_make_podcast(who, args, base):
+    if not podcast.enabled():
+        raise agentapi.ApiError(503, 'Podcasts are not set up on this server.')
+    _need_account(who)
+    req = podcast.parse_request(args)
+    given = args.get('voices') if isinstance(args.get('voices'), dict) else {}
+    woman, man = _default_voices(req['lang'])
+    voices = {}
+    for key, default in (('a', woman), ('b', man)):
+        _, _, voices[key.upper()], _ = parse_request({'text': 'x', 'lang': req['lang'], 'voice': given.get(key) or default})
+    owner, tier = _owner_of(who), plan_tier(who)
+    if _plans:
+        # Fail before the script is written if the plan cannot pay for an episode of this length.
+        status = _plans.status(who)
+        key = lambda cls: 'hd_left' if cls == 'hd' else 'standard_left'
+        needed = req['minutes'] * plans.CHARS_PER_MINUTE
+        for voice in set(voices.values()):
+            if needed // 2 > status[key(voice_class(voice))]:
+                raise plans.WalletEmpty(status, needed, f'A {req["minutes"]}-minute episode needs about {needed:,} '
+                                        'Studio characters and this account does not have enough. Try a shorter '
+                                        'episode or get an HD pack.')
+    count_refund = _plans.take_podcast(owner, tier, req['minutes']) if _plans else (lambda: None)
+
+    def work(job):
+        job.stage = 'Writing the script'
+        try:
+            script = podcast.write_script(req)
+        except podcast.ModelError as e:
+            raise longjobs.JobError(str(e))
+        if req['title']:
+            script['title'] = req['title']
+        refunds = []
+        try:
+            if _plans:
+                by_class = collections.Counter()
+                for ch in script['chapters']:
+                    for line in ch['lines']:
+                        by_class[voice_class(voices[line['speaker']])] += len(line['text'])
+                for cls, n in by_class.items():
+                    refunds.append(_plans.charge(who, n, cls))
+        except plans.WalletEmpty as e:
+            # The script is already written and is the caller's to keep; only the recording is skipped.
+            job.result = {'title': script['title'], 'script': script, 'warning': f'{e} The script is included; '
+                          'no audio was made and nothing was charged.'}
+            return
+        try:
+            def progress(fraction, message):
+                job.progress, job.stage = 0.1 + 0.9 * fraction, message
+            job.progress = 0.1
+            job.result = longjobs.build_podcast(script, voices, lambda t, v: speak_wait(who, t, req['lang'], v),
+                                                job.path, progress, job.cancel.is_set)
+            job.result.update(title=script['title'], summary=script.get('summary', ''), script=script)
+        except longjobs.Cancelled:
+            raise
+        except BaseException:
+            for r in refunds:
+                r()
+            raise
+    try:
+        job = _longs.submit('podcast', owner, work, count_refund)
+    except Exception:
+        count_refund()
+        raise
+    log.info('podcast %s: %s chars, %s min, %s', job.id, len(req['text']), req['minutes'], req['lang'])
+    return job.to_json(_file_url(base))
+
+
+@api_operation
+def op_get_job(who, args, base):
+    _need_account(who)
+    job = _longs.get(str(args.get('id') or ''), _owner_of(who))
+    if job is None:
+        raise agentapi.ApiError(404, 'No such job. Jobs are kept for a day and belong to the key that started them.')
+    try:
+        wait = min(API_WAIT_MAX, max(0, int(args.get('wait_seconds') or 0)))
+    except (TypeError, ValueError):
+        raise BadRequest('wait_seconds must be a number')
+    end, seen = time.time() + wait, (job.status, job.stage)
+    while wait and job.status in ('queued', 'running') and time.time() < end and (job.status, job.stage) == seen:
+        time.sleep(0.5)
+    return job.to_json(_file_url(base))
+
+
+@api_operation
+def op_cancel_job(who, args, base):
+    _need_account(who)
+    job = _longs.cancel(str(args.get('id') or ''), _owner_of(who))
+    if job is None:
+        raise agentapi.ApiError(404, 'No such job.')
+    return job.to_json(_file_url(base))
+
+
+def op_speak_link(who, args, base):
+    """MCP's version of speak: the audio is kept for a day and a link returned."""
+    data, fmt, details = op_speech(who, args)
+    return {**details, 'format': fmt, 'audio_url': f'{base}/api/v1/files/{_longs.put_file(data, fmt)}',
+            'note': 'The link needs no key and works for 24 hours.'}
+
+
+MCP_TOOLS = {
+    'list_voices': lambda who, a, base: op_list_voices(who, a),
+    'speak': op_speak_link,
+    'make_audiobook': op_make_audiobook,
+    'make_podcast': op_make_podcast,
+    'get_job': op_get_job,
+    'cancel_job': op_cancel_job,
+    'get_account': lambda who, a, base: op_account(who, a),
+}
 
 
 class Job:
@@ -962,7 +1272,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Expose-Headers', 'X-Voxa-Cache, X-Voxa-File')
+        self.send_header('Access-Control-Expose-Headers', 'X-Voxa-Cache, X-Voxa-File, X-Voxa-Voice, X-Voxa-Characters')
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -1062,8 +1372,20 @@ class Handler(BaseHTTPRequestHandler):
         present but invalid or expired is an AuthError, not a silent fall back to guest."""
         ip = self._client_ip()
         header = self.headers.get('Authorization') or ''
-        if _auth and header.startswith('Bearer '):
-            return identity_from_claims(_auth.verify(header[7:].strip()), ip)
+        token = header[7:].strip() if header.startswith('Bearer ') else ''
+        if _keys and apikeys.looks_like_key(token):
+            user = _keys.lookup(token)
+            if not user:
+                raise KeyRejected('That API key is not valid or has been revoked.')
+            wait = _rate.hit(user)
+            if wait:
+                raise RateLimited(wait)
+            return Identity(ip, user=user, tier=_keys.tier(user), email=_keys.email(user), via='key')
+        if _auth and token:
+            who = identity_from_claims(_auth.verify(token), ip)
+            if _keys:
+                _keys.record_account(who.user, who.tier, who.email)
+            return who
         return Identity(ip, visitor=self._visitor())
 
     def _submit(self):
@@ -1071,13 +1393,7 @@ class Handler(BaseHTTPRequestHandler):
         if _auth and not who.user:
             raise SignInRequired('generate speech')
         text, lang, voice, speed = self._read_request()
-        if _plans and who.user:
-            cls = voice_class(voice)
-            charge = lambda n: _plans.charge(who, n, cls)
-        else:
-            charge = (lambda n: _quota.charge(who, n)) if _quota else None
-        job = _jobs.submit(text, lang, voice, speed, charge=charge, who=who)
-        return job, who
+        return submit_speech(who, text, lang, voice, speed), who
 
     @staticmethod
     def _allowance(who):
@@ -1127,6 +1443,8 @@ class Handler(BaseHTTPRequestHandler):
                        extra={'Retry-After': '30'})
         except AuthError as e:
             self._send_auth_error(e)
+        except (RateLimited, KeyRejected, agentapi.ApiError, BadRequest, plans.WalletEmpty, plans.LimitReached) as e:
+            self._send_error(e, 'GET')
         except Exception:
             log.exception('GET %s failed', self.path)
             self._send(500, {'error': 'internal server error'})
@@ -1151,6 +1469,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(429, {'error': str(e), 'quota': e.status, 'wallet': True})
         except plans.LimitReached as e:
             self._send(429, {'error': str(e)})
+        except (RateLimited, KeyRejected, agentapi.ApiError) as e:
+            self._send_error(e, 'POST')
         except Exception:
             log.exception('POST %s failed', self.path)
             self._send(500, {'error': 'internal server error'})
@@ -1159,6 +1479,8 @@ class Handler(BaseHTTPRequestHandler):
         p = urlparse(self.path).path
         if p == '/index.html':
             p = '/'
+        if (p.startswith('/api/v1/') or p in ('/api/openapi.json', '/llms.txt', '/api/keys', '/mcp')) and self._v1_get(p):
+            return
         if p.startswith('/static/'):
             return self._send_static(p[len('/static/'):])
         if p in WEB_FILES:
@@ -1248,7 +1570,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        self.send_header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS')
         self.send_header('Content-Length', '0')
         self.end_headers()
 
@@ -1268,7 +1590,8 @@ class Handler(BaseHTTPRequestHandler):
                 log.warning('rejected Paddle webhook: %s', e)
                 return self._send(400, {'error': 'bad signature'})
             try:
-                result = billing.handle_event(event, SUPABASE_URL, credit=_credit_pack)
+                result = billing.handle_event(event, SUPABASE_URL, credit=_credit_pack,
+                                              on_tier=lambda user, tier: _keys and _keys.record_account(user, tier))
             except Exception:
                 # A non-2xx makes Paddle retry the event later, which is what we want here.
                 log.exception('Paddle event %s failed', event.get('event_id'))
@@ -1296,6 +1619,143 @@ class Handler(BaseHTTPRequestHandler):
         except billing.BillingError as e:
             return self._send(502, {'error': str(e)})
         return self._send(404, {'error': 'not found'})
+
+
+    def _base_url(self):
+        return PUBLIC_URL or f"{self.headers.get('X-Forwarded-Proto', 'http')}://{self.headers.get('Host', 'localhost')}"
+
+    def _send_api_error(self, e):
+        extra = {'WWW-Authenticate': 'Bearer'} if e.status == 401 else {'Retry-After': '30'} if e.status == 503 else {}
+        self._send(e.status, {'error': e.message, **e.extra}, extra=extra)
+
+    def _send_file(self, path, ctype, filename):
+        """A kept audio file, streamed. Its unguessable name is the only secret."""
+        with open(path, 'rb') as f:
+            self.send_response(200)
+            self.send_header('Content-Type', ctype)
+            self.send_header('Content-Length', str(os.fstat(f.fileno()).st_size))
+            self.send_header('Content-Disposition', f'inline; filename="{filename}"')
+            self.send_header('Cache-Control', 'private, max-age=3600')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            shutil.copyfileobj(f, self.wfile, 1 << 20)
+
+    def _account_session(self):
+        """The signed-in account behind a browser session. API keys cannot manage keys, so a
+        leaked key can never mint more of them."""
+        who = self._identity()
+        if _keys is None:
+            raise agentapi.ApiError(404, 'API keys are not set up.')
+        if not who.user or who.via == 'key':
+            raise agentapi.ApiError(401, 'Sign in on the website to manage API keys.')
+        return who
+
+    def _v1_get(self, p):
+        """The agent API's GET routes; returns True when it handled the request."""
+        query = urllib.parse.parse_qs(urlparse(self.path).query)
+        arg = lambda k: (query.get(k) or [None])[0]
+        base = self._base_url()
+        if p == '/api/openapi.json':
+            self._send(200, agentapi.openapi(base), extra={'Cache-Control': 'public, max-age=300'})
+        elif p == '/llms.txt':
+            self._send(200, agentapi.llms_txt(base), 'text/plain; charset=utf-8', {'Cache-Control': 'public, max-age=300'})
+        elif p == '/api/v1/voices':
+            self._send(200, op_list_voices(None, {'lang': arg('lang')}), extra={'Cache-Control': 'public, max-age=300'})
+        elif p == '/api/v1/account':
+            self._send(200, op_account(self._identity(), {}), extra={'Cache-Control': 'no-store'})
+        elif p.startswith('/api/v1/jobs/'):
+            self._send(200, op_get_job(self._identity(), {'id': p.rsplit('/', 1)[-1], 'wait_seconds': arg('wait_seconds')}, base),
+                       extra={'Cache-Control': 'no-store'})
+        elif p.startswith('/api/v1/files/'):
+            name = p.rsplit('/', 1)[-1]
+            path = _longs.path_for(name) if _longs else None
+            if not path:
+                return self._send(404, {'error': 'No such file. Files are kept for 24 hours.'}) or True
+            self._send_file(path, 'audio/mpeg' if name.endswith('.mp3') else 'audio/wav', f'voxa-{name[:8]}.{name[33:]}')
+        elif p == '/api/keys':
+            self._send(200, {'keys': _keys.list(self._account_session().user)}, extra={'Cache-Control': 'no-store'})
+        elif p == '/mcp':
+            self._send(405, {'error': 'This MCP server takes POSTed JSON-RPC messages only.'}, extra={'Allow': 'POST'})
+        else:
+            return False
+        return True
+
+    def _v1_post(self, p):
+        """The agent API's POST routes; returns True when it handled the request."""
+        base = self._base_url()
+        if p == '/api/v1/speech':
+            data, fmt, details = op_speech(self._identity(), self._json_body(MAX_BODY))
+            self._send(200, data, 'audio/mpeg' if fmt == 'mp3' else 'audio/wav', {
+                'X-Voxa-Voice': details['voice'], 'X-Voxa-Characters': str(details['characters']),
+                'Content-Disposition': f'attachment; filename="voxa-speech.{fmt}"'})
+        elif p == '/api/v1/audiobooks':
+            self._send(202, op_make_audiobook(self._identity(), self._json_body(MAX_BOOK_BODY), base))
+        elif p == '/api/v1/podcasts':
+            self._send(202, op_make_podcast(self._identity(), self._json_body(MAX_PODCAST_BODY), base))
+        elif p == '/api/keys':
+            who = self._account_session()
+            try:
+                record, secret = _keys.create(who.user, self._json_body().get('name'))
+            except apikeys.KeyError_ as e:
+                raise agentapi.ApiError(409, str(e))
+            self._send(201, {'key': record, 'secret': secret,
+                             'note': 'Copy the secret now: it is shown once and cannot be recovered.'},
+                       extra={'Cache-Control': 'no-store'})
+        elif p == '/mcp':
+            self._mcp()
+        else:
+            return False
+        return True
+
+    def _mcp(self):
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            raise BadRequest('bad Content-Length')
+        if n > 256 * 1024:
+            self.close_connection = True
+            raise BadRequest('request body too large')
+        try:
+            body = json.loads(self.rfile.read(n) or b'null')
+        except (ValueError, UnicodeDecodeError):
+            return self._send(400, {'jsonrpc': '2.0', 'id': None, 'error': {'code': -32700, 'message': 'Parse error'}})
+        who, base = self._identity(), self._base_url()
+        call = lambda name, args: MCP_TOOLS[name](who, args, base)
+        replies = []
+        for message in body if isinstance(body, list) else [body]:
+            reply = agentapi.mcp_handle(message, call, bool(who.user))
+            if reply is not None:
+                replies.append(reply)
+        if not replies:
+            return self._send(202, b'')
+        self._send(200, replies if isinstance(body, list) else replies[0], extra={'Cache-Control': 'no-store'})
+
+    def do_DELETE(self):
+        try:
+            p = urlparse(self.path).path
+            if p.startswith('/api/v1/jobs/'):
+                self._send(200, op_cancel_job(self._identity(), {'id': p.rsplit('/', 1)[-1]}, self._base_url()))
+            elif p.startswith('/api/keys/'):
+                who = self._account_session()
+                if not _keys.revoke(who.user, p.rsplit('/', 1)[-1]):
+                    raise agentapi.ApiError(404, 'No such key.')
+                self._send(200, {'revoked': True})
+            else:
+                self._send(404, {'error': 'not found'})
+        except Exception as e:
+            self._send_error(e, 'DELETE')
+
+    def _send_error(self, e, method):
+        """One place that turns an exception from an agent-API route into a response."""
+        if isinstance(e, RateLimited):
+            return self._send(429, {'error': str(e)}, extra={'Retry-After': str(e.retry_after)})
+        if isinstance(e, AuthError):
+            return self._send_auth_error(e)
+        t = _translate(e)
+        if t:
+            return self._send_api_error(t)
+        log.exception('%s %s failed', method, self.path)
+        self._send(500, {'error': 'internal server error'})
 
     @staticmethod
     def _owner(who):
@@ -1339,6 +1799,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _post(self):
         p = urlparse(self.path).path
+        if (p.startswith('/api/v1/') or p in ('/api/keys', '/mcp')) and self._v1_post(p):
+            return
         if p.startswith('/api/billing/'):
             return self._billing(p)
         if p == '/api/podcast/script':
@@ -1375,12 +1837,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global _auth, _quota, _plans, _jobs
+    global _auth, _quota, _plans, _jobs, _keys, _longs
     if SUPABASE_URL and SUPABASE_ANON_KEY:
         _auth = TokenVerifier(SUPABASE_URL, SUPABASE_JWT_SECRET)
         log.info('sign-in enabled via %s', SUPABASE_URL)
     _quota = open_quota()
     _plans = open_plans()
+    _keys = open_keys()
+    _longs = longjobs.LongJobs(os.path.join(DATA_DIR, 'outputs'))
     log.info('visitors: %s Studio characters a day; HD a month on Studio: %s; welcome credit: %s',
              FREE_DAILY_CHARS, plans.HD_MONTHLY_CHARS, plans.WELCOME_CHARS)
     if podcast.enabled():

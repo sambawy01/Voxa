@@ -185,12 +185,13 @@ def apply_subscription(supabase_url, user_id, sub, occurred_at):
     return meta['tier']
 
 
-def handle_event(event, supabase_url, credit=None):
+def handle_event(event, supabase_url, credit=None, on_tier=None):
     """Apply a verified Paddle event. Returns what it did, for the log and the tests.
 
     A completed transaction that is not a subscription payment is an HD pack:
     `credit(user, price_id, quantity, transaction_id)` adds it to the account's wallet
-    (once per transaction, however often Paddle repeats the event)."""
+    (once per transaction, however often Paddle repeats the event). `on_tier(user, tier)` is told
+    when a subscription event changes an account's tier, so API keys follow it at once."""
     if event.get('event_type') == 'transaction.completed':
         tx = event.get('data') or {}
         if tx.get('subscription_id'):
@@ -209,4 +210,7 @@ def handle_event(event, supabase_url, credit=None):
     if not user:
         log.warning('Paddle %s for %s has no signed account id', event.get('event_type'), sub.get('id'))
         return 'ignored: no signed account id'
-    return apply_subscription(supabase_url, user, sub, event.get('occurred_at'))
+    result = apply_subscription(supabase_url, user, sub, event.get('occurred_at'))
+    if on_tier and result in ('paid', 'free'):
+        on_tier(user, result)
+    return result

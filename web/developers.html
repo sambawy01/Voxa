@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Voxa for developers and agents</title>
+{{HEAD}}<style>
+.dev{max-width:820px;width:100%;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+.dev pre{margin:0;padding:14px 16px;border-radius:12px;background:rgba(0,0,0,.35);border:1px solid var(--line,rgba(255,255,255,.1));overflow-x:auto;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink,#e8e6f4)}
+.dev code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace}
+.dev h3{margin:14px 0 6px;font:700 15px var(--font-display)}
+.dev p,.dev li{color:var(--ink-2);font-size:14.5px;line-height:1.6}
+.dev ul{margin:6px 0;padding-left:20px}
+.keys{display:flex;flex-direction:column;gap:10px}
+.keyrow{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:10px;border:1px solid var(--line,rgba(255,255,255,.1))}
+.keyrow small{color:var(--dim)}
+.newkey{padding:12px;border-radius:10px;background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.35);word-break:break-all}
+.makekey{display:flex;gap:8px;flex-wrap:wrap}
+.makekey input{flex:1;min-width:160px}
+</style></head>
+<body data-page="developers">
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+</div></header>
+<main class="wrap">
+<section class="hero center">
+  <span class="eyebrow"><span class="dot"></span>For developers and agents</span>
+  <h1 class="display sm">Let your agent <span class="grad-text">speak, read and record.</span></h1>
+  <p class="lead">Turn text into speech, whole books into audiobooks with chapters, and any document into a two-host podcast, from a script, an app or an AI agent. It uses your Voxa plan: no separate bill.</p>
+</section>
+
+<section class="dev">
+  <div class="card flat doc-body">
+    <div class="card-head"><div><h2>Your API keys</h2></div></div>
+    <div class="keys" id="keys"><p id="keysmsg">Loading…</p></div>
+  </div>
+
+  <div class="card flat doc-body">
+    <div class="card-head"><div><h2>Quick start</h2></div></div>
+    <p>Make a key above, then send it as <code>Authorization: Bearer vx_live_…</code>. Keys act as your account and can be revoked at any time. Keep them out of public code.</p>
+    <h3>Speak some text</h3>
+<pre>curl -X POST __ORIGIN__/api/v1/speech \
+  -H "Authorization: Bearer $VOXA_KEY" -H "Content-Type: application/json" \
+  -d '{"text": "Hello from my agent.", "voice": "harper"}' -o hello.mp3</pre>
+    <h3>Make an audiobook</h3>
+<pre>curl -X POST __ORIGIN__/api/v1/audiobooks \
+  -H "Authorization: Bearer $VOXA_KEY" -H "Content-Type: application/json" \
+  -d '{"title": "My Book", "text": "Chapter 1\n\nIt began on a quiet morning…"}'
+# → {"id": "…", "status": "queued"}    then poll until "done":
+curl -H "Authorization: Bearer $VOXA_KEY" __ORIGIN__/api/v1/jobs/JOB_ID
+# → {"status": "done", "audio_url": "…/api/v1/files/….mp3", "chapters": [...]}</pre>
+    <h3>Make a podcast from a document</h3>
+<pre>curl -X POST __ORIGIN__/api/v1/podcasts \
+  -H "Authorization: Bearer $VOXA_KEY" -H "Content-Type: application/json" \
+  -d '{"text": "…the article or report…", "minutes": 10, "tone": "friendly"}'</pre>
+    <p>The finished job holds the written script and the MP3. Audio links need no key and expire after 24 hours.</p>
+  </div>
+
+  <div class="card flat doc-body">
+    <div class="card-head"><div><h2>Connect an AI agent (MCP)</h2></div></div>
+    <p>Voxa is an MCP server, so Claude and other agents can use it as tools with no code. Add this to your agent's MCP settings:</p>
+<pre>{
+  "mcpServers": {
+    "voxa": {
+      "type": "http",
+      "url": "__ORIGIN__/mcp",
+      "headers": { "Authorization": "Bearer vx_live_…" }
+    }
+  }
+}</pre>
+    <p>Tools: <code>speak</code>, <code>make_audiobook</code>, <code>make_podcast</code>, <code>get_job</code>, <code>cancel_job</code>, <code>list_voices</code>, <code>get_account</code>. Agents can also read <a href="/llms.txt">/llms.txt</a> or the <a href="/api/openapi.json">OpenAPI description</a>.</p>
+  </div>
+
+  <div class="card flat doc-body">
+    <div class="card-head"><div><h2>What it costs, and the limits</h2></div></div>
+    <ul>
+      <li><b>Studio voices only.</b> The on-device voices run in a browser, so the API uses Studio voices. They draw on your plan: <a href="/pricing">Voxa Lite</a> has the one-time welcome credit and any HD packs; Voxa Studio has a monthly allowance.</li>
+      <li><b>Podcasts:</b> Lite 1 a week up to 5 minutes; Studio 3 a day up to 20 minutes.</li>
+      <li><b>Audiobooks:</b> Lite 1 new book a day; Studio unlimited. Up to about 7 hours of speech each.</li>
+      <li><b>Fair use:</b> 2 audiobooks or podcasts being made at once, 120 requests a minute per key.</li>
+      <li>If a job fails, the characters it took are returned.</li>
+    </ul>
+  </div>
+</section>
+</main>
+{{FOOTER}}
+<script>
+const ORIGIN = location.origin;
+for (const pre of document.querySelectorAll('pre')) pre.textContent = pre.textContent.replaceAll('__ORIGIN__', ORIGIN);
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const SUPABASE_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js';
+let SB = null;
+
+async function token() {
+  try { const { data } = await SB.auth.getSession(); return data.session ? data.session.access_token : null; } catch { return null; }
+}
+async function api(path, opts = {}) {
+  const t = await token();
+  return fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: 'Bearer ' + t } : {}) } });
+}
+function loadScript(src) {
+  return new Promise((ok, fail) => { const s = document.createElement('script'); s.src = src; s.crossOrigin = 'anonymous'; s.onload = ok; s.onerror = fail; document.head.append(s); });
+}
+const when = t => t ? new Date(t * 1000).toLocaleDateString() : 'never';
+
+async function render(fresh) {
+  const box = $('#keys');
+  const r = await api('/api/keys');
+  if (r.status === 401) { box.innerHTML = '<p>Sign in first to make keys: <a href="/">go to the home page</a>, sign in with your email, and come back.</p>'; return; }
+  if (!r.ok) { box.innerHTML = '<p>Keys are not available right now.</p>'; return; }
+  const { keys } = await r.json();
+  box.innerHTML = (fresh ? `<div class="newkey"><b>Copy your new key now. It is shown once.</b><br><code>${esc(fresh)}</code></div>` : '')
+    + (keys.length ? keys.map(k => `<div class="keyrow"><span><b>${esc(k.name)}</b> <code>${esc(k.hint)}</code><br><small>Made ${when(k.created)} · last used ${when(k.last_used)}</small></span><button class="btn-ghost" data-revoke="${esc(k.id)}">Revoke</button></div>`).join('') : '<p>No keys yet.</p>')
+    + '<form class="makekey" id="make"><input id="keyname" maxlength="60" placeholder="Name, e.g. My agent" aria-label="Key name"><button class="btn-primary" type="submit">Make a key</button></form><p class="small-print" id="keymsg"></p>';
+}
+document.addEventListener('click', async e => {
+  const id = e.target.dataset && e.target.dataset.revoke;
+  if (id && confirm('Revoke this key? Anything using it stops working.')) { await api('/api/keys/' + id, { method: 'DELETE' }); render(); }
+});
+document.addEventListener('submit', async e => {
+  if (e.target.id !== 'make') return;
+  e.preventDefault();
+  const r = await api('/api/keys', { method: 'POST', body: JSON.stringify({ name: $('#keyname').value }) });
+  const body = await r.json().catch(() => ({}));
+  if (r.ok) render(body.secret); else $('#keymsg').textContent = body.error || 'Could not make a key.';
+});
+(async () => {
+  let config;
+  try { config = await fetch('/api/config', { cache: 'no-store' }).then(r => r.json()); } catch { config = {}; }
+  if (!config.auth) { $('#keys').innerHTML = '<p>Accounts are not switched on yet, so API keys are not available.</p>'; return; }
+  try { await loadScript(SUPABASE_JS); } catch { $('#keys').innerHTML = '<p>The sign-in library did not load. Please reload.</p>'; return; }
+  SB = window.supabase.createClient(config.auth.url, config.auth.anon_key);
+  render();
+})();
+</script>
+</body></html>

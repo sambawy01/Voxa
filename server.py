@@ -114,6 +114,10 @@ PHONON_VERSION = '0.4.1'
 # Hojo TTS Light, the other on-device engine: repacked for the browser by scripts/build_hojo.py
 # into static/HOJO_DIR, and run with onnxruntime-web (fetched by scripts/fetch_vendor.py).
 HOJO_DIR = 'hojo-40m-c3cf21c'
+# tiny-voca, the third: 4.5M parameters, English, built by scripts/build_tiny_voca.py into
+# static/TINYVOCA_DIR (with the Python phonemizer it needs, run under Pyodide).
+TINYVOCA_DIR = 'tiny-voca-d94d2a0'
+TINYVOCA_VOICES = ('F2', 'M2')
 ORT_VERSION = '1.23.2'
 LITE_LANGS = ('a', 'b', 'z')
 PDFJS_VERSION = '4.4.168'
@@ -121,7 +125,8 @@ LAMEJS_VERSION = '1.2.1'
 STATIC_TYPES = {'.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
                 '.wasm': 'application/wasm', '.bcmap': 'application/octet-stream',
                 '.json': 'application/json', '.css': 'text/css; charset=utf-8',
-                '.onnx': 'application/octet-stream', '.bin': 'application/octet-stream'}
+                '.onnx': 'application/octet-stream', '.bin': 'application/octet-stream',
+                '.zip': 'application/zip', '.whl': 'application/zip'}
 ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
              'Cross-Origin-Embedder-Policy': 'require-corp'}
 # Pages and scripts served from web/, all cross-origin isolated. {{NAME}} placeholders in them
@@ -134,7 +139,8 @@ WEB_PAGES = {'/': 'index.html', '/voxa.css': 'voxa.css', '/checkout': 'checkout.
              '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html',
              '/podcast': 'podcast.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
              '/listen': 'listen.html', '/listen.js': 'listen.js', '/manifest.webmanifest': 'manifest.webmanifest',
-             '/lite.js': 'lite.js', '/hojo-text.js': 'hojo-text.js', '/hojo-worker.js': 'hojo-worker.js'}
+             '/lite.js': 'lite.js', '/hojo-text.js': 'hojo-text.js', '/hojo-worker.js': 'hojo-worker.js',
+             '/tiny-voca-text.js': 'tiny-voca-text.js', '/tiny-voca-worker.js': 'tiny-voca-worker.js'}
 # Binary files from web/: the app icons for home screens.
 WEB_FILES = {'/apple-touch-icon.png': 'icons/apple-touch-icon.png', '/icons/icon-192.png': 'icons/icon-192.png',
              '/icons/icon-512.png': 'icons/icon-512.png'}
@@ -155,7 +161,7 @@ def web_values():
             'LAMEJS_VERSION': LAMEJS_VERSION, 'BOOK_VERSION': version('book.js'),
             'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js'),
             'LISTEN_VERSION': version('listen.js'), 'LITE_VERSION': version('lite.js'),
-            'HOJO_DIR': HOJO_DIR, 'ORT_VERSION': ORT_VERSION,
+            'HOJO_DIR': HOJO_DIR, 'TINYVOCA_DIR': TINYVOCA_DIR, 'ORT_VERSION': ORT_VERSION,
             'FREE_DAILY': f'{FREE_DAILY_CHARS:,}', 'PAID_DAILY': f'{PAID_DAILY_CHARS:,}',
             'PODCAST_MINUTES_FREE': str(PODCAST_MAX_MINUTES['free']),
             'PODCAST_MINUTES_PAID': str(PODCAST_MAX_MINUTES['paid']),
@@ -213,7 +219,7 @@ HOJO_SOURCE = re.compile(r'hojo_(en|zh)_[fmu]_\d\d')
 
 def load_lite(path=CATALOGUE_PATH, studio_ids=()):
     """The Voxa Lite section of voices.json: voices the browser runs itself, with Phonon
-    (English) or Hojo (English and Chinese)."""
+    (English), Hojo (English and Chinese) or tiny-voca (English)."""
     with open(path, encoding='utf-8') as f:
         lite = json.load(f).get('lite')
     if not lite:
@@ -238,6 +244,10 @@ def load_lite(path=CATALOGUE_PATH, studio_ids=()):
             m = HOJO_SOURCE.fullmatch(v.get('source', ''))
             if not m or (m.group(1) == 'zh') != (v['lang'] == 'z') or v['lang'] not in LITE_LANGS:
                 raise ValueError(f'Lite voice {v["id"]!r}: Hojo speaks English (a, b) and Chinese (z) only')
+            entry['source'] = v['source']
+        elif engine == 'tinyvoca':
+            if v.get('source') not in TINYVOCA_VOICES or v['lang'] != 'a':
+                raise ValueError(f'Lite voice {v["id"]!r}: tiny-voca has the English voices F2 and M2 only')
             entry['source'] = v['source']
         else:
             raise ValueError(f'Lite voice {v["id"]!r}: unknown engine {engine!r}')

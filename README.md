@@ -134,9 +134,10 @@ pip install "kokoro>=0.9.4" soundfile numpy "misaki[zh]" \
 apt-get install espeak-ng          # required for G2P in every language
 python server.py                   # http://localhost:8080
 
-# On-device voices (optional): browser packages, and Hojo TTS Light repacked for the browser
+# On-device voices (optional): browser packages, Hojo TTS Light repacked for the browser, and tiny-voca
 python scripts/fetch_vendor.py
 pip install numpy onnx onnxruntime && python scripts/build_hojo.py   # ~126 MB into static/
+python scripts/build_tiny_voca.py                                    # ~50 MB into static/ (checked downloads)
 
 python -m unittest discover -s tests          # fast, no model needed
 python scripts/smoke.py http://localhost:8080 # end to end, real model

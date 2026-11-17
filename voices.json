@@ -880,6 +880,24 @@
     "accent": "Mandarin",
     "engine": "hojo",
     "source": "hojo_zh_f_02"
+   },
+   {
+    "id": "pippa",
+    "name": "Pippa",
+    "lang": "a",
+    "gender": "female",
+    "accent": "American",
+    "engine": "tinyvoca",
+    "source": "F2"
+   },
+   {
+    "id": "arlo",
+    "name": "Arlo",
+    "lang": "a",
+    "gender": "male",
+    "accent": "American",
+    "engine": "tinyvoca",
+    "source": "M2"
    }
   ]
  }

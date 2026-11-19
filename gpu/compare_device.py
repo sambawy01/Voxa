@@ -12,7 +12,9 @@ HOJO_REPO points at a checkout of github.com/HojoAI/Hojo-TTS-Light, MOSS-TTS-Nan
 LFM3-Omni-2B (Liquid AI's speech-to-speech model, here in its text-to-speech mode; needs
 transformers>=5.20.2, torch and torchvision), and tiny-voca (4.5M, English, two voices) when
 TINY_VOCA_DIR holds its ONNX files and phonemizer data (huggingface.co/n4ze3m/tiny-voca; needs
-the dizione package from github.com/n4ze3m/dizione). Clips and timings are added
+the dizione package from github.com/n4ze3m/dizione), and Kitten TTS 2 Nano (17M per language, int8
+ONNX) when KITTEN_DIR holds a download of KittenML/kitten-tts-2-nano and the kittenml package is
+installed (its English phonemizer needs torch and transformers; the other languages use espeak-ng). Clips and timings are added
 to results.json beside the GPU engines' (gpu/compare.py), so one page compares them all.
 Timings are CPU seconds on this machine, a rough guide to phone speed, not a measurement of it.
 """
@@ -244,11 +246,40 @@ def tiny_voca_rows():
             timed('tiny_voca_m2', 'tiny-voca 4.5M (M2)', 'en', speak_as(1, 'M2 (male)'))]
 
 
+KITTEN_LANGS = ('en', 'de', 'es', 'fr', 'hi', 'ru')   # the ones of the test paragraph that Kitten speaks
+
+
+def kitten_rows():
+    model_dir = os.environ.get('KITTEN_DIR')
+    if not model_dir:
+        print('kitten: skipped (set KITTEN_DIR to a download of KittenML/kitten-tts-2-nano)', flush=True)
+        return []
+    import numpy as np
+    from kittenml import KittenTTS
+
+    model = KittenTTS(model_dir)
+    voices = {lang: names[0] for lang, names in model.available_voices.items()}   # each language's first voice
+    for lang in KITTEN_LANGS:   # load every language's model and G2P before anything is timed
+        model.generate('Warm-up.' if lang == 'en' else 'Test.', voice=voices[lang])
+
+    def speak_in(lang):
+        def speak(text):
+            gap = np.zeros(int(24000 * 0.2), dtype='float32')
+            parts = []
+            for piece in sentences(text):
+                if parts:
+                    parts.append(gap)
+                parts.append(np.asarray(model.generate(piece, voice=voices[lang]), dtype='float32'))
+            return np.concatenate(parts), 24000, voices[lang]
+        return speak
+    return [timed('kitten_nano', 'Kitten TTS 2 Nano', lang, speak_in(lang)) for lang in KITTEN_LANGS]
+
+
 def main(out):
     os.makedirs(out, exist_ok=True)
     rows = []
     only = {e for e in os.environ.get('DEVICE_ENGINES', '').split(',') if e}
-    for make in (supertonic_rows, pocket_rows, hojo_rows, moss_nano_rows, lfm3_rows, tiny_voca_rows):
+    for make in (supertonic_rows, pocket_rows, hojo_rows, moss_nano_rows, lfm3_rows, tiny_voca_rows, kitten_rows):
         if only and make.__name__.replace('_rows', '') not in only:
             continue
         try:

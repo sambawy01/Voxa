@@ -79,6 +79,30 @@ through Metal: a community port reports 2.86× real time on M5. It is too slow o
 | **Voxa Dialogue** | Dia2 2B, Apache-2.0 | English | Yes | Two-host podcasts with natural back-and-forth |
 | **Voxa Mandarin+** | Fun-CosyVoice3 0.5B, Apache-2.0 | 9 languages + 18 Chinese dialects | Yes | Chinese dialects |
 | (evaluate) | VoxCPM2 2B, Apache-2.0, 48 kHz | 30 languages | Yes | High-fidelity alternative to Qwen3 |
+| (parked) | FireRedTTS-2 1.5B, Apache-2.0 (see below) | en, zh, ja, ko, fr, de, ru | Research only (see below) | Multilingual dialogue: up to 4 speakers, 3 minutes |
+
+**Parked: FireRedTTS-2** (<https://huggingface.co/FireRedTeam/FireRedTTS2>, parked 2026-11-19).
+It is the multilingual candidate for Voxa Dialogue, next to Dia2 (English only). It
+generates up to 3 minutes of dialogue between up to 4 speakers, switching voices and
+adjusting tone between turns. That suits podcasts and dialogue scenes.
+
+- **Model:** Qwen2.5-1.5B backbone. Two 8.3 GB checkpoints plus a 4.3 GB codec, 24 kHz
+  output. The authors report 140 ms to the first audio on an NVIDIA L20.
+- **Fit:** GPU tier only. It would run as a worker (WORKERS.md) with a script format that
+  marks each speaker.
+
+Not added, until all of these are met:
+
+1. **Legal read on cloning.** The licence is Apache-2.0, but the README marks zero-shot
+   cloning "solely for academic research purposes". Until a lawyer clears it, ship only
+   its random voices, or none.
+2. **Training data.** The paper describes 1.1M hours of speech and 300k hours of dialogue
+   but names no sources. It needs the same provenance check that ruled out ZipVoice.
+3. **Listening test on a GPU,** against Voxa Studio (Qwen3-TTS) and Dia2, in English and
+   Chinese.
+4. **Maintenance.** It was released in September 2025, and the October 2025 roadmap items
+   (fine-tuning code, better multilingual support) were still open in November 2026.
+   Check for a newer release first.
 
 Clean-up on the GPU: **RE-USE** (OpenMDW-1.1, commercial OK) for film dialogue.
 

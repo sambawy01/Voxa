@@ -74,10 +74,14 @@ async function load() {
   ort = await import(ORT + 'ort.wasm.min.mjs');
   ort.env.wasm.wasmPaths = ORT;
   ort.env.logLevel = 'error';
-  ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.max(1, Math.min(4, navigator.hardwareConcurrency || 1)) : 1;
+  // One thread: the model is tiny, and every extra thread costs memory, which phones are short of.
+  ort.env.wasm.numThreads = 1;
 
   const [model, cfg, data, code] = await Promise.all(['model.onnx', 'config.json', 'phonemizer.zip', 'dizione.zip'].map(getFile));
   config = JSON.parse(new TextDecoder().decode(cfg));
+  // The speech runtime goes first. It asks the browser for one large block of memory, which
+  // phones (iOS Safari) refuse once Python has taken its share; the phonemizer is more flexible.
+  session = await ort.InferenceSession.create(new Uint8Array(model), { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
   await warm(['pyodide.asm.wasm', 'python_stdlib.zip', 'numpy-1.26.4-cp312-cp312-pyodide_2024_0_wasm32.whl']);
 
   const py = await loadPyodide({ indexURL: BASE + 'pyodide/' });
@@ -103,7 +107,6 @@ def phonemize_json(text):
 phonemize_json("Warm up.")
 `);
   phonemize = py.globals.get('phonemize_json');
-  session = await ort.InferenceSession.create(new Uint8Array(model), { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
   await synthesize(phonemes('Hello.'), 0);   // the first run is slower; do it before anyone waits
   return { voices: config.model.speakers };
 }

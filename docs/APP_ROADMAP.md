@@ -442,6 +442,11 @@ store listings, legal review.)
   - Check the length is exact, then send the speed and a listening verdict compared with
     Voxa Clean Studio on the same takes.
   - Keep NVIDIA's OpenMDW notices in the pack; they are kept as `RE-USE-*` files.
+- **Higgs TTS 2 expanded licence** (from the 2026-11-20 plan decision). Boson's licence
+  stops covering Voxa once *all* Voxa products together pass 100,000 annual active users
+  in the preceding calendar year. That count includes every user, not only GPU-tier
+  users. Above that, Boson must grant an expanded licence, at its discretion. Contact Boson
+  AI well before then, and set an alert on active users at about 75,000.
 - **Model mirror hosting** (from M2). Somewhere to host model files over https, for example
   Cloudflare R2, a Hugging Face organisation, or both as primary and backup. Needs an account
   in Voxa's name.

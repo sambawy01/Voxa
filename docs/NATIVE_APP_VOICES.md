@@ -24,10 +24,13 @@ voice cloning yes/no, licence and required credit, and "works offline ✓".
 
 1. **Weights must allow commercial use in a sold app.** Excluded: F5-TTS, XTTS-v2, Fish
    Speech / OpenAudio, Spark-TTS (non-commercial). Also excluded: VibeVoice (its card says
-   research only, and Microsoft has pulled the larger models), Higgs TTS (Llama-based licence
-   that requires a separate deal above 100k users), Orpheus (built on Llama 3.2, so Llama
+   research only, and Microsoft has pulled the larger models), Orpheus (built on Llama 3.2, so Llama
    terms apply), KittenTTS 2 (licence ends above $1M revenue or funding) and IndexTTS-2
    (custom licence that says to contact bilibili for commercial use).
+
+   **Owner exception (2026-11-20): Higgs TTS 2.** Its licence needs an expanded licence from
+   Boson AI above 100,000 annual active users. The owner accepts that and will buy the
+   expanded licence before Voxa reaches that size (see APP_ROADMAP, Blocked on owner).
 2. **No espeak-ng in the App Store build.** espeak-ng is GPL-3.0. That conflicts with App Store
    terms and would make a closed app GPL. Consequences:
    - Kokoro ships for **English, Japanese and Chinese** only, since those don't need espeak.
@@ -38,6 +41,16 @@ voice cloning yes/no, licence and required credit, and "works offline ✓".
    - Supertonic (OpenRAIL-M): its use restrictions must flow down to users.
    - Pocket TTS and Kyutai (CC-BY-4.0): attribution required.
    - NVIDIA RE-USE (OpenMDW-1.1): keep the licence text and notices.
+   - Higgs TTS 2 (Boson Higgs Audio 2 Community License, based on Meta's Llama 3 licence):
+     - Ship both licence texts.
+     - Show "Built with Higgs Materials licensed from Boson AI USA, Inc., Copyright Boson AI
+       USA, Inc., All Rights Reserved and Meta Llama 3 licensed under the Meta Llama 3
+       Community License, Copyright Meta Platforms, Inc., All Rights Reserved" on the
+       website and the Credits screen.
+     - Include the Meta Llama 3 notice file.
+     - Pass Meta's Llama acceptable use policy on to users in Voxa's terms.
+     - Don't use its outputs to improve any other language model.
+     - A model Voxa fine-tunes from it must have a name that starts with "Higgs Audio 2".
    - Every credit goes on the Credits screen.
 4. **Pin and mirror every model.** Upstream repos can disappear (VibeVoice did) or change
    licence (Fish did, on 2026-10-13). Voxa hosts its own copy of every version it ships.
@@ -79,7 +92,23 @@ through Metal: a community port reports 2.86× real time on M5. It is too slow o
 | **Voxa Dialogue** | Dia2 2B, Apache-2.0 | English | Yes | Two-host podcasts with natural back-and-forth |
 | **Voxa Mandarin+** | Fun-CosyVoice3 0.5B, Apache-2.0 | 9 languages + 18 Chinese dialects | Yes | Chinese dialects |
 | (evaluate) | VoxCPM2 2B, Apache-2.0, 48 kHz | 30 languages | Yes | High-fidelity alternative to Qwen3 |
+| **Voxa Studio Expressive** | Higgs TTS 2 (Boson AI), 3.6B + 2.2B audio, Boson community licence (see rule 1) | en, zh, de, ko | Yes, plus multi-speaker | Most expressive voices: emotion, natural dialogue, humming |
 | (parked) | FireRedTTS-2 1.5B, Apache-2.0 (see below) | en, zh, ja, ko, fr, de, ru | Research only (see below) | Multilingual dialogue: up to 4 speakers, 3 minutes |
+
+**Locked in for the GPU tier: Higgs TTS 2** (<https://huggingface.co/bosonai/higgs-tts-2-3b-base>,
+2026-11-20). It's the most expressive open model reviewed so far. Its authors report beating
+gpt-4o-mini-tts on emotions (75.7%) and on questions (55.7%). It does natural multi-speaker
+dialogue, voice cloning, humming, and speech with background music.
+
+- **Model:** built on Llama-3.2-3B, with a 3.6B language model plus 2.2B for audio and 24 kHz
+  output. It needs a large NVIDIA GPU, so it's GPU tier only.
+- **Fit:** it runs as a worker (WORKERS.md), like Voxa Studio.
+- **Cloning:** goes through the "Your voices" consent check and watermark, like every other
+  cloning model.
+- **Before shipping it:**
+  - Build the worker and its pack.
+  - Run a listening test and speed test on a GPU against Voxa Studio.
+  - Put the attribution and use-policy pass-through from rule 3 in place.
 
 **Parked: FireRedTTS-2** (<https://huggingface.co/FireRedTeam/FireRedTTS2>, parked 2026-11-19).
 It is the multilingual candidate for Voxa Dialogue, next to Dia2 (English only). It

@@ -38,6 +38,13 @@ PINNED = {
     'frontend/words/lexicon.tsv': '1eec6681dfbc213660f78548c14894e7de6dad6ef73caaac279f2ed400a91b7c',
     'frontend/words/override.public.tsv': '0d725b31afd09a33a9908ea889be2d65181cda16c89a6946cfd2b9b0b0220b22',
     'frontend/words/terms.tsv': '987ce777805e22718e38d23e66d8f00e9509ede28d0d52cc6819d7216e798e3d',
+    # the British front end, which the two British voices (Amy, Jack) read through
+    'frontend/release-loader.mjs': '5b8becfec5d45a05ff1137ae41ca0fa51af2a466fce3b43bd53007acfd0bfe39',
+    'frontend/words/enGb.js': 'cecd4c958b5fec438267a01b475fbad31acb822371a14d130eea25671d9477a0',
+    'frontend/words/en-gb/lexicon.tsv': '88565f7eb7de4a9848332018ad19cc121572d7a8257834263648eedeae01f5e7',
+    'frontend/words/en-gb/override.public.tsv': '6f4105e439fe5b831c2c8eb8d3fb806524ed339094d0208824a833eb24a95103',
+    'frontend/words/en-gb/terms.tsv': '987ce777805e22718e38d23e66d8f00e9509ede28d0d52cc6819d7216e798e3d',
+    'frontend/words/en-gb/g2p.bin': '21e3753cc506d4bb7ead258dddb61b8c462528f6e0a154f24a89799ad96c9a18',
     'LICENSE': 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30',
     'THIRD_PARTY_NOTICES.md': 'd732919e8cacdfd200cf11a61c12cc8c272e103bf235f060aa99a339a92b8474',
 }

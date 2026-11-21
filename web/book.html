@@ -29,7 +29,7 @@ ol.outputs .state.ready{color:#a7f3d0;background:rgba(52,211,153,.12);border-col
 .genline .status{flex:1}
 .wave-host:has(#pause:not([hidden])) .wave i{animation-play-state:running;opacity:1}
 </style></head>
-<body data-page="book">
+<body data-page="book" data-mode="{{MODE}}">
 <header class="topbar"><div class="topbar-in">
 {{NAV}}
 </div></header>
@@ -37,7 +37,7 @@ ol.outputs .state.ready{color:#a7f3d0;background:rgba(52,211,153,.12);border-col
 <section class="hero">
   <span class="eyebrow"><span class="dot"></span>Audiobooks</span>
   <h1 class="display sm">Turn any book into <span class="grad-text">an audiobook.</span></h1>
-  <p class="lead">Open a PDF or a text file. Voxa finds the chapters and removes page headers, footers and page numbers. You check the text before any audio is made.</p>
+  <p class="lead">Open a PDF or a text file<span class="ondevice-only"> and it is read aloud right on your device: free, private, with no daily limit</span>. Voxa finds the chapters and removes page headers, footers and page numbers. You check the text before any audio is made.</p>
   <div class="pills">
     <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h13"/></svg>Chapters found for you</span>
     <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>One MP3 with chapter marks</span>
@@ -97,7 +97,8 @@ ol.outputs .state.ready{color:#a7f3d0;background:rgba(52,211,153,.12);border-col
   <p class="note" id="wholenote"></p>
   <div class="row"><button class="small" id="forget" type="button" hidden>Delete saved audio for this book</button></div>
 </section>
-<p class="small-print">Your book stays on this device: it is read here with pdf.js (Apache-2.0) and saved in this browser. MP3 files are made here with lamejs (LGPL-3.0). Studio voices send each part's text to Voxa to be spoken. <a href="/credits">Credits</a></p>
+<p class="small-print server-only">Your book stays on this device: it is read here with pdf.js (Apache-2.0) and saved in this browser. MP3 files are made here with lamejs (LGPL-3.0). Studio voices send each part's text to Voxa to be spoken. <a href="/credits">Credits</a></p>
+<p class="small-print ondevice-only">Your book stays on this device: it is read here with pdf.js (Apache-2.0), spoken by on-device voices and saved in this browser. Nothing is uploaded. MP3 files are made here with lamejs (LGPL-3.0). <a href="/credits">Credits</a></p>
 </main>
 {{FOOTER}}
 
@@ -235,7 +236,7 @@ function fillVoices(selected) {
   const groups = [];
   // On-device first: whole books cost nothing and never hit a daily limit.
   if (lite.length) groups.push(el('optgroup', { label: 'On this device · free, no daily limit' }, ...lite.map(opt)));
-  groups.push(el('optgroup', { label: 'Studio voices' }, ...studio.map(opt)));
+  if (studio.length) groups.push(el('optgroup', { label: 'Studio voices' }, ...studio.map(opt)));
   $('#voice').replaceChildren(...groups);
   $('#exprbox').hidden = !isLite();
 }

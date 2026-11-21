@@ -78,12 +78,13 @@ SYNC_TIMEOUT = 300
 TIERS = {'free': 'Voxa Lite', 'paid': 'Voxa Studio'}
 FREE_DAILY_CHARS = int(os.environ.get('VOXA_FREE_DAILY_CHARS', '1500'))
 # Owner switch (2026-11-21): the site offers only the on-device voices, which run in the
-# visitor's browser. Studio (server) voices, the pages built on them (audiobooks, podcasts,
-# the Reader) and the paid plan are hidden, and the server refuses to generate with them.
+# visitor's browser. Studio (server) voices, the Reader and the paid plan are hidden, and the
+# server refuses to generate with them or write podcast scripts. Audiobooks and podcasts stay,
+# with on-device voices; a podcast's script is pasted in (written by any AI chat).
 # Set ON_DEVICE_ONLY=0 (fly.toml) to bring everything back.
 ON_DEVICE_ONLY = os.environ.get('ON_DEVICE_ONLY', '0') == '1'
 # Pages that need Studio voices or the paid plan; with ON_DEVICE_ONLY they redirect home.
-SERVER_VOICE_PAGES = {'/book', '/podcast', '/listen', '/pricing', '/checkout'}
+SERVER_VOICE_PAGES = {'/listen', '/pricing', '/checkout'}
 PAID_DAILY_CHARS = int(os.environ.get('VOXA_PAID_DAILY_CHARS', '10000'))
 # Podcast scripts per tier per day (each is a paid DeepSeek call, so here 0 means none), and
 # the longest episode each tier may ask for.
@@ -165,9 +166,11 @@ def web_values():
             return f.read()
     nav = partial('nav.html')
     if ON_DEVICE_ONLY:
-        nav = '\n'.join(line for line in nav.split('\n')
-                        if not re.search(r'data-tab="(book|podcast|pricing)"', line))
-    return {'HEAD': partial('head.html'), 'NAV': nav, 'FOOTER': partial('footer.html'),
+        nav = '\n'.join(line for line in nav.split('\n') if 'data-tab="pricing"' not in line)
+    footer = partial('footer.html')
+    if ON_DEVICE_ONLY:  # the Reader and Pricing pages redirect home
+        footer = footer.replace('<a href="/listen">Reader</a>', '').replace('<a href="/pricing">Pricing</a>', '')
+    return {'HEAD': partial('head.html'), 'NAV': nav, 'FOOTER': footer,
             'MODE': 'on-device' if ON_DEVICE_ONLY else 'full',
             'CSS_VERSION': version('voxa.css'), 'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,
             'LAMEJS_VERSION': LAMEJS_VERSION, 'BOOK_VERSION': version('book.js'),

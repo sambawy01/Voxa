@@ -385,3 +385,7 @@ td { border-top: 1px solid var(--line); padding: 10px 8px; vertical-align: top; 
   .wave i { height: 45% }
   .wave i:nth-child(odd) { height: 75% }
 }
+
+/* The site with ON_DEVICE_ONLY=1 (server.py): Studio-only parts hide, on-device copy shows. */
+body[data-mode="on-device"] .server-only{display:none!important}
+body:not([data-mode="on-device"]) .ondevice-only{display:none!important}

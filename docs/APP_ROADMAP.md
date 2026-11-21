@@ -357,6 +357,21 @@ checks it off here in the same PR, and merges it once CI is green.**
       notices.
     - **RE-USE itself has not been run.** It needs CUDA (mamba-ssm), and NVIDIA's own
       script refuses CPU mode (see Blocked on owner).
+- [ ] **M13 A better test judge for European voices.**
+  - Fluid Speech Pro (CC-BY-4.0, sherpa-onnx) becomes the speech recogniser in Voxa's
+    quality checks for European languages: the round-trip WER examples and tests.
+  - Whisper stays for English and for languages Fluid doesn't cover.
+  - Re-run the round-trip checks for Supertonic's es, fr, de, it and pt voices with it,
+    and record the new numbers.
+  - Test tooling only; nothing ships in the app.
+- [ ] **M14 Voxa Captions: transcripts and subtitles.**
+  - Transcribe a WAV, such as film dialogue or an interview, with Fluid Speech Pro from a
+    signed model pack, on the device.
+  - Word timings; export SRT, VTT and plain text.
+  - Optional clean mode, which drops repeated and filler words.
+  - Detects the language itself (25 European languages).
+  - Pairs with Clean up audio: clean first, then caption.
+  - Computer tier. The credit line goes on the Credits screen.
 - [ ] **M12 Launch changes to the website.** Only when the owner says the app is launching:
   - remove the paid tier, billing and the GPU path from the site
   - make the free site a demo with a "Get the app" button

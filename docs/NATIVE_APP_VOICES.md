@@ -40,6 +40,8 @@ voice cloning yes/no, licence and required credit, and "works offline ✓".
 3. **Licences with conditions are passed on in Voxa's terms.**
    - Supertonic (OpenRAIL-M): its use restrictions must flow down to users.
    - Pocket TTS and Kyutai (CC-BY-4.0): attribution required.
+   - Fluid Speech Pro (CC-BY-4.0): credit "Fluid Speech Pro by FluidVoice. Built on NVIDIA
+     Parakeet TDT 0.6B v3 and Moondream Parakeet Ultra."
    - NVIDIA RE-USE (OpenMDW-1.1): keep the licence text and notices.
    - Higgs TTS 2 (Boson Higgs Audio 2 Community License, based on Meta's Llama 3 licence):
      - Ship both licence texts.
@@ -138,6 +140,37 @@ Clean-up on the GPU: **RE-USE** (OpenMDW-1.1, commercial OK) for film dialogue.
 **Headless mode:** the desktop app also runs as `voxa serve` on a home server or GPU box, and
 other devices on the same network can use it. It's the same licence and still nothing leaves
 your network.
+
+### Speech to text (decided 2026-11-20)
+
+**Fluid Speech Pro** (<https://huggingface.co/FluidVoice-Labs/fluid-speech-pro>) is a speech
+recognition model.
+- **Licence:** CC-BY-4.0, and so are both its parents (NVIDIA Parakeet TDT 0.6B v3,
+  Moondream Parakeet Ultra).
+- **Accuracy:** #2 open model on the Open ASR Leaderboard (6.06% average WER), and the most
+  accurate under 1B parameters.
+- **Languages:** 25 European languages, detected automatically. No Arabic, Chinese or
+  Japanese.
+- **Format:** there's an ONNX build for sherpa-onnx, about 850 MB as int8, so it's
+  computer tier.
+
+Two uses are locked in:
+
+1. **Test judge for European voices (roadmap M13).** The quality checks score a voice by
+   transcribing it back.
+   - For es, fr, de, it, pt and other European languages, Fluid Speech Pro replaces
+     Whisper as the judge.
+   - Whisper stays for English and for languages Fluid doesn't cover (zh, ja, ko, hi, ar).
+   - This is test tooling only and doesn't ship.
+2. **Voxa Captions: transcripts and subtitles (roadmap M14).**
+   - Turn a recording or a film's dialogue into text with word timings.
+   - Export SRT and VTT subtitles and a plain transcript.
+   - Optionally use "clean mode", which drops repeated and filler words.
+   - It pairs with Clean up audio: clean the dialogue first, then caption it.
+   - Computer tier, signed model pack, nothing uploaded.
+
+Later, it can also check the consent sentence for voice cloning in 25 languages, once a
+multilingual cloning voice ships.
 
 ### Runtimes
 

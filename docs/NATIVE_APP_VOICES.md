@@ -24,10 +24,13 @@ voice cloning yes/no, licence and required credit, and "works offline ✓".
 
 1. **Weights must allow commercial use in a sold app.** Excluded: F5-TTS, XTTS-v2, Fish
    Speech / OpenAudio, Spark-TTS (non-commercial). Also excluded: VibeVoice (its card says
-   research only, and Microsoft has pulled the larger models), Higgs TTS (Llama-based licence
-   that requires a separate deal above 100k users), Orpheus (built on Llama 3.2, so Llama
+   research only, and Microsoft has pulled the larger models), Orpheus (built on Llama 3.2, so Llama
    terms apply), KittenTTS 2 (licence ends above $1M revenue or funding) and IndexTTS-2
    (custom licence that says to contact bilibili for commercial use).
+
+   **Owner exception (2026-11-20): Higgs TTS 2.** Its licence needs an expanded licence from
+   Boson AI above 100,000 annual active users. The owner accepts that and will buy the
+   expanded licence before Voxa reaches that size (see APP_ROADMAP, Blocked on owner).
 2. **No espeak-ng in the App Store build.** espeak-ng is GPL-3.0. That conflicts with App Store
    terms and would make a closed app GPL. Consequences:
    - Kokoro ships for **English, Japanese and Chinese** only, since those don't need espeak.
@@ -37,7 +40,19 @@ voice cloning yes/no, licence and required credit, and "works offline ✓".
 3. **Licences with conditions are passed on in Voxa's terms.**
    - Supertonic (OpenRAIL-M): its use restrictions must flow down to users.
    - Pocket TTS and Kyutai (CC-BY-4.0): attribution required.
+   - Fluid Speech Pro (CC-BY-4.0): credit "Fluid Speech Pro by FluidVoice. Built on NVIDIA
+     Parakeet TDT 0.6B v3 and Moondream Parakeet Ultra."
    - NVIDIA RE-USE (OpenMDW-1.1): keep the licence text and notices.
+   - Higgs TTS 2 (Boson Higgs Audio 2 Community License, based on Meta's Llama 3 licence):
+     - Ship both licence texts.
+     - Show "Built with Higgs Materials licensed from Boson AI USA, Inc., Copyright Boson AI
+       USA, Inc., All Rights Reserved and Meta Llama 3 licensed under the Meta Llama 3
+       Community License, Copyright Meta Platforms, Inc., All Rights Reserved" on the
+       website and the Credits screen.
+     - Include the Meta Llama 3 notice file.
+     - Pass Meta's Llama acceptable use policy on to users in Voxa's terms.
+     - Don't use its outputs to improve any other language model.
+     - A model Voxa fine-tunes from it must have a name that starts with "Higgs Audio 2".
    - Every credit goes on the Credits screen.
 4. **Pin and mirror every model.** Upstream repos can disappear (VibeVoice did) or change
    licence (Fish did, on 2026-10-13). Voxa hosts its own copy of every version it ships.
@@ -79,12 +94,83 @@ through Metal: a community port reports 2.86× real time on M5. It is too slow o
 | **Voxa Dialogue** | Dia2 2B, Apache-2.0 | English | Yes | Two-host podcasts with natural back-and-forth |
 | **Voxa Mandarin+** | Fun-CosyVoice3 0.5B, Apache-2.0 | 9 languages + 18 Chinese dialects | Yes | Chinese dialects |
 | (evaluate) | VoxCPM2 2B, Apache-2.0, 48 kHz | 30 languages | Yes | High-fidelity alternative to Qwen3 |
+| **Voxa Studio Expressive** | Higgs TTS 2 (Boson AI), 3.6B + 2.2B audio, Boson community licence (see rule 1) | en, zh, de, ko | Yes, plus multi-speaker | Most expressive voices: emotion, natural dialogue, humming |
+| (parked) | FireRedTTS-2 1.5B, Apache-2.0 (see below) | en, zh, ja, ko, fr, de, ru | Research only (see below) | Multilingual dialogue: up to 4 speakers, 3 minutes |
+
+**Locked in for the GPU tier: Higgs TTS 2** (<https://huggingface.co/bosonai/higgs-tts-2-3b-base>,
+2026-11-20). It's the most expressive open model reviewed so far. Its authors report beating
+gpt-4o-mini-tts on emotions (75.7%) and on questions (55.7%). It does natural multi-speaker
+dialogue, voice cloning, humming, and speech with background music.
+
+- **Model:** built on Llama-3.2-3B, with a 3.6B language model plus 2.2B for audio and 24 kHz
+  output. It needs a large NVIDIA GPU, so it's GPU tier only.
+- **Fit:** it runs as a worker (WORKERS.md), like Voxa Studio.
+- **Cloning:** goes through the "Your voices" consent check and watermark, like every other
+  cloning model.
+- **Before shipping it:**
+  - Build the worker and its pack.
+  - Run a listening test and speed test on a GPU against Voxa Studio.
+  - Put the attribution and use-policy pass-through from rule 3 in place.
+
+**Parked: FireRedTTS-2** (<https://huggingface.co/FireRedTeam/FireRedTTS2>, parked 2026-11-19).
+It is the multilingual candidate for Voxa Dialogue, next to Dia2 (English only). It
+generates up to 3 minutes of dialogue between up to 4 speakers, switching voices and
+adjusting tone between turns. That suits podcasts and dialogue scenes.
+
+- **Model:** Qwen2.5-1.5B backbone. Two 8.3 GB checkpoints plus a 4.3 GB codec, 24 kHz
+  output. The authors report 140 ms to the first audio on an NVIDIA L20.
+- **Fit:** GPU tier only. It would run as a worker (WORKERS.md) with a script format that
+  marks each speaker.
+
+Not added, until all of these are met:
+
+1. **Legal read on cloning.** The licence is Apache-2.0, but the README marks zero-shot
+   cloning "solely for academic research purposes". Until a lawyer clears it, ship only
+   its random voices, or none.
+2. **Training data.** The paper describes 1.1M hours of speech and 300k hours of dialogue
+   but names no sources. It needs the same provenance check that ruled out ZipVoice.
+3. **Listening test on a GPU,** against Voxa Studio (Qwen3-TTS) and Dia2, in English and
+   Chinese.
+4. **Maintenance.** It was released in September 2025, and the October 2025 roadmap items
+   (fine-tuning code, better multilingual support) were still open in November 2026.
+   Check for a newer release first.
 
 Clean-up on the GPU: **RE-USE** (OpenMDW-1.1, commercial OK) for film dialogue.
 
 **Headless mode:** the desktop app also runs as `voxa serve` on a home server or GPU box, and
 other devices on the same network can use it. It's the same licence and still nothing leaves
 your network.
+
+### Speech to text (decided 2026-11-20)
+
+**Fluid Speech Pro** (<https://huggingface.co/FluidVoice-Labs/fluid-speech-pro>) is a speech
+recognition model.
+- **Licence:** CC-BY-4.0, and so are both its parents (NVIDIA Parakeet TDT 0.6B v3,
+  Moondream Parakeet Ultra).
+- **Accuracy:** #2 open model on the Open ASR Leaderboard (6.06% average WER), and the most
+  accurate under 1B parameters.
+- **Languages:** 25 European languages, detected automatically. No Arabic, Chinese or
+  Japanese.
+- **Format:** there's an ONNX build for sherpa-onnx, about 850 MB as int8, so it's
+  computer tier.
+
+Two uses are locked in:
+
+1. **Test judge for European voices (roadmap M13).** The quality checks score a voice by
+   transcribing it back.
+   - For es, fr, de, it, pt and other European languages, Fluid Speech Pro replaces
+     Whisper as the judge.
+   - Whisper stays for English and for languages Fluid doesn't cover (zh, ja, ko, hi, ar).
+   - This is test tooling only and doesn't ship.
+2. **Voxa Captions: transcripts and subtitles (roadmap M14).**
+   - Turn a recording or a film's dialogue into text with word timings.
+   - Export SRT and VTT subtitles and a plain transcript.
+   - Optionally use "clean mode", which drops repeated and filler words.
+   - It pairs with Clean up audio: clean the dialogue first, then caption it.
+   - Computer tier, signed model pack, nothing uploaded.
+
+Later, it can also check the consent sentence for voice cloning in 25 languages, once a
+multilingual cloning voice ships.
 
 ### Runtimes
 

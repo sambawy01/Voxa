@@ -357,6 +357,21 @@ checks it off here in the same PR, and merges it once CI is green.**
       notices.
     - **RE-USE itself has not been run.** It needs CUDA (mamba-ssm), and NVIDIA's own
       script refuses CPU mode (see Blocked on owner).
+- [ ] **M13 A better test judge for European voices.**
+  - Fluid Speech Pro (CC-BY-4.0, sherpa-onnx) becomes the speech recogniser in Voxa's
+    quality checks for European languages: the round-trip WER examples and tests.
+  - Whisper stays for English and for languages Fluid doesn't cover.
+  - Re-run the round-trip checks for Supertonic's es, fr, de, it and pt voices with it,
+    and record the new numbers.
+  - Test tooling only; nothing ships in the app.
+- [ ] **M14 Voxa Captions: transcripts and subtitles.**
+  - Transcribe a WAV, such as film dialogue or an interview, with Fluid Speech Pro from a
+    signed model pack, on the device.
+  - Word timings; export SRT, VTT and plain text.
+  - Optional clean mode, which drops repeated and filler words.
+  - Detects the language itself (25 European languages).
+  - Pairs with Clean up audio: clean first, then caption.
+  - Computer tier. The credit line goes on the Credits screen.
 - [ ] **M12 Launch changes to the website.** Only when the owner says the app is launching:
   - remove the paid tier, billing and the GPU path from the site
   - make the free site a demo with a "Get the app" button
@@ -442,6 +457,11 @@ store listings, legal review.)
   - Check the length is exact, then send the speed and a listening verdict compared with
     Voxa Clean Studio on the same takes.
   - Keep NVIDIA's OpenMDW notices in the pack; they are kept as `RE-USE-*` files.
+- **Higgs TTS 2 expanded licence** (from the 2026-11-20 plan decision). Boson's licence
+  stops covering Voxa once *all* Voxa products together pass 100,000 annual active users
+  in the preceding calendar year. That count includes every user, not only GPU-tier
+  users. Above that, Boson must grant an expanded licence, at its discretion. Contact Boson
+  AI well before then, and set an alert on active users at about 75,000.
 - **Model mirror hosting** (from M2). Somewhere to host model files over https, for example
   Cloudflare R2, a Hugging Face organisation, or both as primary and backup. Needs an account
   in Voxa's name.

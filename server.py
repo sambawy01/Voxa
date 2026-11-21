@@ -165,8 +165,8 @@ def web_values():
             return f.read()
     nav = partial('nav.html')
     if ON_DEVICE_ONLY:
-        nav = '\n'.join(line for line in nav.split('\n')
-                        if not re.search(r'data-tab="(book|podcast|pricing)"', line))
+        # Only one page is left, so the tab bar would be a lone button to the page you are on.
+        nav = re.sub(r'\n?<nav class="tabs".*?</nav>', '', nav, flags=re.S)
     return {'HEAD': partial('head.html'), 'NAV': nav, 'FOOTER': partial('footer.html'),
             'MODE': 'on-device' if ON_DEVICE_ONLY else 'full',
             'CSS_VERSION': version('voxa.css'), 'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,

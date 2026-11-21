@@ -928,7 +928,8 @@ class OnDeviceOnlyTest(ServerTestCase):
         self.assertIn(b'data-mode="on-device"', page)
         for gone in (b'data-tab="book"', b'data-tab="podcast"', b'data-tab="pricing"'):
             self.assertNotIn(gone, page)
-        self.assertIn(b'data-tab="studio"', page)
+        self.assertNotIn(b'class="tabs"', page)
+        self.assertIn(b'class="logo"', page)
         self.assertEqual(self.get_no_redirect('/credits')[0], 200)
 
     def test_switched_off_everything_is_back(self):

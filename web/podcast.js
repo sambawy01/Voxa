@@ -135,6 +135,66 @@ export function textToLines(text, hosts) {
   return lines.filter(l => l.text);
 }
 
+// --- A script written elsewhere -------------------------------------------------------------------
+// Any AI chat (or a person) can write the script; it is pasted in as "Name: what they say".
+// "# Title" names the episode and "## Part" starts a chapter. Markdown bold, bullets and
+// stage directions on their own line ("[laughs]", "(music)", "*pause*") are dropped.
+
+export const SCRIPT_PROMPT = 'Write a podcast script for two hosts about: [your topic, or paste your document below]. ' +
+  'Format it exactly like this: the first line is "# " and the episode title; each part starts with "## " and its title; ' +
+  'every line after that starts with a host\'s first name and a colon, for example "Maya: So what is this about?". ' +
+  'Use only the two hosts. No stage directions, sound effects or music cues.';
+
+const cleanLine = line => line
+  .replace(/^\s*(?:[-*•>]\s+|\d+[.)]\s+)/, '')        // bullets, numbers, quotes
+  .replace(/\*\*|__/g, '')                             // bold
+  .replace(/^\s*\*([^*\n]+)\*\s*:/, '$1:')              // *Name*:
+  .trim();
+const direction = line => /^[\[(*][^\])*]*[\])*]$/.test(line);
+
+/** A script object, as the script writer returns it, from pasted text. Throws with a message for people. */
+export function scriptFromText(raw) {
+  const lines = raw.replace(/\r\n?/g, '\n').split('\n').map(cleanLine);
+  let title = '';
+  const parts = [{ title: '', body: [] }];
+  for (const line of lines) {
+    const h = line.match(/^(#{1,6})\s+(.+)$/);
+    if (h && h[1].length === 1 && !title) { title = h[2].trim(); continue; }
+    if (h) { parts.push({ title: h[2].trim(), body: [] }); continue; }
+    if (direction(line)) continue;
+    parts[parts.length - 1].body.push(line);
+  }
+  // The hosts are the first two names that start a turn.
+  // An AI chat's own remarks ("Here's your script:") start one line at most, so when there are
+  // more than two names, only those that start two or more turns count.
+  const seen = new Map();
+  for (const line of lines) {
+    const m = line.match(/^([^:#\n]{1,40}?)\s*:\s*\S/);
+    if (!m || /^https?$/i.test(m[1]) || m[1].split(/\s+/).length > 3) continue;
+    const key = m[1].trim().toLowerCase();
+    if (!seen.has(key)) seen.set(key, { name: m[1].trim(), turns: 0 });
+    seen.get(key).turns++;
+  }
+  let names = [...seen.values()];
+  if (names.length > 2) names = names.filter(n => n.turns > 1);
+  names = names.map(n => n.name);
+  if (names.length < 2) throw new Error('Write each line as "Name: what they say", with two hosts. ' +
+    (names.length ? `Only one host was found: ${names[0]}.` : 'No host names were found.'));
+  if (names.length > 2) throw new Error(`This reads two hosts, but the script has ${names.length}: ${names.join(', ')}. Keep two of them.`);
+  const hosts = { A: names[0], B: names[1] };
+  const starts = line => names.some(n => { const m = line.match(/^([^:\n]{1,40}?)\s*:/); return m && m[1].trim().toLowerCase() === n.toLowerCase(); });
+  const chapters = parts.map((p, i) => {
+    const first = p.body.findIndex(starts);  // remarks before a part's first turn are not read
+    return { title: p.title || (i ? `Part ${i}` : 'Introduction'),
+      lines: first < 0 ? [] : textToLines(p.body.slice(first).join('\n'), hosts) };
+  }).filter(c => c.lines.length);
+  if (!chapters.length) throw new Error('The script has no lines to read.');
+  if (chapters.length === 1 && !parts[0].title && parts.length === 1) chapters[0].title = title || 'Episode';
+  const chars = chapters.reduce((a, c) => a + c.lines.reduce((b, l) => b + l.text.length, 0), 0);
+  if (chars > MAX_TEXT) throw new Error(`The script is ${chars.toLocaleString()} characters; the most is ${MAX_TEXT.toLocaleString()}.`);
+  return { title: title || 'My podcast', summary: '', hosts, chapters };
+}
+
 export const scriptChars = script => script.chapters.reduce((a, c) => a + c.lines.reduce((b, l) => b + l.text.length, 0), 0);
 
 /** Every speech part, in order: [{chapter, index, speaker, text}]. Long turns are split. */

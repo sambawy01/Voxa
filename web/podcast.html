@@ -31,25 +31,40 @@ ol.saved li{background:var(--surface);border:1px solid var(--line);border-radius
 .genline .status{flex:1}
 .wave-host:has(#pause:not([hidden])) .wave i,.wave-host:has(#write:disabled) .wave i{animation-play-state:running;opacity:1}
 </style></head>
-<body data-page="podcast">
+<body data-page="podcast" data-mode="{{MODE}}">
 <header class="topbar"><div class="topbar-in">
 {{NAV}}
 </div></header>
 <main class="wrap narrow">
 <section class="hero">
   <span class="eyebrow"><span class="dot"></span>AI podcasts</span>
-  <h1 class="display sm">Your document, <span class="grad-text">as a podcast.</span></h1>
-  <p class="lead">Share a presentation, report or article. Two hosts talk it through: the ideas, the reasoning behind them and what they mean. You read and edit the script before any audio is made.</p>
+  <h1 class="display sm"><span class="server-only">Your document,</span><span class="ondevice-only">Your script,</span> <span class="grad-text">as a podcast.</span></h1>
+  <p class="lead ondevice-only">Paste a script from ChatGPT, Claude, Gemini or any AI chat. Two hosts read it aloud right on your device: free, private, nothing uploaded.</p>
+  <p class="lead server-only">Share a presentation, report or article. Two hosts talk it through: the ideas, the reasoning behind them and what they mean. You read and edit the script before any audio is made.</p>
   <div class="pills">
-    <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>PDF, PowerPoint or text</span>
-    <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.8"/><path d="M16 14.2a5.5 5.5 0 0 1 5.5 5.8"/></svg>Two hosts, your focus</span>
-    <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>Nine languages</span>
+    <span class="pill server-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>PDF, PowerPoint or text</span>
+    <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.8"/><path d="M16 14.2a5.5 5.5 0 0 1 5.5 5.8"/></svg><span class="server-only">Two hosts, your focus</span><span class="ondevice-only">Two hosts, any topic</span></span>
+    <span class="pill server-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>Nine languages</span>
+    <span class="pill ondevice-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>English &amp; Chinese</span>
+    <span class="pill ondevice-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>On your device, free</span>
   </div>
 </section>
 
 <section class="card" id="off" hidden>
   <div class="card-head"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
     <div><h2>Coming soon</h2><p class="sub">Podcasts are not switched on for this site yet. <a href="/book">Audiobooks</a> work already.</p></div></div>
+</section>
+
+<section class="card glow" id="ownscript" hidden>
+  <div class="card-head"><span class="step">1</span><div><h2>Your script</h2><p class="sub">Two hosts, one line per turn: “Name: what they say”</p></div></div>
+  <details id="howto"><summary>No script yet? Ask any AI chat</summary>
+    <p class="dim" style="font-size:14px">Copy this into ChatGPT, Claude, Gemini or any AI chat, add your topic or document, then paste its answer below.</p>
+    <p class="note" id="prompt"></p>
+    <div class="row"><button class="small" id="copyprompt" type="button">Copy the request</button></div>
+  </details>
+  <textarea id="script" rows="12" placeholder="# Episode title&#10;## First part&#10;Maya: Welcome to the show!&#10;Leo: Thanks, Maya. Today we're talking about…"></textarea>
+  <div class="row"><button class="primary" id="usescript" type="button">Use this script</button></div>
+  <p class="status" id="scriptstatus" role="status"></p>
 </section>
 
 <section class="card" id="savedbox" hidden>
@@ -69,12 +84,12 @@ ol.saved li{background:var(--surface);border:1px solid var(--line);border-radius
 </section>
 
 <section class="card wave-host" id="setup" hidden>
-  <div class="card-head"><span class="step">2</span><div><h2>The episode</h2><p class="sub">Set the focus, the length and your two hosts</p></div></div>
-  <label for="focus">Focus <span class="dim" style="text-transform:none;letter-spacing:0;font-weight:500">· optional: what should the hosts dig into?</span></label>
-  <textarea id="focus" rows="3" maxlength="1000" placeholder="For example: the business model and the biggest risks. Explain it for investors who know nothing about the field."></textarea>
+  <div class="card-head"><span class="step">2</span><div><h2>The episode</h2><p class="sub server-only">Set the focus, the length and your two hosts</p><p class="sub ondevice-only">Pick the language and a voice for each host</p></div></div>
+  <label for="focus" class="server-only">Focus <span class="dim" style="text-transform:none;letter-spacing:0;font-weight:500">· optional: what should the hosts dig into?</span></label>
+  <textarea class="server-only" id="focus" rows="3" maxlength="1000" placeholder="For example: the business model and the biggest risks. Explain it for investors who know nothing about the field."></textarea>
   <div class="controls">
-    <label>Length<select id="minutes"><option value="5">About 5 minutes</option><option value="10" selected>About 10 minutes</option><option value="20">About 20 minutes</option></select></label>
-    <label>Style<select id="tone">
+    <label class="server-only">Length<select id="minutes"><option value="5">About 5 minutes</option><option value="10" selected>About 10 minutes</option><option value="20">About 20 minutes</option></select></label>
+    <label class="server-only">Style<select id="tone">
       <option value="friendly" selected>Friendly and curious</option><option value="expert">Expert briefing</option>
       <option value="lively">Lively, with humour</option><option value="critical">Critical: test the ideas</option></select></label>
     <label>Language<select id="lang"></select></label>
@@ -82,20 +97,20 @@ ol.saved li{background:var(--surface);border:1px solid var(--line);border-radius
       <option value="mixed" selected>A woman and a man</option><option value="women">Two women</option><option value="men">Two men</option></select></label>
   </div>
   <div class="hosts">
-    <div class="host a"><h3><span class="av">A</span>First host</h3>
+    <div class="host a"><h3><span class="av">A</span><span id="hnA">First host</span></h3>
       <label>Voice<select id="voiceA"></select></label>
       <div class="hear"><button class="small" id="hearA" type="button">▶ Hear this voice</button><span class="hearnote" id="hearnoteA" role="status"></span></div>
-      <label>Name<input id="nameA" type="text" maxlength="40"></label></div>
-    <div class="host b"><h3><span class="av">B</span>Second host</h3>
+      <label class="server-only">Name<input id="nameA" type="text" maxlength="40"></label></div>
+    <div class="host b"><h3><span class="av">B</span><span id="hnB">Second host</span></h3>
       <label>Voice<select id="voiceB"></select></label>
       <div class="hear"><button class="small" id="hearB" type="button">▶ Hear this voice</button><span class="hearnote" id="hearnoteB" role="status"></span></div>
-      <label>Name<input id="nameB" type="text" maxlength="40"></label></div>
+      <label class="server-only">Name<input id="nameB" type="text" maxlength="40"></label></div>
   </div>
   <p class="note" id="voicenote"></p>
-  <p class="privacy">To write the script, the document's text and your focus are sent to DeepSeek, an AI service whose servers are in China. They are not kept by Voxa. Don't use documents you are not allowed to share.</p>
-  <div class="row"><button class="primary" id="write" type="button">Write the script</button></div>
-  <p class="note" id="allowance"></p>
-  <div class="genline">
+  <p class="privacy server-only">To write the script, the document's text and your focus are sent to DeepSeek, an AI service whose servers are in China. They are not kept by Voxa. Don't use documents you are not allowed to share.</p>
+  <div class="row server-only"><button class="primary" id="write" type="button">Write the script</button></div>
+  <p class="note server-only" id="allowance"></p>
+  <div class="genline server-only">
     <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
     <p class="status" id="writestatus" role="status"></p>
   </div>
@@ -126,7 +141,8 @@ ol.saved li{background:var(--surface);border:1px solid var(--line);border-radius
   </div>
   <div id="result"></div>
 </section>
-<p class="small-print">Your document is read on this device (pdf.js, Apache-2.0). Scripts are written by DeepSeek. MP3 files are made here with lamejs (LGPL-3.0). Studio voices send each line to Voxa to be spoken; on-device voices never leave this device. <a href="/credits">Credits</a></p>
+<p class="small-print ondevice-only">Your script stays on this device: both hosts are on-device voices and nothing is uploaded. MP3 files are made here with lamejs (LGPL-3.0). <a href="/credits">Credits</a></p>
+<p class="small-print server-only">Your document is read on this device (pdf.js, Apache-2.0). Scripts are written by DeepSeek. MP3 files are made here with lamejs (LGPL-3.0). Studio voices send each line to Voxa to be spoken; on-device voices never leave this device. <a href="/credits">Credits</a></p>
 </main>
 {{FOOTER}}
 
@@ -136,7 +152,7 @@ import { paragraphsFromText, formatDuration, estimateSeconds, openStore, saveChu
   saveBook, listBooks, deleteBook, parseWav, encodeWav, floatToInt16, SAMPLE_RATE, bookMp3 } from '/book.js';
 import { attachPreview, stopPreview, PREVIEW_LINE } from '/preview.js?v={{PREVIEW_VERSION}}';
 import { createLite } from '/lite.js?v={{LITE_VERSION}}';
-import { pdfText, pptxText, limitText, chapterToText, textToLines, scriptChars, planParts, joinTurns, MAX_TEXT } from '/podcast.js?v={{PODCAST_VERSION}}';
+import { pdfText, pptxText, limitText, chapterToText, textToLines, scriptChars, planParts, joinTurns, MAX_TEXT, scriptFromText, SCRIPT_PROMPT } from '/podcast.js?v={{PODCAST_VERSION}}';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.worker.min.mjs';
 const PDF_OPTIONS = { cMapUrl: '/static/pdfjs-{{PDFJS_VERSION}}/cmaps/', cMapPacked: true };
@@ -275,7 +291,7 @@ function fillVoices(sel = {}) {
     const opt = v => el('option', { value: v.id, textContent: `${v.name} · ${v.gender === 'male' ? 'man' : v.gender === 'female' ? 'woman' : 'neutral'}` });
     const out = [];
     if (lite.length) out.push(el('optgroup', { label: 'On this device · free, no daily limit' }, ...lite.map(opt)));
-    out.push(el('optgroup', { label: 'Studio voices' }, ...studio.map(opt)));
+    if (studio.length) out.push(el('optgroup', { label: 'Studio voices' }, ...studio.map(opt)));
     return out;
   };
   // Defaults: the first fitting voice, on-device first since they cost nothing,
@@ -320,6 +336,7 @@ function hostVoices() {
 async function showAllowance() {
   await setupAccount();
   const p = CONFIG.podcast, names = CONFIG.tiers || { free: 'Voxa Lite', paid: 'Voxa Studio' };
+  if (CONFIG.on_device_only) { $('#off').hidden = $('#source').hidden = true; $('#ownscript').hidden = false; return; }
   $('#off').hidden = !!p; $('#source').hidden = !p;
   if (!p) return;
   const q = await api('/api/quota', { cache: 'no-store' }).then(r => r.json()).catch(() => ({}));
@@ -369,6 +386,40 @@ $('#write').onclick = async () => {
   } catch (e) {
     st.className = 'status err'; st.textContent = e.message;
   } finally { btn.disabled = false; btn.textContent = POD ? 'Write a new script' : 'Write the script'; }
+};
+
+// --- A script written elsewhere (on-device mode): pasted in, read by on-device voices ------------
+$('#prompt').textContent = SCRIPT_PROMPT;
+$('#copyprompt').onclick = async () => {
+  try { await navigator.clipboard.writeText(SCRIPT_PROMPT); $('#copyprompt').textContent = 'Copied'; }
+  catch (e) { getSelection().selectAllChildren($('#prompt')); $('#copyprompt').textContent = 'Selected: copy it'; }
+};
+function hostNames() {
+  const h = POD && POD.script.hosts;
+  $('#hnA').textContent = h && CONFIG.on_device_only ? `First host · ${h.A}` : 'First host';
+  $('#hnB').textContent = h && CONFIG.on_device_only ? `Second host · ${h.B}` : 'Second host';
+}
+$('#usescript').onclick = async () => {
+  const st = $('#scriptstatus');
+  let script;
+  try { script = scriptFromText($('#script').value); }
+  catch (e) { st.className = 'status err'; st.textContent = e.message; return; }
+  st.className = 'status';
+  const turns = script.chapters.reduce((a, c) => a + c.lines.length, 0);
+  st.textContent = `${script.hosts.A} and ${script.hosts.B} · ${turns} turns${script.chapters.length > 1 ? ` in ${script.chapters.length} parts` : ''}.`;
+  POD = { id: crypto.randomUUID(), name: script.title, script, saved: Date.now() };
+  $('#setup').hidden = false;
+  await setupVoices();
+  // Chinese text gets the Chinese voices.
+  if (/[\u4e00-\u9fff]/.test($('#script').value) && [...$('#lang').options].some(o => o.value === 'z')) $('#lang').value = 'z';
+  named.A = named.B = true;
+  $('#nameA').value = script.hosts.A; $('#nameB').value = script.hosts.B;
+  fillVoices();
+  hostNames();
+  await savePod();
+  showScript();
+  listSaved();
+  $('#setup').scrollIntoView({ behavior: 'smooth' });
 };
 
 // --- 3. The script -------------------------------------------------------------------------------
@@ -602,6 +653,7 @@ async function openPod(p) {
     $('#nameA').value = p.script.hosts.A; $('#nameB').value = p.script.hosts.B;
     fillVoices({ A: p.settings.A, B: p.settings.B });
   }
+  hostNames();
   showScript();
   $('#scriptbox').scrollIntoView({ behavior: 'smooth' });
 }

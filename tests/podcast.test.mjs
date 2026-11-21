@@ -5,7 +5,7 @@ import { deflateRawSync } from 'node:zlib';
 import { zipStore, crc32, concatBytes } from '../web/book.js';
 import {
   readZip, unescapeXml, drawingText, pptxText, pagesToText, limitText,
-  chapterToText, textToLines, planParts, joinTurns, scriptChars,
+  chapterToText, textToLines, planParts, joinTurns, scriptChars, scriptFromText,
 } from '../web/podcast.js';
 
 const enc = new TextEncoder();
@@ -84,4 +84,37 @@ test('parts are planned per chapter, long turns split; turns are joined with pau
   assert.equal(scriptChars(script), 8 + 24 + 44);
   const pcm = joinTurns([new Int16Array(10), new Int16Array(10), new Int16Array(10)], ['A', 'A', 'B'], 100);
   assert.equal(pcm.length, 10 + 15 + 10 + 35 + 10);
+});
+
+test('a script pasted from an AI chat: title, parts, two hosts, chatter dropped', () => {
+  const s = scriptFromText(`Sure! Here's your script:
+
+# The Future of Coffee
+## Opening
+**Maya:** Welcome back to the show!
+**Leo:** Great to be here, Maya.
+[laughs]
+## The beans
+- Maya: So, beans. What changed?
+Leo: Everything. Climate,
+supply, price.`);
+  assert.equal(s.title, 'The Future of Coffee');
+  assert.deepEqual(s.hosts, { A: 'Maya', B: 'Leo' });
+  assert.deepEqual(s.chapters.map(c => c.title), ['Opening', 'The beans']);
+  assert.deepEqual(s.chapters[1].lines, [
+    { speaker: 'A', text: 'So, beans. What changed?' },
+    { speaker: 'B', text: 'Everything. Climate, supply, price.' }]);
+});
+
+test('a pasted script without headings is one episode', () => {
+  const s = scriptFromText('Ana: Hi.\nBo: Hello.\nAna: Bye.');
+  assert.equal(s.chapters.length, 1);
+  assert.equal(s.chapters[0].lines.length, 3);
+  assert.equal(scriptChars(s), 'Hi.Hello.Bye.'.length);
+});
+
+test('a pasted script needs exactly two hosts', () => {
+  assert.throws(() => scriptFromText('Just a paragraph of text.'), /No host names/);
+  assert.throws(() => scriptFromText('Ana: Hi.\nAna: Again.'), /Only one host was found: Ana/);
+  assert.throws(() => scriptFromText('A: 1\nB: 2\nC: 3\nA: 4\nB: 5\nC: 6'), /has 3: A, B, C/);
 });

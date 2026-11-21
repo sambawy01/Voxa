@@ -851,7 +851,7 @@ class DesignTest(ServerTestCase):
                 self.assertIn(b'class="footer"', page)
         # The current page's tab is the highlighted one.
         _, _, book = self.req('/book')
-        self.assertIn(b'<body data-page="book">', book)
+        self.assertIn(b'<body data-page="book" data-mode="full">', book)
 
 
 class ReaderTest(ServerTestCase):
@@ -919,17 +919,26 @@ class OnDeviceOnlyTest(ServerTestCase):
         code, _, _ = self.req('/api/preview/harper')
         self.assertEqual(code, 403)
         self.assertEqual(len(self.gen.calls), calls, 'nothing was generated')
+        # Podcast scripts are pasted in; the server does not write them.
+        code, _, _ = self.req('/api/podcast/script', {'text': 'word ' * 100, 'minutes': 5})
+        self.assertEqual(code, 403)
 
     def test_server_voice_pages_redirect_home_and_the_page_switches(self):
-        for path in ('/book', '/podcast', '/listen', '/pricing', '/checkout'):
+        for path in ('/listen', '/pricing', '/checkout'):
             self.assertEqual(self.get_no_redirect(path), (302, '/'), path)
         code, _, page = self.req('/')
         self.assertEqual(code, 200)
         self.assertIn(b'data-mode="on-device"', page)
-        for gone in (b'data-tab="book"', b'data-tab="podcast"', b'data-tab="pricing"'):
-            self.assertNotIn(gone, page)
-        self.assertNotIn(b'class="tabs"', page)
-        self.assertIn(b'class="logo"', page)
+        self.assertNotIn(b'data-tab="pricing"', page)
+        for kept in (b'data-tab="studio"', b'data-tab="book"', b'data-tab="podcast"'):
+            self.assertIn(kept, page)
+        # Audiobooks and podcasts stay, on-device: their pages load in on-device mode.
+        for path in ('/book', '/podcast'):
+            code, _, page = self.req(path)
+            self.assertEqual(code, 200, path)
+            self.assertIn(b'data-mode="on-device"', page)
+            self.assertNotIn(b'href="/pricing"', page)
+            self.assertNotIn(b'href="/listen"', page)
         self.assertEqual(self.get_no_redirect('/credits')[0], 200)
 
     def test_switched_off_everything_is_back(self):

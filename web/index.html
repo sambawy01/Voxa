@@ -19,6 +19,10 @@
 @media(max-width:820px){.hero-grid{grid-template-columns:1fr}.hero-art{height:120px;margin-top:-6px}.orb,.orb-ring{display:none}.hero-art .wave{height:70px}}
 .studio{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:18px;align-items:start}
 @media(max-width:900px){.studio{grid-template-columns:1fr}}
+/* ON_DEVICE_ONLY (server.py): only the on-device voices; anything about Studio voices,
+   sign-in, limits or plans is hidden. */
+body[data-mode="on-device"] .server-only{display:none!important}
+body:not([data-mode="on-device"]) .ondevice-only{display:none!important}
 #text{min-height:270px;font-size:16px}
 .meta{display:flex;justify-content:space-between;gap:10px;color:var(--dim);font-size:12.5px;font-variant-numeric:tabular-nums;margin-top:-4px}
 .field{display:flex;flex-direction:column;gap:8px}
@@ -37,10 +41,10 @@
 .account .tier:empty{display:none}
 @media(max-width:520px){.account .who{display:none}}
 </style></head>
-<body data-page="studio">
+<body data-page="studio" data-mode="{{MODE}}">
 <header class="topbar"><div class="topbar-in">
 {{NAV}}
-  <div class="top-actions account" id="account" hidden>
+  <div class="top-actions account server-only" id="account" hidden>
     <span class="who" id="who"></span><span class="tier" id="tier"></span>
     <button class="small accent" id="signin-open">Sign in</button>
     <button class="small accent" id="upgrade" hidden>Upgrade</button>
@@ -49,7 +53,7 @@
   </div>
 </div></header>
 <main class="wrap">
-<form class="signin card glow" id="signin" hidden>
+<form class="signin card glow server-only" id="signin" hidden>
   <label for="email">Sign in free · Voxa Lite: unlimited on-device voices, plus {{FREE_DAILY}} Studio characters a day</label>
   <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
   <div class="row">
@@ -61,12 +65,16 @@
 
 <section class="hero hero-grid">
   <div style="display:flex;flex-direction:column;gap:14px">
-    <a class="eyebrow" href="/podcast" style="text-decoration:none"><span class="dot"></span>New · Turn any document into a podcast</a>
+    <a class="eyebrow server-only" href="/podcast" style="text-decoration:none"><span class="dot"></span>New · Turn any document into a podcast</a>
+    <span class="eyebrow ondevice-only"><span class="dot"></span>Runs in your browser · free · nothing uploaded</span>
     <h1 class="display">Words, <span class="grad-text">out loud.</span></h1>
-    <p class="lead">Natural AI voices in nine languages. Made on our servers in seconds, or free and private right on your device.</p>
+    <p class="lead server-only">Natural AI voices in nine languages. Made on our servers in seconds, or free and private right on your device.</p>
+    <p class="lead ondevice-only">Natural AI voices that run right on your device, even on your phone. Free, private and offline once loaded. Nothing you type leaves your browser.</p>
     <div class="pills">
-      <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg><b class="grad-text">57</b> voices</span>
-      <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg><b class="grad-text">9</b> languages</span>
+      <span class="pill server-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg><b class="grad-text">57</b> voices</span>
+      <span class="pill server-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg><b class="grad-text">9</b> languages</span>
+      <span class="pill ondevice-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg><b class="grad-text">25</b> voices</span>
+      <span class="pill ondevice-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>English &amp; Chinese</span>
       <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/></svg>On-device &amp; offline</span>
     </div>
   </div>
@@ -82,14 +90,14 @@
       <div><h2>Your script</h2><p class="sub">Type or paste up to 4,000 characters</p></div></div>
     <textarea id="text" maxlength="4000" placeholder="Type or paste what you want spoken…" aria-label="Your script"></textarea>
     <div class="meta"><span id="count">0 / 4000 characters</span><span id="est"></span></div>
-    <p class="hint" id="quota"></p>
+    <p class="hint server-only" id="quota"></p>
     <div class="field"><span class="label">Try a sample</span>
     <div class="chips">
       <button class="chip" data-lang="a">🇺🇸 English</button>
-      <button class="chip" data-lang="f">🇫🇷 Français</button>
-      <button class="chip" data-lang="e">🇪🇸 Español</button>
-      <button class="chip" data-lang="i">🇮🇹 Italiano</button>
-      <button class="chip" data-lang="j">🇯🇵 日本語</button>
+      <button class="chip server-only" data-lang="f">🇫🇷 Français</button>
+      <button class="chip server-only" data-lang="e">🇪🇸 Español</button>
+      <button class="chip server-only" data-lang="i">🇮🇹 Italiano</button>
+      <button class="chip server-only" data-lang="j">🇯🇵 日本語</button>
       <button class="chip" data-lang="z">🇨🇳 中文</button>
       <button class="chip" data-lang="clear">Clear</button>
     </div></div>
@@ -134,8 +142,8 @@
   </div>
 </section>
 
-<div class="section-title"><h2>More from <span class="grad-text">Voxa</span></h2><span class="dim">Long-form audio, made for you</span></div>
-<section class="tiles">
+<div class="section-title server-only"><h2>More from <span class="grad-text">Voxa</span></h2><span class="dim">Long-form audio, made for you</span></div>
+<section class="tiles server-only">
   <a class="card tile" href="/book">
     <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 21.5V4.5"/><path d="M9 7h7M9 11h5"/></svg></span>
     <h3>Audiobooks</h3>
@@ -165,7 +173,8 @@
 <section class="card flat">
   <div class="card-head"><span class="ico mint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>
     <div><h2>About the voices</h2></div></div>
-  <p class="note">Studio voices run Kokoro-82M (Apache 2.0) on our servers: one set of weights serves all nine languages, and repeated phrases come back instantly. On-device voices run in your browser, so they cost nothing and work offline once loaded: Phonon 31m by Gradium (Apache 2.0) and tiny-voca by Muhammed Nazeem (Apache 2.0) for English, and Hojo TTS Light by HojoAI (Apache 2.0) for English and Chinese. Voice names are Voxa's own. <a href="/credits">Credits</a></p>
+  <p class="note ondevice-only">These voices run in your browser, on your own device, so they cost nothing and work offline once loaded: Phonon 31m by Gradium (Apache 2.0) and tiny-voca by Muhammed Nazeem (Apache 2.0) for English, and Hojo TTS Light by HojoAI (Apache 2.0) for English and Chinese. The first use downloads the voice model; after that it comes from your browser's cache. Voice names are Voxa's own. <a href="/credits">Credits</a></p>
+  <p class="note server-only">Studio voices run Kokoro-82M (Apache 2.0) on our servers: one set of weights serves all nine languages, and repeated phrases come back instantly. On-device voices run in your browser, so they cost nothing and work offline once loaded: Phonon 31m by Gradium (Apache 2.0) and tiny-voca by Muhammed Nazeem (Apache 2.0) for English, and Hojo TTS Light by HojoAI (Apache 2.0) for English and Chinese. Voice names are Voxa's own. <a href="/credits">Credits</a></p>
 </section>
 </main>
 {{FOOTER}}
@@ -193,11 +202,11 @@ function refreshVoices(){
   const k=langSel.value, list=CAT[k]||(VOICES[k]||[]).map(id=>({id,name:id}));
   const lite=Object.keys(LITE_BY_ID).length&&LITE.voices[k]||[];
   const opts=l=>l.map(v=>`<option value="${v.id}">${v.name}${v.signature?' ✦':''}</option>`).join('');
-  voiceSel.innerHTML=!list.length?'<option value="">default</option>':lite.length
+  voiceSel.innerHTML=!list.length&&lite.length?opts(lite):!list.length?'<option value="">default</option>':lite.length
     ? `<optgroup label="Studio voices">${opts(list)}</optgroup><optgroup label="On this device · free, no daily limit">${opts(lite)}</optgroup>`
     : opts(list);
   const n=list.length, m=lite.length;
-  $('#langnote').textContent = !n ? '' : m
+  $('#langnote').textContent = !n ? (m ? `${m} on-device voice${m===1?'':'s'} for ${LANG[k]}.` : '') : m
     ? `${n} Studio voices and ${m} on-device voices for ${LANG[k]}.`
     : `${n} voice${n===1?'':'s'} for ${LANG[k]}${n===1?' — the model only ships one for this language':''}.`;
   describeVoice();
@@ -314,7 +323,7 @@ function showAccount(session){
 }
 async function initAuth(){
   try{ CONFIG=await fetch('/api/config',{cache:'no-store'}).then(r=>r.json()); }catch(e){ return; }
-  if(!CONFIG.auth) return;
+  if(!CONFIG.auth||CONFIG.on_device_only) return;
   try{ await loadScript(SUPABASE_JS); }
   catch(e){ console.warn('sign-in library failed to load'); return; }
   SB=window.supabase.createClient(CONFIG.auth.url, CONFIG.auth.anon_key);
@@ -371,13 +380,14 @@ function showQuota(q){
   const el=$('#quota');
   $('#tier').textContent=!QUOTA||QUOTA.tier==='guest'?'':QUOTA.tier==='paid'?'Studio':'Lite';
   showPlan();
-  if(!QUOTA){el.textContent='';return;}
-  if(QUOTA.unlimited){el.className='hint';el.textContent='No daily limit on your plan.';return;}
+  // Only classList: className would drop the server-only marker this hint carries.
+  if(!QUOTA||CONFIG.on_device_only){el.textContent='';return;}
+  if(QUOTA.unlimited){el.classList.remove('over');el.textContent='No daily limit on your plan.';return;}
   const left=QUOTA.remaining.toLocaleString(), lim=QUOTA.limit.toLocaleString();
   const paid=(CONFIG.limits.paid||0).toLocaleString(), names=CONFIG.tiers||{free:'Voxa Lite',paid:'Voxa Studio'};
   const upsell=QUOTA.tier==='guest'&&SB?` Sign in free for ${names.free}.`
     :QUOTA.tier==='free'&&CONFIG.billing&&SIGNED_IN?` ${names.paid} has ${paid} a day.`:'';
-  el.className=QUOTA.remaining?'hint':'hint over';
+  el.classList.toggle('over', !QUOTA.remaining);
   el.textContent=QUOTA.remaining
     ? `${left} of ${lim} Studio characters left today.${upsell||' On-device voices have no limit; replays are free.'}`
     : `You've used today's ${lim} Studio characters. They reset at midnight UTC. On-device voices have no limit.${upsell}`;
@@ -439,7 +449,7 @@ async function generateLite(text, voiceId, st, signal){
     }});
   }catch(e){
     if(e.name==='AbortError') throw e;
-    throw new Error("This device can't run on-device voices ("+e.message+'). Choose a Studio voice instead.');
+    throw new Error("This device can't run on-device voices ("+e.message+')'+(CONFIG.on_device_only?'. Try a recent Chrome, Edge or Safari.':'. Choose a Studio voice instead.'));
   }
   const blob=new Blob([encodeWav(floatToInt16(audio), SAMPLE_RATE)], {type:'audio/wav'});
   if(LITE_CACHE.size>20) LITE_CACHE.delete(LITE_CACHE.keys().next().value);

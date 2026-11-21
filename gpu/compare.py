@@ -3,7 +3,7 @@
     modal run gpu/compare.py                 # writes out/compare/*.mp3 and results.json
 
 Candidates are the multilingual models whose weights allow commercial use:
-Chatterbox Multilingual (MIT) and Qwen3-TTS (Apache 2.0), with Kokoro, Voxa's current
+Chatterbox Multilingual (MIT), Qwen3-TTS and Audio8-TTS-Realistic (Apache 2.0), with Kokoro, Voxa's current
 engine, as the baseline where it has the language. Each engine runs in its own image on an
 L4, because their pinned torch and transformers versions do not agree. One warm-up line is
 spoken first so the timings leave out loading and compiling.
@@ -49,6 +49,14 @@ QWEN_LANGS = {'en': 'English', 'de': 'German', 'ja': 'Japanese', 'zh': 'Chinese'
               'fr': 'French', 'ko': 'Korean', 'ru': 'Russian'}
 QWEN_SPEAKERS = {'zh': 'Vivian', 'ja': 'Ono_Anna', 'ko': 'Sohee'}
 QWEN_DEFAULT_SPEAKER = 'Ryan'
+# Audio8 has no named voices: without a reference it picks a new speaker every time. So one
+# English line is spoken first, with a fixed seed, and every language is then cloned from it,
+# which also shows whether a cloned voice holds up in other languages. It reads the language
+# from the text, so every one of the ten is tried.
+AUDIO8_REPO = 'Edge0/Audio8-TTS-Realistic-0.6b'
+AUDIO8_REVISION = '1e857568bfd4f02931aca3988ee773a44d2d26d3'  # the custom model code runs, so pin what was reviewed
+AUDIO8_DIR = '/model/audio8'
+AUDIO8_REFERENCE = 'Good evening, and thank you for joining me. Tonight I would like to read you something short.'
 KOKORO_VOICES = {'en': 'af_heart', 'ja': 'jf_alpha', 'zh': 'zf_xiaobei', 'es': 'ef_dora',
                  'fr': 'ff_siwis', 'hi': 'hf_alpha'}
 
@@ -90,6 +98,15 @@ base = modal.Image.debian_slim(python_version='3.11').apt_install('ffmpeg', 'lib
 
 chatterbox_image = base.pip_install('chatterbox-tts', 'soundfile', 'numpy').env({'HF_HOME': '/model'})
 qwen_image = base.pip_install('qwen-tts', 'soundfile', 'numpy').env({'HF_HOME': '/model'})
+# Versions the model card was tested with. The weights are downloaded into the image because
+# the model code fetches its codec from the repo's latest files, not the pinned revision.
+audio8_image = (
+    base.pip_install('torch==2.8.0', 'torchaudio==2.8.0', 'transformers==4.57.3', 'safetensors',
+                     'huggingface_hub', 'soundfile', 'numpy')
+    .run_commands(f"python -c \"from huggingface_hub import snapshot_download; "
+                  f"snapshot_download('{AUDIO8_REPO}', revision='{AUDIO8_REVISION}', local_dir='{AUDIO8_DIR}')\"")
+    .env({'HF_HUB_OFFLINE': '1'})
+)
 kokoro_image = (
     base.apt_install('espeak-ng', 'build-essential', 'cmake')
     .pip_install('torch', 'kokoro>=0.9.4', 'soundfile', 'numpy', 'misaki[zh]>=0.9.4',
@@ -140,6 +157,44 @@ def qwen():
     return rows
 
 
+@app.function(image=audio8_image, gpu=GPU, timeout=1800)
+def audio8():
+    import torch
+    from transformers import AutoModel, AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(AUDIO8_DIR, trust_remote_code=True)
+    model = AutoModel.from_pretrained(AUDIO8_DIR, trust_remote_code=True, dtype=torch.bfloat16).eval().to('cuda')
+    rate = model.config.codec_sample_rate
+
+    def generate(text, reference=None):
+        if reference is None:
+            inputs = processor(text=[text], return_tensors='pt')
+        else:
+            inputs = processor(text=[text], reference_audio=[(reference, rate)],
+                               reference_text=[AUDIO8_REFERENCE], return_tensors='pt')
+        inputs = {k: v.to('cuda') for k, v in inputs.items()}
+        with torch.inference_mode():
+            out = model.generate(**inputs, max_new_tokens=1024, temperature=0.8, top_p=0.95, top_k=50,
+                                 do_sample=True, return_dict_in_generate=True)
+            waves, lengths = model.decode_audio(out.codes)
+        # finished is False when it ran out of frames instead of ending: the clip is cut off
+        return waves[0, :int(lengths[0])].float().cpu().numpy(), bool(out.finished[0])
+
+    torch.manual_seed(0)
+    reference, _ = generate(AUDIO8_REFERENCE)
+
+    def speak(text, lang):
+        samples, finished = generate(text, reference)
+        if not finished:
+            print('audio8', lang, 'cut off: no end of speech within 1024 frames', flush=True)
+        return samples, rate, 'cloned from a generated English line'
+
+    rows = run_all('audio8', list(TEXTS), speak)
+    for row in rows:
+        row['engine_name'] = 'Audio8-TTS-Realistic 0.6B'
+    return rows
+
+
 @app.function(image=kokoro_image, gpu=GPU, timeout=1800)
 def kokoro():
     import numpy as np
@@ -165,7 +220,8 @@ def kokoro():
 @app.local_entrypoint()
 def main(out: str = 'out/compare'):
     os.makedirs(out, exist_ok=True)
-    calls = {'chatterbox': chatterbox.spawn(), 'qwen': qwen.spawn(), 'kokoro': kokoro.spawn()}
+    calls = {'chatterbox': chatterbox.spawn(), 'qwen': qwen.spawn(), 'audio8': audio8.spawn(),
+             'kokoro': kokoro.spawn()}
     rows = []
     for engine, call in calls.items():
         try:

@@ -4,10 +4,14 @@
 //   from static/ and run in web/hojo-worker.js.
 //   tiny-voca (4.5M, English, two voices): ~50 MB with its Python phonemizer, served from static/
 //   and run in web/tiny-voca-worker.js. By far the fastest of the three.
+//   Supertonic 3 (Supertone, 31 languages, ten voices): ~111 MB, static/, web/supertonic-worker.js.
+//   Pocket TTS (Kyutai; English, French, German, Spanish, Portuguese, Italian): ~134 MB per
+//   language from Hugging Face, run by a Candle WebAssembly build in web/pocket-worker.js.
+//   Kale TTS nano (KaleComputer, English, ten voices): ~25 MB, static/, web/kale-worker.js.
 // Each engine loads the first time one of its voices speaks, then comes from the cache.
 import { normalizeForHojo, splitForHojo } from '/hojo-text.js';
 
-const ABOUT_MB = { phonon: 65, hojo: 126, tinyvoca: 50 };
+const ABOUT_MB = { phonon: 65, hojo: 126, tinyvoca: 50, supertonic: 111, pocket: 140, kale: 25 };
 
 function statusText(engine, files, cached) {
   const mb = Object.values(files).reduce((a, b) => a + b, 0) / 1e6;
@@ -80,12 +84,41 @@ class TinyVoca extends WorkerEngine {
   }
 }
 
+// Supertonic and Kale split long text themselves; one job per text.
+class Supertonic extends WorkerEngine {
+  constructor() { super('supertonic', '/supertonic-worker.js', { type: 'module' }); }
+  async synth(text, voice, { seed, signal }) {
+    await this.ready;
+    return this.piece(text, { voice: voice.source, lang: voice.code }, { seed }, signal);
+  }
+}
+
+class Kale extends WorkerEngine {
+  constructor() { super('kale', '/kale-worker.js', { type: 'module' }); }
+  async synth(text, voice, { signal }) {
+    await this.ready;
+    return this.piece(text, { source: voice.source }, {}, signal);
+  }
+}
+
+// Pocket TTS keeps one language's model loaded; another language's voice swaps it in.
+class Pocket extends WorkerEngine {
+  constructor() { super('pocket', '/pocket-worker.js', { type: 'module' }); }
+  async synth(text, voice, { temperature, seed, signal }) {
+    await this.ready;
+    return this.piece(text, { code: voice.code, source: voice.source, model: voice.model, tokenizer: voice.tokenizer, url: voice.url },
+      { temperature, seed }, signal);
+  }
+}
+
 /**
  * The on-device voices for a page. config() returns the page's /api/voices answer (its
  * `lite` section and `phonon_version`); voices are entries of config().lite.voices.
  */
 export function createLite(config) {
   let phonon = null, hojo = null, tinyVoca = null;
+  const workers = {};  // supertonic, pocket, kale: started on first use
+  const KINDS = { supertonic: Supertonic, pocket: Pocket, kale: Kale };
   const phononVoices = new Set();
 
   async function phononEngine(status) {
@@ -114,6 +147,13 @@ export function createLite(config) {
         hojo.onStatus = status;
         try { await hojo.ready; } catch (e) { hojo = null; throw e; }
         return hojo.synth(text, voice.source, voice.lang, { temperature: hojoTemperature(temperature), seed, signal });
+      }
+      if (KINDS[voice.engine]) {
+        const e = workers[voice.engine] ||= new KINDS[voice.engine]();
+        e.onStatus = status;
+        try { await e.ready; } catch (err) { delete workers[voice.engine]; throw err; }
+        const preset = config().lite.expressiveness.find(p => p.temperature === temperature);
+        return e.synth(text, voice, { temperature: preset?.pocket_temperature ?? 0.7, seed, signal });
       }
       if (voice.engine === 'tinyvoca') {
         if (!tinyVoca) tinyVoca = new TinyVoca();

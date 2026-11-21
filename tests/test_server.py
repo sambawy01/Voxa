@@ -875,3 +875,67 @@ class ReaderTest(ServerTestCase):
             self.assertTrue(png.startswith(b'\x89PNG'), icon)
         _, _, home = self.req('/')
         self.assertIn(b'href="/listen"', home)
+
+
+class OnDeviceOnlyTest(ServerTestCase):
+    """ON_DEVICE_ONLY: the site offers only the on-device voices; Studio voices, the pages
+    built on them and the paid plan are hidden, and the server won't generate with them."""
+
+    def setUp(self):
+        super().setUp()
+        server.ON_DEVICE_ONLY = True
+        self.addCleanup(setattr, server, 'ON_DEVICE_ONLY', False)
+
+    def get_no_redirect(self, path):
+        import http.client
+        host, port = self.base.split('//')[1].split(':')
+        c = http.client.HTTPConnection(host, int(port), timeout=10)
+        c.request('GET', path)
+        r = c.getresponse()
+        r.read()
+        c.close()
+        return r.status, r.getheader('Location')
+
+    def test_only_on_device_voices_and_their_languages(self):
+        _, _, body = self.req('/api/voices')
+        v = json.loads(body)
+        self.assertEqual((v['voices'], v['catalogue']), ({}, {}))
+        self.assertEqual(sorted(v['languages']), ['a', 'b', 'z'])
+        self.assertEqual(sum(len(x) for x in v['lite']['voices'].values()), 25)
+        _, _, body = self.req('/api/languages')
+        self.assertEqual(sorted(json.loads(body)['languages']), ['a', 'b', 'z'])
+        _, _, body = self.req('/api/config')
+        c = json.loads(body)
+        self.assertTrue(c['on_device_only'])
+        self.assertIsNone(c['auth'])
+        self.assertIsNone(c['billing'])
+
+    def test_studio_generation_and_previews_are_refused(self):
+        calls = len(self.gen.calls)
+        for path in ('/api/jobs', '/api/tts'):
+            code, _, body = self.req(path, {'text': 'hello', 'voice': 'harper'})
+            self.assertEqual(code, 403, path)
+            self.assertIn('on-device voice', json.loads(body)['error'])
+        code, _, _ = self.req('/api/preview/harper')
+        self.assertEqual(code, 403)
+        self.assertEqual(len(self.gen.calls), calls, 'nothing was generated')
+
+    def test_server_voice_pages_redirect_home_and_the_page_switches(self):
+        for path in ('/book', '/podcast', '/listen', '/pricing', '/checkout'):
+            self.assertEqual(self.get_no_redirect(path), (302, '/'), path)
+        code, _, page = self.req('/')
+        self.assertEqual(code, 200)
+        self.assertIn(b'data-mode="on-device"', page)
+        for gone in (b'data-tab="book"', b'data-tab="podcast"', b'data-tab="pricing"'):
+            self.assertNotIn(gone, page)
+        self.assertIn(b'data-tab="studio"', page)
+        self.assertEqual(self.get_no_redirect('/credits')[0], 200)
+
+    def test_switched_off_everything_is_back(self):
+        server.ON_DEVICE_ONLY = False
+        _, _, body = self.req('/api/voices')
+        self.assertEqual(sum(len(x) for x in json.loads(body)['voices'].values()), 57)
+        self.assertEqual(self.get_no_redirect('/podcast')[0], 200)
+        _, _, page = self.req('/')
+        self.assertIn(b'data-mode="full"', page)
+        self.assertIn(b'data-tab="podcast"', page)

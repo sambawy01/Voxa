@@ -7,6 +7,9 @@ primary_region = "fra"
 
 [env]
   PORT = "8080"
+  # "1" hides the Studio (server) voices and serves only the on-device voices.
+  # Set to "0" to bring the Studio voices, Audiobooks, Podcasts and Pricing back.
+  ON_DEVICE_ONLY = "1"
 
 [http_service]
   internal_port = 8080

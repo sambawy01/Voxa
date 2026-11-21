@@ -77,6 +77,13 @@ SYNC_TIMEOUT = 300
 # who are not signed in can only hear voice previews; until then they get Lite's allowance.
 TIERS = {'free': 'Voxa Lite', 'paid': 'Voxa Studio'}
 FREE_DAILY_CHARS = int(os.environ.get('VOXA_FREE_DAILY_CHARS', '1500'))
+# Owner switch (2026-11-21): the site offers only the on-device voices, which run in the
+# visitor's browser. Studio (server) voices, the pages built on them (audiobooks, podcasts,
+# the Reader) and the paid plan are hidden, and the server refuses to generate with them.
+# Set ON_DEVICE_ONLY=0 (fly.toml) to bring everything back.
+ON_DEVICE_ONLY = os.environ.get('ON_DEVICE_ONLY', '0') == '1'
+# Pages that need Studio voices or the paid plan; with ON_DEVICE_ONLY they redirect home.
+SERVER_VOICE_PAGES = {'/book', '/podcast', '/listen', '/pricing', '/checkout'}
 PAID_DAILY_CHARS = int(os.environ.get('VOXA_PAID_DAILY_CHARS', '10000'))
 # Podcast scripts per tier per day (each is a paid DeepSeek call, so here 0 means none), and
 # the longest episode each tier may ask for.
@@ -156,7 +163,12 @@ def web_values():
     def partial(name):
         with open(os.path.join(WEB_DIR, 'partials', name), encoding='utf-8') as f:
             return f.read()
-    return {'HEAD': partial('head.html'), 'NAV': partial('nav.html'), 'FOOTER': partial('footer.html'),
+    nav = partial('nav.html')
+    if ON_DEVICE_ONLY:
+        nav = '\n'.join(line for line in nav.split('\n')
+                        if not re.search(r'data-tab="(book|podcast|pricing)"', line))
+    return {'HEAD': partial('head.html'), 'NAV': nav, 'FOOTER': partial('footer.html'),
+            'MODE': 'on-device' if ON_DEVICE_ONLY else 'full',
             'CSS_VERSION': version('voxa.css'), 'PHONON_VERSION': PHONON_VERSION, 'PDFJS_VERSION': PDFJS_VERSION,
             'LAMEJS_VERSION': LAMEJS_VERSION, 'BOOK_VERSION': version('book.js'),
             'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js'),
@@ -167,6 +179,18 @@ def web_values():
             'PODCAST_MINUTES_PAID': str(PODCAST_MAX_MINUTES['paid']),
             'OPERATOR': html.escape(OPERATOR), 'CONTACT_EMAIL': html.escape(CONTACT_EMAIL),
             'PRICE_LABEL': html.escape(billing.PRICE_LABEL or 'see the price at checkout')}
+
+STUDIO_OFF = 'Studio voices are switched off for now. Choose an on-device voice.'
+
+
+def shown_languages():
+    """Languages the site offers: all of them, or with ON_DEVICE_ONLY only those that have
+    on-device voices."""
+    if not ON_DEVICE_ONLY:
+        return LANG_LABELS
+    have = {lang for lang, vs in (LITE or {}).get('voices', {}).items() if vs}
+    return {k: v for k, v in LANG_LABELS.items() if k in have}
+
 
 LANG_LABELS = {
     'a': 'English (US)',
@@ -1109,6 +1133,8 @@ class Handler(BaseHTTPRequestHandler):
         if p in WEB_FILES:
             with open(os.path.join(WEB_DIR, WEB_FILES[p]), 'rb') as f:
                 return self._send(200, f.read(), 'image/png', {'Cache-Control': 'public, max-age=86400'})
+        if ON_DEVICE_ONLY and p in SERVER_VOICE_PAGES:
+            return self._send(302, {'redirect': '/'}, extra={'Location': '/', 'Cache-Control': 'no-cache'})
         if p in WEB_PAGES:
             name = WEB_PAGES[p]
             with open(os.path.join(WEB_DIR, name), encoding='utf-8') as f:
@@ -1137,8 +1163,11 @@ class Handler(BaseHTTPRequestHandler):
             pods = {'daily': podcast_limits(), 'minutes': sorted(podcast.LENGTHS),
                     'max_minutes': {**PODCAST_MAX_MINUTES, 'guest': PODCAST_MAX_MINUTES['free']},
                     'tones': list(podcast.TONES), 'max_text': podcast.MAX_SOURCE} if podcast.enabled() else None
+            if ON_DEVICE_ONLY:
+                return self._send(200, {'auth': None, 'limits': {}, 'tiers': TIERS, 'billing': None,
+                                        'podcast': None, 'on_device_only': True})
             return self._send(200, {'auth': auth, 'limits': tier_limits(), 'tiers': TIERS,
-                                    'billing': paying, 'podcast': pods})
+                                    'billing': paying, 'podcast': pods, 'on_device_only': False})
         if p.startswith('/api/podcast/script/'):
             if not podcast.enabled():
                 return self._send(404, {'error': 'podcasts are not set up'})
@@ -1163,6 +1192,8 @@ class Handler(BaseHTTPRequestHandler):
                 'Cache-Control': 'private, max-age=3600',
             })
         if p.startswith('/api/preview/'):
+            if ON_DEVICE_ONLY:
+                return self._send(403, {'error': STUDIO_OFF})
             return self._send_preview(p.rsplit('/', 1)[-1])
         if p == '/health':
             return self._send(200, {
@@ -1173,15 +1204,18 @@ class Handler(BaseHTTPRequestHandler):
                 'cache_mb': round(_cache.nbytes / 1048576, 1),
             })
         if p == '/api/languages':
-            return self._send(200, {'languages': LANG_LABELS})
+            return self._send(200, {'languages': shown_languages()})
         if p == '/api/voices':
             catalogue = {lang: [{k: VOICE_BY_ID[vid][k]
                                  for k in ('id', 'name', 'description', 'gender', 'signature')}
                                 for vid in ids]
                          for lang, ids in VOICES.items()}
-            return self._send(200, {'voices': VOICES, 'catalogue': catalogue, 'lite': LITE,
+            voices = VOICES
+            if ON_DEVICE_ONLY:
+                voices, catalogue = {}, {}
+            return self._send(200, {'voices': voices, 'catalogue': catalogue, 'lite': LITE,
                                     'phonon_version': PHONON_VERSION,
-                                    'languages': LANG_LABELS})
+                                    'languages': shown_languages()})
         return self._send(404, {'error': 'not found'})
 
     def do_OPTIONS(self):
@@ -1281,6 +1315,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _post(self):
         p = urlparse(self.path).path
+        if ON_DEVICE_ONLY and (p in ('/api/jobs', '/api/tts') or p.startswith('/api/podcast/')):
+            return self._send(403, {'error': STUDIO_OFF})
         if p.startswith('/api/billing/'):
             return self._billing(p)
         if p == '/api/podcast/script':

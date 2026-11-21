@@ -7,6 +7,17 @@ RUN pip install --no-cache-dir numpy==2.3.5 onnx==1.23.2 onnxruntime==1.21.1
 COPY scripts/build_hojo.py /tmp/build_hojo.py
 RUN python /tmp/build_hojo.py /out
 
+# Supertonic 3 (31 languages): weights stored as int8 (scripts/build_supertonic.py), ~111 MB.
+FROM python:3.11-slim AS supertonic
+RUN pip install --no-cache-dir numpy==2.3.5 onnx==1.23.2
+COPY scripts/build_supertonic.py /tmp/build_supertonic.py
+RUN python /tmp/build_supertonic.py /out
+
+# Kale TTS nano (ten English voices), as released, pinned and checked, ~25 MB.
+FROM python:3.11-slim AS kale
+COPY scripts/build_kale.py /tmp/build_kale.py
+RUN python /tmp/build_kale.py /out
+
 # tiny-voca (and the Python phonemizer it runs on under Pyodide), pinned and checked.
 FROM python:3.11-slim AS tinyvoca
 COPY scripts/build_tiny_voca.py /tmp/build_tiny_voca.py
@@ -61,6 +72,11 @@ RUN python /tmp/fetch_vendor.py /app/static && rm /tmp/fetch_vendor.py
 COPY --from=hojo /out /app/static
 # tiny-voca's files (~50 MB), likewise.
 COPY --from=tinyvoca /out /app/static
+# Supertonic 3 and Kale TTS nano, likewise; Pocket TTS's WebAssembly runtime from vendor/
+# (its weights and voices load from Hugging Face in the browser).
+COPY --from=supertonic /out /app/static
+COPY --from=kale /out /app/static
+COPY vendor/pocket-tts-wasm /app/static/pocket-tts-wasm-4ac4680
 
 # Everything is local now; fail fast rather than reach the network at runtime.
 ENV HF_HUB_OFFLINE=1

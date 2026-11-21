@@ -723,6 +723,38 @@ class LiteCatalogueTest(ServerTestCase):
         self.assertEqual([e['temperature'] for e in lite['expressiveness']], [0.15, 0.3, 0.5])
         self.assertTrue(all(0 < e['hojo_temperature'] <= 1 for e in lite['expressiveness']))
 
+    def test_multilingual_engines_offer_every_voice_in_every_language(self):
+        _, _, body = self.req('/api/voices')
+        lite = json.loads(body)['lite']['voices']
+        every = [v for vs in lite.values() for v in vs]
+        by = lambda e: [v for v in every if v['engine'] == e]
+        st, pk, kale = by('supertonic'), by('pocket'), by('kale')
+        # Supertonic 3: ten voices in each of its 31 languages, Voxa code -> model code
+        self.assertEqual(len(st), 310)
+        self.assertEqual({v['code'] for v in st if v['lang'] == 'a'}, {'en'})
+        self.assertEqual({v['source'] for v in st if v['lang'] == 'ar'}, {f'{g}{i}' for g in 'FM' for i in range(1, 6)})
+        # Pocket TTS: six languages, pinned files, and no voice from a non-commercial or undocumented source
+        self.assertEqual({v['lang'] for v in pk}, {'a', 'f', 'de', 'e', 'p', 'i'})
+        self.assertEqual(len(pk), 6 * 22)
+        self.assertFalse({v['source'] for v in pk} & {'cosette', 'jean', 'juergen', 'rafael', 'daan'})
+        for v in pk:
+            self.assertRegex(v['model'], r'^https://huggingface\.co/idle-intelligence/pocket-tts-gguf/resolve/[0-9a-f]{40}/languages/[a-z]+/pocket-tts-q8_0\.gguf$')
+            self.assertRegex(v['url'], r'^https://huggingface\.co/kyutai/pocket-tts-without-voice-cloning/resolve/[0-9a-f]{40}/languages/[a-z]+/embeddings/[a-z_]+\.safetensors$')
+        # Kale TTS nano: ten English voices, two of them British
+        self.assertEqual(len(kale), 10)
+        self.assertEqual(sorted(v['name'] for v in kale if v['lang'] == 'b'), ['Amy', 'Jack'])
+        # a voice's name appears once per language
+        for lang, vs in lite.items():
+            self.assertEqual(len({v['name'] for v in vs}), len(vs), lang)
+        # each new worker is served isolated, with its pinned folder filled in
+        for path, folder in (('/supertonic-worker.js', server.SUPERTONIC_DIR), ('/kale-worker.js', server.KALE_DIR),
+                             ('/pocket-worker.js', server.POCKET_WASM_DIR)):
+            code, headers, js = self.req(path)
+            self.assertEqual(code, 200)
+            self.assertEqual(headers['Cross-Origin-Embedder-Policy'], 'require-corp')
+            self.assertNotIn(b'{{', js)
+            self.assertIn(f'/static/{folder}/'.encode(), js)
+
     def test_hojo_scripts_and_model_files_are_served_isolated(self):
         code, headers, js = self.req('/hojo-worker.js')
         self.assertEqual(code, 200)
@@ -900,10 +932,12 @@ class OnDeviceOnlyTest(ServerTestCase):
         _, _, body = self.req('/api/voices')
         v = json.loads(body)
         self.assertEqual((v['voices'], v['catalogue']), ({}, {}))
-        self.assertEqual(sorted(v['languages']), ['a', 'b', 'z'])
-        self.assertEqual(sum(len(x) for x in v['lite']['voices'].values()), 25)
+        langs = set(v['lite']['voices'])
+        self.assertTrue({'a', 'b', 'z', 'ar', 'de', 'f', 'j', 'ko'} <= langs)
+        self.assertEqual(len(langs), 33)
+        self.assertEqual(sum(len(x) for x in v['lite']['voices'].values()), 477)
         _, _, body = self.req('/api/languages')
-        self.assertEqual(sorted(json.loads(body)['languages']), ['a', 'b', 'z'])
+        self.assertEqual(set(json.loads(body)['languages']), langs)
         _, _, body = self.req('/api/config')
         c = json.loads(body)
         self.assertTrue(c['on_device_only'])

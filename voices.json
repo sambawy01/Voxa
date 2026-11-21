@@ -649,20 +649,23 @@
     "id": "steady",
     "name": "Steady",
     "temperature": 0.15,
-    "hojo_temperature": 0.6
+    "hojo_temperature": 0.6,
+    "pocket_temperature": 0.5
    },
    {
     "id": "natural",
     "name": "Natural",
     "temperature": 0.3,
     "default": true,
-    "hojo_temperature": 0.8
+    "hojo_temperature": 0.8,
+    "pocket_temperature": 0.7
    },
    {
     "id": "expressive",
     "name": "Expressive",
     "temperature": 0.5,
-    "hojo_temperature": 0.95
+    "hojo_temperature": 0.95,
+    "pocket_temperature": 0.9
    }
   ],
   "voices": [
@@ -899,6 +902,342 @@
     "engine": "tinyvoca",
     "source": "M2"
    }
-  ]
+  ],
+  "engines": {
+   "supertonic": {
+    "about": "Supertonic 3 by Supertone Inc. (BigScience OpenRAIL-M). Same ten voices in every language; names are Voxa's own.",
+    "voices": [
+     {
+      "id": "lina",
+      "name": "Lina",
+      "gender": "female",
+      "source": "F1"
+     },
+     {
+      "id": "amira",
+      "name": "Amira",
+      "gender": "female",
+      "source": "F2"
+     },
+     {
+      "id": "sofia",
+      "name": "Sofia",
+      "gender": "female",
+      "source": "F3"
+     },
+     {
+      "id": "leila",
+      "name": "Leila",
+      "gender": "female",
+      "source": "F4"
+     },
+     {
+      "id": "noa",
+      "name": "Noa",
+      "gender": "female",
+      "source": "F5"
+     },
+     {
+      "id": "adam",
+      "name": "Adam",
+      "gender": "male",
+      "source": "M1"
+     },
+     {
+      "id": "karim",
+      "name": "Karim",
+      "gender": "male",
+      "source": "M2"
+     },
+     {
+      "id": "luca",
+      "name": "Luca",
+      "gender": "male",
+      "source": "M3"
+     },
+     {
+      "id": "tomas",
+      "name": "Tomas",
+      "gender": "male",
+      "source": "M4"
+     },
+     {
+      "id": "sami",
+      "name": "Sami",
+      "gender": "male",
+      "source": "M5"
+     }
+    ],
+    "languages": {
+     "a": "en",
+     "e": "es",
+     "f": "fr",
+     "h": "hi",
+     "i": "it",
+     "j": "ja",
+     "p": "pt",
+     "ar": "ar",
+     "bg": "bg",
+     "cs": "cs",
+     "da": "da",
+     "de": "de",
+     "el": "el",
+     "et": "et",
+     "fi": "fi",
+     "hr": "hr",
+     "hu": "hu",
+     "id": "id",
+     "ko": "ko",
+     "lt": "lt",
+     "lv": "lv",
+     "nl": "nl",
+     "pl": "pl",
+     "ro": "ro",
+     "ru": "ru",
+     "sk": "sk",
+     "sl": "sl",
+     "sv": "sv",
+     "tr": "tr",
+     "uk": "uk",
+     "vi": "vi"
+    }
+   },
+   "pocket": {
+    "about": "Pocket TTS by Kyutai (CC-BY-4.0), voices from kyutai/tts-voices (CC BY 4.0 or CC0). Left out: cosette and jean (non-commercial sources), juergen, rafael and daan (sources not documented). Voices named after real narrators get Voxa names.",
+    "model_repo": "idle-intelligence/pocket-tts-gguf",
+    "model_revision": "dab28d3740c448b4932d4414b4e473ee16b14331",
+    "voices_repo": "kyutai/pocket-tts-without-voice-cloning",
+    "voices_revision": "4e1e0a3e611c51c0b4ed8174fc10f32a54644303",
+    "voices": [
+     {
+      "id": "alba",
+      "name": "Alba",
+      "gender": "female",
+      "source": "alba"
+     },
+     {
+      "id": "anna",
+      "name": "Anna",
+      "gender": "female",
+      "source": "anna"
+     },
+     {
+      "id": "azelma",
+      "name": "Azelma",
+      "gender": "female",
+      "source": "azelma"
+     },
+     {
+      "id": "carys",
+      "name": "Carys",
+      "gender": "female",
+      "source": "caro_davy"
+     },
+     {
+      "id": "eponine",
+      "name": "Eponine",
+      "gender": "female",
+      "source": "eponine"
+     },
+     {
+      "id": "estelle",
+      "name": "Estelle",
+      "gender": "female",
+      "source": "estelle"
+     },
+     {
+      "id": "eve",
+      "name": "Eve",
+      "gender": "female",
+      "source": "eve"
+     },
+     {
+      "id": "fantine",
+      "name": "Fantine",
+      "gender": "female",
+      "source": "fantine"
+     },
+     {
+      "id": "jane",
+      "name": "Jane",
+      "gender": "female",
+      "source": "jane"
+     },
+     {
+      "id": "lola",
+      "name": "Lola",
+      "gender": "female",
+      "source": "lola"
+     },
+     {
+      "id": "mary",
+      "name": "Mary",
+      "gender": "female",
+      "source": "mary"
+     },
+     {
+      "id": "vera",
+      "name": "Vera",
+      "gender": "female",
+      "source": "vera"
+     },
+     {
+      "id": "barnaby",
+      "name": "Barnaby",
+      "gender": "male",
+      "source": "bill_boerst"
+     },
+     {
+      "id": "charles",
+      "name": "Charles",
+      "gender": "male",
+      "source": "charles"
+     },
+     {
+      "id": "george",
+      "name": "George",
+      "gender": "male",
+      "source": "george"
+     },
+     {
+      "id": "giovanni",
+      "name": "Giovanni",
+      "gender": "male",
+      "source": "giovanni"
+     },
+     {
+      "id": "javert",
+      "name": "Javert",
+      "gender": "male",
+      "source": "javert"
+     },
+     {
+      "id": "marius",
+      "name": "Marius",
+      "gender": "male",
+      "source": "marius"
+     },
+     {
+      "id": "michael",
+      "name": "Michael",
+      "gender": "male",
+      "source": "michael"
+     },
+     {
+      "id": "paul",
+      "name": "Paul",
+      "gender": "male",
+      "source": "paul"
+     },
+     {
+      "id": "percy",
+      "name": "Percy",
+      "gender": "male",
+      "source": "peter_yearsley"
+     },
+     {
+      "id": "stirling",
+      "name": "Stirling",
+      "gender": "male",
+      "source": "stuart_bell"
+     }
+    ],
+    "languages": {
+     "a": "english",
+     "f": "french",
+     "de": "german",
+     "e": "spanish",
+     "p": "portuguese",
+     "i": "italian"
+    }
+   },
+   "kale": {
+    "about": "Kale TTS nano by KaleComputer (Apache-2.0): ten designed voices, none a real person.",
+    "repo": "KaleComputer/kale-tts-1-nano",
+    "revision": "b6ce1887268c3667994fc3b0b2c82887c069915c",
+    "voices": [
+     {
+      "id": "kenzie",
+      "name": "Kenzie",
+      "gender": "female",
+      "source": "s057b",
+      "lang": "a",
+      "accent": "American"
+     },
+     {
+      "id": "simone",
+      "name": "Simone",
+      "gender": "female",
+      "source": "f06",
+      "lang": "a",
+      "accent": "American"
+     },
+     {
+      "id": "amy",
+      "name": "Amy",
+      "gender": "female",
+      "source": "d03",
+      "lang": "b",
+      "accent": "British"
+     },
+     {
+      "id": "frankie",
+      "name": "Frankie",
+      "gender": "female",
+      "source": "w165",
+      "lang": "a",
+      "accent": "American"
+     },
+     {
+      "id": "darlene",
+      "name": "Darlene",
+      "gender": "female",
+      "source": "w602",
+      "lang": "a",
+      "accent": "American"
+     },
+     {
+      "id": "rowan",
+      "name": "Rowan",
+      "gender": "male",
+      "source": "m3",
+      "lang": "a",
+      "accent": "American"
+     },
+     {
+      "id": "toby",
+      "name": "Toby",
+      "gender": "male",
+      "source": "t071",
+      "lang": "a",
+      "accent": "American"
+     },
+     {
+      "id": "jack",
+      "name": "Jack",
+      "gender": "male",
+      "source": "d13",
+      "lang": "b",
+      "accent": "British"
+     },
+     {
+      "id": "earl",
+      "name": "Earl",
+      "gender": "male",
+      "source": "x328",
+      "lang": "a",
+      "accent": "American"
+     },
+     {
+      "id": "magnus",
+      "name": "Magnus",
+      "gender": "male",
+      "source": "h013f",
+      "lang": "a",
+      "accent": "American"
+     }
+    ]
+   }
+  }
  }
 }

@@ -1,0 +1,6 @@
+Pocket TTS for the browser: the tts-wasm crate of https://github.com/idle-intelligence/tts-web
+(MIT, see LICENSE), commit 4ac4680af1dbe02dfbc78bf85f51e8523d614caf, built with Rust 1.99.0 and
+  wasm-pack build crates/tts-wasm --target web --release --no-opt
+(source paths remapped). Runs Kyutai's Pocket TTS (CC-BY-4.0) on Candle (Apache-2.0/MIT).
+The model weights and voices are not here: the browser loads them from Hugging Face.
+sha256 tts_wasm_bg.wasm: 6378e243868c8fd4ea4c3d5a674cb76b6a11025ce39d937e2790d02a918d9bf4

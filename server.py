@@ -127,14 +127,22 @@ HOJO_DIR = 'hojo-40m-c3cf21c'
 TINYVOCA_DIR = 'tiny-voca-d94d2a0'
 TINYVOCA_VOICES = ('F2', 'M2')
 ORT_VERSION = '1.23.2'
-LITE_LANGS = ('a', 'b', 'z')
+# Supertonic 3 (31 languages, raw text in) is the fourth: Supertone's float32 release with its
+# weights stored as int8, built by scripts/build_supertonic.py into static/SUPERTONIC_DIR.
+SUPERTONIC_DIR = 'supertonic-3-3cadd1e'
+KALE_DIR = 'kale-nano-b6ce188'  # scripts/build_kale.py
+POCKET_WASM_DIR = 'pocket-tts-wasm-4ac4680'  # vendor/pocket-tts-wasm, copied in by the Dockerfile
+# Pocket TTS (Kyutai, CC-BY-4.0) in six languages runs on a Candle WebAssembly build of
+# idle-intelligence/tts-web (vendor/pocket-tts-wasm); its weights and voices load from Hugging
+# Face. Kale TTS nano (Apache-2.0) adds ten English voices, also from Hugging Face.
 PDFJS_VERSION = '4.4.168'
 LAMEJS_VERSION = '1.2.1'
 STATIC_TYPES = {'.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
                 '.wasm': 'application/wasm', '.bcmap': 'application/octet-stream',
                 '.json': 'application/json', '.css': 'text/css; charset=utf-8',
                 '.onnx': 'application/octet-stream', '.bin': 'application/octet-stream',
-                '.zip': 'application/zip', '.whl': 'application/zip'}
+                '.zip': 'application/zip', '.whl': 'application/zip',
+                '.tsv': 'text/tab-separated-values; charset=utf-8', '.txt': 'text/plain; charset=utf-8'}
 ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
              'Cross-Origin-Embedder-Policy': 'require-corp'}
 # Pages and scripts served from web/, all cross-origin isolated. {{NAME}} placeholders in them
@@ -148,7 +156,9 @@ WEB_PAGES = {'/': 'index.html', '/voxa.css': 'voxa.css', '/checkout': 'checkout.
              '/podcast': 'podcast.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
              '/listen': 'listen.html', '/listen.js': 'listen.js', '/manifest.webmanifest': 'manifest.webmanifest',
              '/lite.js': 'lite.js', '/hojo-text.js': 'hojo-text.js', '/hojo-worker.js': 'hojo-worker.js',
-             '/tiny-voca-text.js': 'tiny-voca-text.js', '/tiny-voca-worker.js': 'tiny-voca-worker.js'}
+             '/tiny-voca-text.js': 'tiny-voca-text.js', '/tiny-voca-worker.js': 'tiny-voca-worker.js',
+             '/supertonic-worker.js': 'supertonic-worker.js', '/pocket-worker.js': 'pocket-worker.js',
+             '/kale-worker.js': 'kale-worker.js'}
 # Binary files from web/: the app icons for home screens.
 WEB_FILES = {'/apple-touch-icon.png': 'icons/apple-touch-icon.png', '/icons/icon-192.png': 'icons/icon-192.png',
              '/icons/icon-512.png': 'icons/icon-512.png'}
@@ -177,6 +187,7 @@ def web_values():
             'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js'),
             'LISTEN_VERSION': version('listen.js'), 'LITE_VERSION': version('lite.js'),
             'HOJO_DIR': HOJO_DIR, 'TINYVOCA_DIR': TINYVOCA_DIR, 'ORT_VERSION': ORT_VERSION,
+            'SUPERTONIC_DIR': SUPERTONIC_DIR, 'KALE_DIR': KALE_DIR, 'POCKET_WASM_DIR': POCKET_WASM_DIR,
             'FREE_DAILY': f'{FREE_DAILY_CHARS:,}', 'PAID_DAILY': f'{PAID_DAILY_CHARS:,}',
             'PODCAST_MINUTES_FREE': str(PODCAST_MAX_MINUTES['free']),
             'PODCAST_MINUTES_PAID': str(PODCAST_MAX_MINUTES['paid']),
@@ -187,12 +198,11 @@ STUDIO_OFF = 'Studio voices are switched off for now. Choose an on-device voice.
 
 
 def shown_languages():
-    """Languages the site offers: all of them, or with ON_DEVICE_ONLY only those that have
-    on-device voices."""
-    if not ON_DEVICE_ONLY:
-        return LANG_LABELS
+    """Languages the site offers: the Studio languages (unless ON_DEVICE_ONLY) and every
+    language with on-device voices. English first, then the rest by name."""
     have = {lang for lang, vs in (LITE or {}).get('voices', {}).items() if vs}
-    return {k: v for k, v in LANG_LABELS.items() if k in have}
+    offered = [(k, v) for k, v in ALL_LANG_LABELS.items() if k in have or (k in LANG_LABELS and not ON_DEVICE_ONLY)]
+    return dict(sorted(offered, key=lambda kv: (kv[0] not in ('a', 'b'), kv[1])))
 
 
 LANG_LABELS = {
@@ -206,6 +216,15 @@ LANG_LABELS = {
     'p': 'Portuguese (BR)',
     'z': 'Chinese (Mandarin)',
 }
+# Languages only the on-device voices speak (Supertonic 3, Pocket TTS), by ISO 639-1 code.
+LITE_LANG_LABELS = {
+    'ar': 'Arabic', 'bg': 'Bulgarian', 'cs': 'Czech', 'da': 'Danish', 'de': 'German', 'el': 'Greek',
+    'et': 'Estonian', 'fi': 'Finnish', 'hr': 'Croatian', 'hu': 'Hungarian', 'id': 'Indonesian',
+    'ko': 'Korean', 'lt': 'Lithuanian', 'lv': 'Latvian', 'nl': 'Dutch', 'pl': 'Polish', 'ro': 'Romanian',
+    'ru': 'Russian', 'sk': 'Slovak', 'sl': 'Slovenian', 'sv': 'Swedish', 'tr': 'Turkish', 'uk': 'Ukrainian',
+    'vi': 'Vietnamese',
+}
+ALL_LANG_LABELS = {**LANG_LABELS, **LITE_LANG_LABELS}
 
 # The voice catalogue: Voxa's own names for all 54 Kokoro v1.0 voices plus signature blends.
 # Kept in voices.json so names can change without touching code. It is the source of truth
@@ -245,46 +264,84 @@ HOJO_SOURCE = re.compile(r'hojo_(en|zh)_[fmu]_\d\d')
 
 
 def load_lite(path=CATALOGUE_PATH, studio_ids=()):
-    """The Voxa Lite section of voices.json: voices the browser runs itself, with Phonon
-    (English), Hojo (English and Chinese) or tiny-voca (English)."""
+    """The Voxa Lite section of voices.json: voices the browser runs itself. Named voices for
+    Phonon (English), Hojo (English, Chinese) and tiny-voca (English), then the voice sets of
+    the multilingual engines (`engines`): Supertonic 3, Pocket TTS and Kale TTS nano, each
+    voice offered in every language its engine speaks."""
     with open(path, encoding='utf-8') as f:
         lite = json.load(f).get('lite')
     if not lite:
         return None
-    ids = [v['id'] for v in lite['voices']]
-    if len(set(ids)) != len(ids) or set(ids) & set(studio_ids):
-        raise ValueError('Lite voice ids must be unique and differ from Studio voice ids')
     base = f'https://huggingface.co/{lite["voices_repo"]}/resolve/{lite["revision"]}/'
-    out = {lang: [] for lang in LITE_LANGS}
+    out = {lang: [] for lang in ALL_LANG_LABELS}
+
+    def add(v, engine, **extra):
+        if v['lang'] not in ALL_LANG_LABELS:
+            raise ValueError(f'Lite voice {v["id"]!r} has unknown language {v["lang"]!r}')
+        out[v['lang']].append({
+            'id': v['id'], 'name': v['name'], 'gender': v['gender'], 'lang': v['lang'], 'engine': engine,
+            'description': ' · '.join([v['gender'].capitalize(), *([v['accent']] if v.get('accent') else []),
+                                       *([v['age']] if v.get('age') else []), 'On this device']),
+            **extra})
+
     for v in lite['voices']:
         engine = v.get('engine', 'phonon')
-        entry = {'id': v['id'], 'name': v['name'], 'gender': v['gender'], 'lang': v['lang'], 'engine': engine,
-                 'description': ' · '.join([v['gender'].capitalize(), v['accent'], *([v['age']] if v.get('age') else []),
-                                            'On this device'])}
         if engine == 'phonon':
             if v['lang'] not in ('a', 'b'):
                 raise ValueError(f'Lite voice {v["id"]!r}: Phonon 31m speaks English only')
             if not re.fullmatch(r'voices/[A-Za-z0-9_-]+\.safetensors', v['file']):
                 raise ValueError(f'Lite voice {v["id"]!r} has an unexpected file path')
-            entry['url'] = base + v['file']
+            add(v, engine, url=base + v['file'])
         elif engine == 'hojo':
             m = HOJO_SOURCE.fullmatch(v.get('source', ''))
-            if not m or (m.group(1) == 'zh') != (v['lang'] == 'z') or v['lang'] not in LITE_LANGS:
+            if not m or (m.group(1) == 'zh') != (v['lang'] == 'z') or v['lang'] not in ('a', 'b', 'z'):
                 raise ValueError(f'Lite voice {v["id"]!r}: Hojo speaks English (a, b) and Chinese (z) only')
-            entry['source'] = v['source']
+            add(v, engine, source=v['source'])
         elif engine == 'tinyvoca':
             if v.get('source') not in TINYVOCA_VOICES or v['lang'] != 'a':
                 raise ValueError(f'Lite voice {v["id"]!r}: tiny-voca has the English voices F2 and M2 only')
-            entry['source'] = v['source']
+            add(v, engine, source=v['source'])
         else:
             raise ValueError(f'Lite voice {v["id"]!r}: unknown engine {engine!r}')
-        out[v['lang']].append(entry)
+
+    engines = lite.get('engines', {})
+    st = engines.get('supertonic')
+    if st:
+        for lang, code in st['languages'].items():
+            for v in st['voices']:
+                if not re.fullmatch(r'[FM][1-5]', v['source']):
+                    raise ValueError(f'Supertonic voice {v["id"]!r}: unknown style {v["source"]!r}')
+                add({**v, 'id': f'{v["id"]}-{lang}', 'lang': lang}, 'supertonic', source=v['source'], code=code)
+    pk = engines.get('pocket')
+    if pk:
+        model = f'https://huggingface.co/{pk["model_repo"]}/resolve/{pk["model_revision"]}/languages/'
+        voices = f'https://huggingface.co/{pk["voices_repo"]}/resolve/{pk["voices_revision"]}/languages/'
+        for lang, code in pk['languages'].items():
+            if not re.fullmatch(r'[a-z]+', code):
+                raise ValueError(f'Pocket TTS language {code!r} is not a plain name')
+            for v in pk['voices']:
+                if not re.fullmatch(r'[a-z_]+', v['source']):
+                    raise ValueError(f'Pocket TTS voice {v["id"]!r}: unexpected source {v["source"]!r}')
+                add({**v, 'id': f'{v["id"]}-{lang}', 'lang': lang}, 'pocket', source=v['source'], code=code,
+                    model=f'{model}{code}/pocket-tts-q8_0.gguf', tokenizer=f'{model}{code}/tokenizer.model',
+                    url=f'{voices}{code}/embeddings/{v["source"]}.safetensors')
+    kale = engines.get('kale')
+    if kale:
+        for v in kale['voices']:
+            if v['lang'] not in ('a', 'b') or not re.fullmatch(r'[a-z0-9]+', v['source']):
+                raise ValueError(f'Kale voice {v["id"]!r}: English (a, b) only, plain source names')
+            add(v, 'kale', source=v['source'])
+
+    ids = [v['id'] for vs in out.values() for v in vs]
+    if len(set(ids)) != len(ids) or set(ids) & set(studio_ids):
+        raise ValueError('Lite voice ids must be unique and differ from Studio voice ids')
     if not any(e.get('default') for e in lite['expressiveness']):
         raise ValueError('one expressiveness preset must be the default')
     return {
         'model': lite['model'],
         'expressiveness': lite['expressiveness'],
-        'voices': out,
+        'kale': {'repo': kale['repo'], 'revision': kale['revision']} if kale else None,
+        'voices': {lang: vs for lang, vs in out.items() if vs},
     }
 
 

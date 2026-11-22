@@ -15,6 +15,16 @@
 // Each engine loads the first time one of its voices speaks, then comes from the cache.
 import { normalizeForHojo, splitForHojo } from '/hojo-text.js';
 
+// Phones and tablets: desktop-only voices are refused before anything downloads (a phone that
+// fetches ~1 GB runs out of memory and the browser reloads the page), and only one voice model
+// is kept in memory at a time.
+export const IS_PHONE = (() => {
+  const ua = navigator.userAgent || '';
+  return !!(navigator.userAgentData?.mobile || /Android|iPhone|iPad|iPod|Mobile/i.test(ua)
+    || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1));   // iPadOS reports a Mac
+})();
+export const DESKTOP_ONLY = 'This voice needs a desktop or laptop computer: it is a large download that phones and tablets cannot hold. Choose a voice without “desktop only” here.';
+
 const ABOUT_MB = { phonon: 65, hojo: 126, tinyvoca: 50, supertonic: 111, pocket: 140, kale: 29, smoller: 30, kokoro: 326 };
 
 function statusText(engine, files, cached) {
@@ -232,7 +242,14 @@ class Zonos {
  */
 export function createLite(config) {
   let phonon = null, hojo = null, tinyVoca = null;
-  const workers = {};  // supertonic, pocket, kale: started on first use
+  const workers = {};  // supertonic, pocket, kale, kokoro, smoller, zonos: started on first use
+  // On a phone, stop every other engine's worker before another one loads (Phonon runs on the
+  // page itself and stays).
+  function release(keep) {
+    for (const [k, e] of Object.entries(workers)) if (k !== keep && e.worker) { e.worker.terminate(); delete workers[k]; }
+    if (keep !== 'hojo' && hojo) { hojo.worker.terminate(); hojo = null; }
+    if (keep !== 'tinyvoca' && tinyVoca) { tinyVoca.worker.terminate(); tinyVoca = null; }
+  }
   const KINDS = { supertonic: Supertonic, pocket: Pocket, kale: Kale, kokoro: Kokoro };
   const phononVoices = new Set();
 
@@ -257,6 +274,8 @@ export function createLite(config) {
   return {
     /** Speak `text` with an on-device voice: 24 kHz mono Float32Array. */
     async synth(voice, text, { temperature, seed, signal, status = () => {} }) {
+      if (voice.desktop && IS_PHONE) throw new Error(DESKTOP_ONLY);
+      if (IS_PHONE) release(voice.engine);
       if (voice.engine === 'hojo') {
         if (!hojo) hojo = new Hojo();
         hojo.onStatus = status;

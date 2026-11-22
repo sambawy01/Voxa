@@ -151,7 +151,7 @@ import * as pdfjs from '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.min.mjs';
 import { paragraphsFromText, formatDuration, estimateSeconds, openStore, saveChunk, loadChunk, savedChunkKeys,
   saveBook, listBooks, deleteBook, parseWav, encodeWav, floatToInt16, SAMPLE_RATE, bookMp3 } from '/book.js';
 import { attachPreview, stopPreview, PREVIEW_LINE } from '/preview.js?v={{PREVIEW_VERSION}}';
-import { createLite } from '/lite.js?v={{LITE_VERSION}}';
+import { createLite, IS_PHONE as LITE_PHONE } from '/lite.js?v={{LITE_VERSION}}';
 import { pdfText, pptxText, limitText, chapterToText, textToLines, scriptChars, planParts, joinTurns, MAX_TEXT, scriptFromText, SCRIPT_PROMPT } from '/podcast.js?v={{PODCAST_VERSION}}';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/static/pdfjs-{{PDFJS_VERSION}}/build/pdf.worker.min.mjs';
@@ -319,8 +319,11 @@ function voiceNote() {
       : 'Both hosts have the same voice. Pick another for the second host.');
   }
   if (a.lite !== b.lite) notes.push('One host is on-device and one is a Studio voice; they will sound a little different.');
-  $('#voicenote').textContent = notes.join(' ');
   $('#exprbox').hidden = !(a.lite || b.lite);
+  const phone = [a, b].filter(v => v.desktop && LITE_PHONE);
+  if (phone.length) notes.push(`${[...new Set(phone.map(v => v.name))].join(' and ')}: desktop only, not available on this phone. Choose a voice without “desktop only”.`);
+  $('#voicenote').textContent = notes.join(' ');
+  if (POD) saveSoon();   // a voice picked is kept even if the page reloads
   refreshMake();
 }
 
@@ -426,7 +429,9 @@ $('#usescript').onclick = async () => {
 async function savePod() {
   db ||= await openStore('voxa-podcasts');
   POD.saved = Date.now();
-  POD.settings = { lang: $('#lang').value, pair: $('#pair').value, A: $('#voiceA').value, B: $('#voiceB').value };
+  POD.settings = { lang: $('#lang').value, pair: $('#pair').value, A: $('#voiceA').value, B: $('#voiceB').value,
+    expr: $('#expr').value, nameA: $('#nameA').value, nameB: $('#nameB').value };
+  try { sessionStorage.setItem('voxa-podcast-open', POD.id); } catch { /* private mode */ }
   await saveBook(db, POD.id, POD);
 }
 let saveTimer = null;
@@ -569,7 +574,7 @@ async function start() {
 }
 $('#start').onclick = () => start();
 $('#pause').onclick = () => { running = false; if (controller) controller.abort(); };
-$('#expr').onchange = () => refreshMake();
+$('#expr').onchange = () => { if (POD) saveSoon(); refreshMake(); };
 
 // MP3 per chapter in the audiobook encoder's worker, then one file with chapter marks.
 let mp3Worker = null, mp3Seq = 0;
@@ -652,6 +657,7 @@ async function openPod(p) {
     named.A = named.B = true;
     $('#nameA').value = p.script.hosts.A; $('#nameB').value = p.script.hosts.B;
     fillVoices({ A: p.settings.A, B: p.settings.B });
+    if (p.settings.expr) $('#expr').value = p.settings.expr;
   }
   hostNames();
   showScript();
@@ -659,6 +665,14 @@ async function openPod(p) {
 }
 
 showAllowance().catch(() => {});
-listSaved().catch(() => {});
+// The episode that was open comes back after a reload (a phone that ran out of memory reloads the page).
+listSaved().then(async () => {
+  let id = null;
+  try { id = sessionStorage.getItem('voxa-podcast-open'); } catch { /* private mode */ }
+  if (!id || POD) return;
+  db ||= await openStore('voxa-podcasts');
+  const p = (await listBooks(db).catch(() => [])).find(x => x.id === id);
+  if (p) await openPod(p);
+}).catch(() => {});
 </script>
 </body></html>

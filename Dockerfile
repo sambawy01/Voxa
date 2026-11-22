@@ -18,6 +18,11 @@ FROM python:3.11-slim AS kale
 COPY scripts/build_kale.py /tmp/build_kale.py
 RUN python /tmp/build_kale.py /out
 
+# SmollerTTS (one English voice) with its own browser runtime, as released, ~30 MB.
+FROM python:3.11-slim AS smoller
+COPY scripts/build_smoller.py /tmp/build_smoller.py
+RUN python /tmp/build_smoller.py /out
+
 # tiny-voca (and the Python phonemizer it runs on under Pyodide), pinned and checked.
 FROM python:3.11-slim AS tinyvoca
 COPY scripts/build_tiny_voca.py /tmp/build_tiny_voca.py
@@ -76,6 +81,7 @@ COPY --from=tinyvoca /out /app/static
 # (its weights and voices load from Hugging Face in the browser).
 COPY --from=supertonic /out /app/static
 COPY --from=kale /out /app/static
+COPY --from=smoller /out /app/static
 COPY vendor/pocket-tts-wasm /app/static/pocket-tts-wasm-4ac4680
 
 # Everything is local now; fail fast rather than reach the network at runtime.

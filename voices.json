@@ -1237,6 +1237,18 @@
       "accent": "American"
      }
     ]
+   },
+   "smoller": {
+    "about": "SmollerTTS by Dun Li Chan (MIT): 2.8M parameters, one voice trained on LJSpeech (public domain). Voxa name.",
+    "voices": [
+     {
+      "id": "lyra",
+      "name": "Lyra",
+      "gender": "female",
+      "lang": "a",
+      "accent": "American"
+     }
+    ]
    }
   }
  }

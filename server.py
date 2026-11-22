@@ -132,6 +132,7 @@ ORT_VERSION = '1.23.2'
 SUPERTONIC_DIR = 'supertonic-3-3cadd1e'
 KALE_DIR = 'kale-nano-b6ce188'  # scripts/build_kale.py
 POCKET_WASM_DIR = 'pocket-tts-wasm-4ac4680'  # vendor/pocket-tts-wasm, copied in by the Dockerfile
+SMOLLER_DIR = 'smollertts-a4b7e51'  # scripts/build_smoller.py: SmollerTTS's own browser runtime
 # Pocket TTS (Kyutai, CC-BY-4.0) in six languages runs on a Candle WebAssembly build of
 # idle-intelligence/tts-web (vendor/pocket-tts-wasm); its weights and voices load from Hugging
 # Face. Kale TTS nano (Apache-2.0) adds ten English voices, also from Hugging Face.
@@ -141,7 +142,7 @@ STATIC_TYPES = {'.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascrip
                 '.wasm': 'application/wasm', '.bcmap': 'application/octet-stream',
                 '.json': 'application/json', '.css': 'text/css; charset=utf-8',
                 '.onnx': 'application/octet-stream', '.bin': 'application/octet-stream',
-                '.zip': 'application/zip', '.whl': 'application/zip',
+                '.zip': 'application/zip', '.whl': 'application/zip', '.lex': 'application/octet-stream',
                 '.tsv': 'text/tab-separated-values; charset=utf-8', '.txt': 'text/plain; charset=utf-8'}
 ISOLATION = {'Cross-Origin-Opener-Policy': 'same-origin',
              'Cross-Origin-Embedder-Policy': 'require-corp'}
@@ -331,6 +332,13 @@ def load_lite(path=CATALOGUE_PATH, studio_ids=()):
             if v['lang'] not in ('a', 'b') or not re.fullmatch(r'[a-z0-9]+', v['source']):
                 raise ValueError(f'Kale voice {v["id"]!r}: English (a, b) only, plain source names')
             add(v, 'kale', source=v['source'])
+
+    sm = engines.get('smoller')
+    if sm:
+        for v in sm['voices']:
+            if v['lang'] not in ('a', 'b'):
+                raise ValueError(f'SmollerTTS voice {v["id"]!r}: English (a, b) only')
+            add(v, 'smoller', worker=f'/static/{SMOLLER_DIR}/worker.mjs')
 
     ids = [v['id'] for vs in out.values() for v in vs]
     if len(set(ids)) != len(ids) or set(ids) & set(studio_ids):

@@ -743,6 +743,10 @@ class LiteCatalogueTest(ServerTestCase):
         # Kale TTS nano: ten English voices, two of them British
         self.assertEqual(len(kale), 10)
         self.assertEqual(sorted(v['name'] for v in kale if v['lang'] == 'b'), ['Amy', 'Jack'])
+        # SmollerTTS: one English voice, run by its own released worker
+        sm = by('smoller')
+        self.assertEqual([(v['name'], v['lang']) for v in sm], [('Lyra', 'a')])
+        self.assertEqual(sm[0]['worker'], f'/static/{server.SMOLLER_DIR}/worker.mjs')
         # a voice's name appears once per language
         for lang, vs in lite.items():
             self.assertEqual(len({v['name'] for v in vs}), len(vs), lang)
@@ -935,7 +939,7 @@ class OnDeviceOnlyTest(ServerTestCase):
         langs = set(v['lite']['voices'])
         self.assertTrue({'a', 'b', 'z', 'ar', 'de', 'f', 'j', 'ko'} <= langs)
         self.assertEqual(len(langs), 33)
-        self.assertEqual(sum(len(x) for x in v['lite']['voices'].values()), 477)
+        self.assertEqual(sum(len(x) for x in v['lite']['voices'].values()), 478)
         _, _, body = self.req('/api/languages')
         self.assertEqual(set(json.loads(body)['languages']), langs)
         _, _, body = self.req('/api/config')

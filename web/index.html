@@ -447,7 +447,7 @@ async function generateLite(text, voiceId, st, signal){
       st.textContent=t.startsWith('Loading')||t.startsWith('Downloading')?t:'Generating on this device…';
     }});
   }catch(e){
-    if(e.name==='AbortError') throw e;
+    if(e.name==='AbortError'||v.desktop) throw e;
     throw new Error("This device can't run on-device voices ("+e.message+')'+(CONFIG.on_device_only?'. Try a recent Chrome, Edge or Safari.':'. Choose a Studio voice instead.'));
   }
   const blob=new Blob([encodeWav(floatToInt16(audio), SAMPLE_RATE)], {type:'audio/wav'});

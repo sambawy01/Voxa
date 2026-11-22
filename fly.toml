@@ -15,6 +15,13 @@ primary_region = "fra"
   VOXA_API_KEYS = "owner:a7e79a8cbbdb1b756e59791dcf2b5837b7e4e1db67f0c1ff9de5d31b1d2f0634"
   VOXA_API_DAILY_CHARS = "300000"
 
+# Lasting data (visitor counts, API jobs) lives on a volume at /data, so it survives deploys.
+# fly deploy creates the volume (1 GB) the first time.
+[mounts]
+  source = "voxa_data"
+  destination = "/data"
+  initial_size = "1gb"
+
 [http_service]
   internal_port = 8080
   force_https = true

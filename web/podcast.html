@@ -559,6 +559,7 @@ async function start() {
       saved.add(p.chapter + ':' + p.index);
       $('#bar i').style.width = (100 * saved.size / plan.length) + '%';
     }
+    if (saved.size === plan.length) navigator.sendBeacon && navigator.sendBeacon('/api/hit', JSON.stringify({ e: 'podcast' }));
     st.textContent = saved.size === plan.length ? 'Done.' : `Paused. ${saved.size} of ${plan.length} parts are saved on this device.`;
   } catch (e) {
     const kept = `${saved.size} of ${plan.length} parts are saved on this device`;

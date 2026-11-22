@@ -45,6 +45,7 @@ import urllib.request
 import uuid
 
 import agentapi
+import analytics
 import billing
 import podcast
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -158,7 +159,7 @@ PLAIN_PAGES = {'/checkout'}
 WEB_PAGES = {'/': 'index.html', '/voxa.css': 'voxa.css', '/checkout': 'checkout.html', '/pricing': 'pricing.html', '/terms': 'terms.html',
              '/privacy': 'privacy.html', '/refunds': 'refunds.html', '/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
              '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html',
-             '/podcast': 'podcast.html', '/player': 'player.html', '/integrations': 'integrations.html', '/storage': 'storage.html', '/claude': 'integrations.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
+             '/podcast': 'podcast.html', '/player': 'player.html', '/integrations': 'integrations.html', '/storage': 'storage.html', '/stats': 'stats.html', '/claude': 'integrations.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
              '/listen': 'listen.html', '/listen.js': 'listen.js', '/manifest.webmanifest': 'manifest.webmanifest',
              '/lite.js': 'lite.js', '/hojo-text.js': 'hojo-text.js', '/hojo-worker.js': 'hojo-worker.js',
              '/tiny-voca-text.js': 'tiny-voca-text.js', '/tiny-voca-worker.js': 'tiny-voca-worker.js',
@@ -742,6 +743,7 @@ def identity_from_claims(claims, ip):
 
 _auth = None  # a TokenVerifier once sign-in is configured
 _agent_api = None  # agentapi.Api, started in main()
+_analytics = None  # analytics.Analytics: Voxa's own cookie-free visitor counter, started in main()
 MAX_AGENT_BODY = 2_000_000  # a whole book's text fits
 
 
@@ -1149,6 +1151,39 @@ class Handler(BaseHTTPRequestHandler):
         self._send(401, {'error': 'Your sign-in has expired. Please sign in again.'},
                    extra={'WWW-Authenticate': 'Bearer error="invalid_token"'})
 
+    def _count_view(self, path):
+        """Count a page view (never the stats page itself, nor prefetches). Never fails a page."""
+        if _analytics is None or path == '/stats' or self.headers.get('Sec-Purpose', '').startswith('prefetch') \
+                or self.headers.get('Purpose') == 'prefetch':
+            return
+        try:
+            _analytics.page(path, self._client_ip(), self.headers.get('User-Agent'), self.headers.get('Referer'),
+                            urlparse(self.path).query, self.headers.get('Fly-Region'))
+        except Exception:
+            log.exception('counting a page view failed')
+
+    def _small_json(self, limit=2048):
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            n = -1
+        if n < 0 or n > limit:
+            raise BadRequest('bad body')
+        try:
+            body = json.loads(self.rfile.read(n) or b'{}')
+        except ValueError:
+            raise BadRequest('The body must be JSON.')
+        return body if isinstance(body, dict) else {}
+
+    def _stats(self):
+        """GET /api/stats: the visitor counts, for the owner's API key only."""
+        auth = self.headers.get('Authorization', '')
+        key = auth[7:].strip() if auth.startswith('Bearer ') else ''
+        if _agent_api is None or _analytics is None or not _agent_api.keys.check(key):
+            return self._send(401, {'error': 'The owner key is needed.'}, extra={'WWW-Authenticate': 'Bearer'})
+        days = max(1, min(366, int((parse_qs(urlparse(self.path).query).get('days') or ['30'])[0] or 30)))
+        return self._send(200, _analytics.summary(days), extra={'Cache-Control': 'no-store'})
+
     def _client_ip(self):
         # Fly's proxy sets Fly-Client-IP to the real client address on every request.
         return (self.headers.get('Fly-Client-IP') or self.client_address[0]).strip()
@@ -1267,7 +1302,11 @@ class Handler(BaseHTTPRequestHandler):
             extra = {**({} if p in PLAIN_PAGES else ISOLATION), 'Cache-Control': 'no-cache'}
             if p == '/' and not self._visitor():
                 extra['Set-Cookie'] = self._new_visitor_cookie()
+            if ctype.startswith('text/html'):
+                self._count_view(p)
             return self._send(200, page, ctype, extra)
+        if p == '/api/stats':
+            return self._stats()
         if p == '/api/quota':
             who = self._identity()
             status = _quota.status(who) if _quota else None
@@ -1496,6 +1535,11 @@ class Handler(BaseHTTPRequestHandler):
         p = urlparse(self.path).path
         if p.startswith('/v1/') or p == '/mcp':
             return self._agent('POST')
+        if p == '/api/hit':   # "audio made" on a page: the event's name only, never any text
+            body = self._small_json()
+            if _analytics is not None:
+                _analytics.event(str(body.get('e', ''))[:20], self._client_ip(), self.headers.get('User-Agent'))
+            return self._send(204, b'')
         if ON_DEVICE_ONLY and (p in ('/api/jobs', '/api/tts') or p.startswith('/api/podcast/')):
             return self._send(403, {'error': STUDIO_OFF})
         if p.startswith('/api/billing/'):
@@ -1523,7 +1567,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global _auth, _quota, _podcast_quota, _jobs, _agent_api
+    global _auth, _quota, _podcast_quota, _jobs, _agent_api, _analytics
     if SUPABASE_URL and SUPABASE_ANON_KEY:
         _auth = TokenVerifier(SUPABASE_URL, SUPABASE_JWT_SECRET)
         log.info('sign-in enabled via %s', SUPABASE_URL)
@@ -1537,6 +1581,8 @@ def main():
         log.info('paid jobs go to the GPU service at %s', GPU_URL)
     _jobs.start()
     _agent_api = agentapi.Api(sys.modules[__name__])
+    _analytics = analytics.Analytics(DATA_DIR)
+    log.info('visitor counter: %s', os.path.join(DATA_DIR, 'analytics'))
     log.info('agent API (/v1, /mcp): %s', f'{len(_agent_api.keys.by_hash)} key(s)' if _agent_api.enabled else 'no keys set (VOXA_API_KEYS)')
     try:
         get_pipeline('a')  # warm English

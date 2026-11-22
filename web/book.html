@@ -491,6 +491,7 @@ async function start() {
       $('#bar i').style.width = (100 * saved.size / plan.length) + '%';
       if (OUT[c.chapter].done === OUT[c.chapter].total) await showChapter(c.chapter, plan);
     }
+    if (made && saved.size === plan.length) navigator.sendBeacon && navigator.sendBeacon('/api/hit', JSON.stringify({ e: 'audiobook' }));
     st.textContent = saved.size === plan.length ? `Done: ${Object.keys(OUT).length} chapter files, saved on this device.` : `Paused. ${saved.size} of ${plan.length} parts are saved on this device.`;
   } catch (e) {
     st.className = 'status' + (e.name === 'AbortError' ? '' : ' err');

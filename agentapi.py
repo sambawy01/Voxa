@@ -433,6 +433,7 @@ class Api:
         self.public_url = (public_url or os.environ.get('VOXA_PUBLIC_URL', '')).rstrip('/')
         self.secret = (secret or os.environ.get('VOXA_API_SECRET') or self._secret()).encode()
         self.jobs, self.lock, self.q = {}, threading.Lock(), queue.Queue()
+        self.save_lock = threading.Lock()   # the worker and request threads both save jobs
         self._restore()
         threading.Thread(target=self._worker, name='voxa-agent', daemon=True).start()
 
@@ -456,11 +457,12 @@ class Api:
         return os.path.join(self.data_dir, 'jobs', job_id)
 
     def _save(self, job):
-        os.makedirs(self._dir(job.id), exist_ok=True)
-        tmp = os.path.join(self._dir(job.id), 'job.json.tmp')
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(job.to_dict(), f, ensure_ascii=False)
-        os.replace(tmp, os.path.join(self._dir(job.id), 'job.json'))
+        with self.save_lock:
+            os.makedirs(self._dir(job.id), exist_ok=True)
+            tmp = os.path.join(self._dir(job.id), 'job.json.tmp')
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(job.to_dict(), f, ensure_ascii=False)
+            os.replace(tmp, os.path.join(self._dir(job.id), 'job.json'))
 
     def _restore(self):
         root = os.path.join(self.data_dir, 'jobs')

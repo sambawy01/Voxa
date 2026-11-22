@@ -161,7 +161,7 @@ WEB_PAGES = {'/': 'index.html', '/voxa.css': 'voxa.css', '/checkout': 'checkout.
              '/lite.js': 'lite.js', '/hojo-text.js': 'hojo-text.js', '/hojo-worker.js': 'hojo-worker.js',
              '/tiny-voca-text.js': 'tiny-voca-text.js', '/tiny-voca-worker.js': 'tiny-voca-worker.js',
              '/supertonic-worker.js': 'supertonic-worker.js', '/pocket-worker.js': 'pocket-worker.js',
-             '/kale-worker.js': 'kale-worker.js'}
+             '/kale-worker.js': 'kale-worker.js', '/kokoro-worker.js': 'kokoro-worker.js'}
 # Binary files from web/: the app icons for home screens.
 WEB_FILES = {'/apple-touch-icon.png': 'icons/apple-touch-icon.png', '/icons/icon-192.png': 'icons/icon-192.png',
              '/icons/icon-512.png': 'icons/icon-512.png'}
@@ -276,22 +276,23 @@ def load_lite(path=CATALOGUE_PATH, studio_ids=()):
     the multilingual engines (`engines`): Supertonic 3, Pocket TTS and Kale TTS nano, each
     voice offered in every language its engine speaks."""
     with open(path, encoding='utf-8') as f:
-        lite = json.load(f).get('lite')
+        doc = json.load(f)
+    lite = doc.get('lite')
     if not lite:
         return None
     base = f'https://huggingface.co/{lite["voices_repo"]}/resolve/{lite["revision"]}/'
     out = {lang: [] for lang in ALL_LANG_LABELS}
 
-    def add(v, engine, desktop=False, **extra):
-        """desktop: the engine needs a computer (a large download, WebGPU); its voices stay on
-        offer everywhere, marked so, rather than being hidden on phones."""
+    def add(v, engine, desktop=None, **extra):
+        """desktop: why the engine needs a computer (a large download, WebGPU); its voices stay
+        on offer everywhere, marked so, rather than being hidden on phones."""
         if v['lang'] not in ALL_LANG_LABELS:
             raise ValueError(f'Lite voice {v["id"]!r} has unknown language {v["lang"]!r}')
         out[v['lang']].append({
             'id': v['id'], 'name': v['name'], 'gender': v['gender'], 'lang': v['lang'], 'engine': engine,
             'description': ' · '.join([v['gender'].capitalize(), *([v['accent']] if v.get('accent') else []),
                                        *([v['age']] if v.get('age') else []),
-                                       'Desktop only: needs a computer with WebGPU' if desktop else 'On this device']),
+                                       f'Desktop only: {desktop}' if desktop else 'On this device']),
             **({'desktop': True} if desktop else {}), **extra})
 
     for v in lite['voices']:
@@ -355,8 +356,19 @@ def load_lite(path=CATALOGUE_PATH, studio_ids=()):
                                           and v['gender'] not in genders):
                     if not re.fullmatch(r'default_[0-9a-f]{16}', v['source']):
                         raise ValueError(f'ZONOS3 voice {v["id"]!r}: unexpected source {v["source"]!r}')
-                    add({**v, 'id': f'{v["id"]}-zo-{lang}', 'lang': lang}, 'zonos', desktop=zo.get('desktop', False),
+                    add({**v, 'id': f'{v["id"]}-zo-{lang}', 'lang': lang}, 'zonos', desktop=zo.get('desktop'),
                         source=v['source'], code=code, base=base, engine_url=f'/static/{ZONOS_WEB_DIR}/engine.js')
+
+    ko = engines.get('kokoro')
+    if ko:
+        root = f'https://huggingface.co/{ko["repo"]}/resolve/{ko["revision"]}/'
+        for v in doc.get('voices', []):
+            src = v['source']
+            if not (isinstance(src, str) and src[:3] in ko['studio_prefixes'] and re.fullmatch(r'[a-z]{2}_[a-z]+', src)):
+                continue   # English Kokoro voices only (blends and other languages need eSpeak)
+            add({'id': f'{v["id"]}-kokoro', 'name': v['name'], 'gender': v['gender'], 'lang': v['lang'],
+                 'accent': v.get('accent')}, 'kokoro', desktop=ko.get('desktop'), source=src,
+                url=f'{root}voices/{src}.bin', model=root + ko['model'])
 
     sm = engines.get('smoller')
     if sm:

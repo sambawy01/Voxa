@@ -1254,7 +1254,7 @@
     "about": "ZONOS3 Mini by Zyphra (weights Apache-2.0, browser engine MIT): 44 languages on WebGPU, about 1 GB on first use, so desktop only. Default voices with Voxa names where they would clash; Savannah and Wyatt also speak the languages without a native voice.",
     "repo": "Zyphra/ZONOS3-Mini",
     "revision": "2921b8821772b0bd10a04456863d21abf9d2f283",
-    "desktop": true,
+    "desktop": "needs a computer with WebGPU",
     "languages": {
      "a": "en_us",
      "b": "en_gb",
@@ -1364,8 +1364,8 @@
       "accent": "Announcer"
      },
      {
-      "id": "willow",
-      "name": "Willow",
+      "id": "elowen",
+      "name": "Elowen",
       "source": "default_940eaff39a929da0",
       "gender": "female",
       "langs": [
@@ -1557,6 +1557,19 @@
        "te"
       ]
      }
+    ]
+   },
+   "kokoro": {
+    "about": "Kokoro-82M by hexgrad (Apache-2.0): the Studio catalogue's English voices, with their Voxa names, run on the device. The float32 model is 325 MB, so desktop only. Pronunciation from Kale TTS nano's front end (no eSpeak).",
+    "repo": "onnx-community/Kokoro-82M-v1.0-ONNX",
+    "revision": "1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+    "model": "onnx/model.onnx",
+    "desktop": "a 325 MB download, for computers",
+    "studio_prefixes": [
+     "af_",
+     "am_",
+     "bf_",
+     "bm_"
     ]
    }
   }

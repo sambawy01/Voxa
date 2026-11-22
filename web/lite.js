@@ -9,12 +9,13 @@
 //   language from Hugging Face, run by a Candle WebAssembly build in web/pocket-worker.js.
 //   Kale TTS nano (KaleComputer, English, ten voices): ~25 MB, static/, web/kale-worker.js.
 //   SmollerTTS (2.8M, English, one voice): ~30 MB with its own runtime, run by its own worker in static/.
+//   Kokoro-82M (hexgrad, 28 English voices): 325 MB, desktop only; web/kokoro-worker.js, with Kale's front end.
 //   ZONOS3 Mini (Zyphra, 44 languages): WebGPU only and ~1 GB on first use, so its voices are marked
 //   desktop only; Zyphra's own browser engine (static/, from vendor/zonos3-web) loads the weights.
 // Each engine loads the first time one of its voices speaks, then comes from the cache.
 import { normalizeForHojo, splitForHojo } from '/hojo-text.js';
 
-const ABOUT_MB = { phonon: 65, hojo: 126, tinyvoca: 50, supertonic: 111, pocket: 140, kale: 29, smoller: 30 };
+const ABOUT_MB = { phonon: 65, hojo: 126, tinyvoca: 50, supertonic: 111, pocket: 140, kale: 29, smoller: 30, kokoro: 326 };
 
 function statusText(engine, files, cached) {
   const mb = Object.values(files).reduce((a, b) => a + b, 0) / 1e6;
@@ -101,6 +102,15 @@ class Kale extends WorkerEngine {
   async synth(text, voice, { signal }) {
     await this.ready;
     return this.piece(text, { source: voice.source }, {}, signal);
+  }
+}
+
+// Kokoro (desktop only): the 325 MB model loads on the first speak; English, US and UK.
+class Kokoro extends WorkerEngine {
+  constructor() { super('kokoro', '/kokoro-worker.js', { type: 'module' }); }
+  async synth(text, voice, { signal }) {
+    await this.ready;
+    return this.piece(text, { lang: voice.lang, url: voice.url, model: voice.model }, {}, signal);
   }
 }
 
@@ -223,7 +233,7 @@ class Zonos {
 export function createLite(config) {
   let phonon = null, hojo = null, tinyVoca = null;
   const workers = {};  // supertonic, pocket, kale: started on first use
-  const KINDS = { supertonic: Supertonic, pocket: Pocket, kale: Kale };
+  const KINDS = { supertonic: Supertonic, pocket: Pocket, kale: Kale, kokoro: Kokoro };
   const phononVoices = new Set();
 
   async function phononEngine(status) {

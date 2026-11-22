@@ -1,12 +1,18 @@
 # The Voxa API for AI agents
 
-AI agents (Claude and others) can use Voxa in three ways, all from the same code (`agentapi.py`):
+AI assistants (Claude, ChatGPT and any other) can use Voxa for free; the website's
+**MCP & API** page (`/integrations`) shows users how. Everything public runs on the user's own
+device, so it needs no key and costs Voxa's server nothing. All of it is one file, `agentapi.py`.
 
 | | Where the voices run | Key | Gives |
 |---|---|---|---|
-| **Player in the chat** (`play_on_device`) | the user's browser, inside the Claude chat | none | plays at once; Save MP3 |
+| **Player in the chat** (MCP `play_on_device`) | the user's browser, inside the chat | none | plays at once; Save MP3 |
+| **Player link** (REST `POST /v1/play`, OpenAPI) | the browser of whoever opens it | none | a link to the player |
 | **Voxa on your computer** (local MCP server) | the user's computer | none | MP3 files in a folder |
-| **Voxa's server** (MCP at `/mcp`, REST at `/v1/`) | Voxa's server | API key | MP3/WAV links to share |
+| **Voxa's server** (private) | Voxa's server | owner's key | MP3/WAV links to share |
+
+Without a key, `/mcp` lists only the free tools and `/v1/docs` describes only the free API; the
+server's own generation is private to holders of a key (the owner).
 
 ## Player in the chat: free, on the user's device
 
@@ -25,8 +31,25 @@ Chat apps that do not show MCP Apps get a link instead that opens the same playe
 Some chat apps block downloads inside the chat; the player's **Open in Voxa** button opens it
 in a browser tab, where Save MP3 works.
 
-Connect it like the server below, with or without a key (without one, only these two tools work):
-`https://voxa-zpukmw.fly.dev/mcp`.
+Connect with no key: `https://voxa-zpukmw.fly.dev/mcp` (Claude: Settings → Connectors → Add custom
+connector; other apps: a remote Streamable HTTP server).
+
+## Player link: REST, for any AI
+
+For AIs without MCP (a custom GPT, a script, your own app). No key.
+
+```bash
+curl https://voxa-zpukmw.fly.dev/v1/play -H 'Content-Type: application/json' \
+     -d '{"script": "Maya: Welcome!\nLeo: Thanks, Maya.", "style": "expressive"}'
+# {"player_url": "https://voxa-zpukmw.fly.dev/player#d=...", "speakers": [...], "minutes": 0.1, ...}
+curl 'https://voxa-zpukmw.fly.dev/v1/device/voices?language=ar'
+```
+
+Same arguments as `play_on_device`. Short scripts travel inside the link after `#` (never sent
+to a server); longer ones are stored as text for 30 days (newest 5,000) and the link becomes
+`/player?p=<id>` (`GET /v1/play/<id>` returns the script). `GET /openapi.json` describes these two
+endpoints (operationIds `playPodcast`, `listVoices`), so a custom GPT can import it as an action
+with no authentication.
 
 ## Voxa on your computer (Claude Desktop, Claude Code)
 
@@ -58,9 +81,9 @@ Locally there is no key and no daily limit. The tools are the server's (below), 
 `files` (paths on the computer) instead of links. Voices are Supertonic 3's ten, in 31
 languages; the Studio (Kokoro) voices are server-only. `play_on_device` works here too.
 
-## Voxa's server
+## Voxa's server (private: owner's key)
 
-An agent calling Voxa's server gets the audio made there, with:
+With a key, an agent can have Voxa's server make the audio, with:
 
 - **Supertonic 3** (Supertone, OpenRAIL-M): 31 languages, ten voices (`lina-a`, `adam-a`,
   `amira-ar`, ...), about 4-5x faster than real time per CPU core.

@@ -310,6 +310,48 @@ class LocalTest(unittest.TestCase):
                          {'sha256': hashlib.sha256(b'{}').hexdigest(), 'size': 2})
 
 
+class FreeRestTest(unittest.TestCase):
+    """The free REST API: a player link for any AI (custom GPTs, scripts), with no key."""
+    def test_play_link_voices_openapi(self):
+        api = make_api()
+        status, out, _, _ = api.rest('POST', '/v1/play', {}, {'script': SCRIPT, 'style': 'natural'}, None, 'https://v.test')
+        self.assertEqual(status, 200)
+        self.assertTrue(out['player_url'].startswith('https://v.test/player#d='))
+        self.assertEqual([s['voice'] for s in out['speakers']], ['wren', 'calvin'])
+        langs = api.rest('GET', '/v1/device/voices', {}, {}, None, 'https://v.test')[1]
+        self.assertIn('languages', langs)
+        ar = api.rest('GET', '/v1/device/voices', {'language': ['ar']}, {}, None, 'https://v.test')[1]
+        self.assertTrue(all(v['language'] == 'ar' for v in ar['voices']))
+        spec = api.rest('GET', '/v1/openapi.json', {}, {}, None, 'https://v.test')[1]
+        self.assertEqual(spec['servers'], [{'url': 'https://v.test'}])
+        self.assertEqual(spec['paths']['/v1/play']['post']['operationId'], 'playPodcast')
+        with self.assertRaises(agentapi.ApiError):
+            api.rest('POST', '/v1/play', {}, {}, None, 'https://v.test')
+
+    def test_long_scripts_get_a_short_stored_link(self):
+        api = make_api()
+        script = '# Long\n' + '\n'.join(f'{"Maya" if i % 2 else "Leo"}: line number {i} of a long episode, with words.' for i in range(300))
+        url = api.rest('POST', '/v1/play', {}, {'script': script}, None, 'https://v.test')[1]['player_url']
+        self.assertRegex(url, r'^https://v\.test/player\?p=[0-9a-f]{16}$')
+        data = json.loads(api.rest('GET', '/v1/play/' + url[-16:], {}, {}, None, 'https://v.test')[1])
+        self.assertEqual(data['title'], 'Long')
+        self.assertEqual(len(data['lines']), 300)
+        with self.assertRaises(agentapi.ApiError):
+            api.stored_play('0' * 16)
+        with self.assertRaises(agentapi.ApiError):
+            api.stored_play('../secret')
+
+    def test_docs_are_public_and_the_server_api_private(self):
+        api = make_api()
+        public = api.rest('GET', '/v1/docs', {}, {}, None, 'https://v.test')[1]
+        self.assertTrue(public['free'])
+        self.assertNotIn('create_podcast', json.dumps(public))
+        private = api.rest('GET', '/v1/docs', {}, {}, KEY, 'https://v.test')[1]
+        self.assertIn('create_podcast', private['tools'])
+        with self.assertRaises(agentapi.ApiError):                       # the server's own API needs the key
+            api.rest('POST', '/v1/podcasts', {}, {'script': SCRIPT}, None, 'https://v.test')
+
+
 class HttpTest(unittest.TestCase):
     """The routes through the real server, which hands /v1 and /mcp to the agent API."""
 
@@ -360,6 +402,12 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(self.req(f'/v1/jobs/{job_id}', method='DELETE')[0], 200)
         self.assertEqual(self.req('/v1/podcasts', {'script': SCRIPT})[0], 400)
         self.assertEqual(self.req('/v1/nothing')[0], 404)
+        code, _, body = self.req('/openapi.json', key=None)
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body)['openapi'], '3.1.0')
+        code, _, body = self.req('/v1/play', {'text': 'Hello there.'}, key=None)
+        self.assertEqual(code, 200)
+        self.assertIn('/player#d=', json.loads(body)['player_url'])
         code, headers, body = self.req('/voxa-mcp.py', key=None)
         self.assertEqual(code, 200)
         self.assertTrue(headers['Content-Type'].startswith('text/x-python'))

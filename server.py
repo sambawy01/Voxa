@@ -158,7 +158,7 @@ PLAIN_PAGES = {'/checkout'}
 WEB_PAGES = {'/': 'index.html', '/voxa.css': 'voxa.css', '/checkout': 'checkout.html', '/pricing': 'pricing.html', '/terms': 'terms.html',
              '/privacy': 'privacy.html', '/refunds': 'refunds.html', '/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
              '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html',
-             '/podcast': 'podcast.html', '/player': 'player.html', '/claude': 'claude.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
+             '/podcast': 'podcast.html', '/player': 'player.html', '/integrations': 'integrations.html', '/claude': 'integrations.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
              '/listen': 'listen.html', '/listen.js': 'listen.js', '/manifest.webmanifest': 'manifest.webmanifest',
              '/lite.js': 'lite.js', '/hojo-text.js': 'hojo-text.js', '/hojo-worker.js': 'hojo-worker.js',
              '/tiny-voca-text.js': 'tiny-voca-text.js', '/tiny-voca-worker.js': 'tiny-voca-worker.js',
@@ -1236,6 +1236,9 @@ class Handler(BaseHTTPRequestHandler):
     def _get(self):
         p = urlparse(self.path).path
         if p.startswith('/v1/') or p == '/mcp':
+            return self._agent('GET')
+        if p == '/openapi.json':
+            self.path = '/v1/openapi.json'
             return self._agent('GET')
         if p == '/voxa-mcp.py':
             # The local MCP server for Claude Desktop/Code is agentapi.py itself:

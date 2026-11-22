@@ -950,22 +950,63 @@ class Api:
                 'chapters': [c['title'] for c in chapters], 'speakers': speakers, 'lines': lines,
                 'characters': n, 'minutes': round(n / 15 / 60, 1), 'site': base}
 
+    PLAYER_KEYS = ('title', 'style', 'temperature', 'pause', 'chapters', 'speakers', 'lines')
+    MAX_PLAYS = 5000                  # stored scripts for long player links; the oldest go first
+
+    def player_link(self, d, base):
+        """A link that opens the player with this script. Short scripts travel in the link itself (after #, so
+        they never reach a server); long ones are kept here as text, 30 days, and the link carries an id."""
+        data = json.dumps({k: d[k] for k in self.PLAYER_KEYS}, ensure_ascii=False, separators=(',', ':'))
+        link = base + '/player#d=' + _b64(data)
+        if len(link) <= 6000:
+            return link
+        folder = os.path.join(self.data_dir, 'plays')
+        os.makedirs(folder, exist_ok=True)
+        old = sorted((os.path.getmtime(os.path.join(folder, n)), n) for n in os.listdir(folder))
+        for t, n in old[:max(0, len(old) - self.MAX_PLAYS + 1)] + [x for x in old if x[0] < time.time() - 30 * 86400]:
+            try:
+                os.remove(os.path.join(folder, n))
+            except OSError:
+                pass
+        pid = uuid.uuid4().hex[:16]
+        with open(os.path.join(folder, pid + '.json'), 'w', encoding='utf-8') as f:
+            f.write(data)
+        return f'{base}/player?p={pid}'
+
+    def stored_play(self, pid):
+        if not re.fullmatch(r'[0-9a-f]{16}', pid or ''):
+            raise ApiError(404, 'Not found.')
+        try:
+            with open(os.path.join(self.data_dir, 'plays', pid + '.json'), 'rb') as f:
+                return f.read()
+        except OSError:
+            raise ApiError(404, 'This player link has expired. Ask the AI to make it again.') from None
+
     def device_summary(self, d, base):
         who = ', '.join(f"{s['name']} ({s['voice_name']}{', desktop only' if s['desktop'] else ''})" for s in d['speakers'])
-        link = base + '/player#d=' + _b64(json.dumps({k: d[k] for k in ('title', 'style', 'temperature', 'pause', 'chapters', 'speakers', 'lines')},
-                                                     ensure_ascii=False, separators=(',', ':')))
+        link = self.player_link(d, base)
         out = (f'The Voxa player is showing "{d["title"]}" in the chat: {len(d["lines"])} lines, '
                f'{"about %s minutes" % d["minutes"] if d["minutes"] >= 1 else "under a minute"}, '
                f'voices: {who}. It makes the audio in the user\'s own browser, so nothing is sent to a server and there is '
                'no limit; the first time, the browser downloads the voices (tens of MB). The user presses Play, '
                'and can save an MP3 when it is done.')
-        if len(link) < 30000:
-            out += f' If no player appears (an app without MCP Apps), give the user this link, which opens the same player on Voxa: {link}'
-        return out
+        return out + f' If no player appears (an app without MCP Apps), give the user this link, which opens the same player on Voxa: {link}'
 
-    def docs(self, base):
-        """GET /v1/docs: what an agent can do here (no key needed to read it)."""
-        return {'name': 'Voxa API', 'mcp': f'{base}/mcp', 'auth': 'Authorization: Bearer <key> (MCP also accepts ?key=<key>)',
+    def public_docs(self, base):
+        return {'name': 'Voxa API', 'free': True,
+                'about': "Voxa's voices run in the user's own browser or computer: free, no key, no limit.",
+                'mcp': f'{base}/mcp', 'openapi': f'{base}/openapi.json', 'local_mcp': f'uv run {base}/voxa-mcp.py',
+                'endpoints': {
+                    'POST /v1/play {script | text, voices?, voice?, language?, style?, title?}':
+                        'a link to the Voxa player, which makes and plays the audio in the browser',
+                    'GET /v1/device/voices?language=&gender=': 'the on-device voices (no language: the languages)'},
+                'tools': [t['name'] for t in self.DEVICE_TOOLS], 'instructions': self.DEVICE_INSTRUCTIONS}
+
+    def docs(self, base, key=None):
+        """GET /v1/docs: the free API; with a key, also the server's own (private) API."""
+        if not self.keys.check(key):
+            return self.public_docs(base)
+        return {'name': 'Voxa API', 'free_api': self.public_docs(base), 'mcp': f'{base}/mcp', 'auth': 'Authorization: Bearer <key> (MCP also accepts ?key=<key>)',
                 'endpoints': {
                     'GET /v1/languages': 'languages and how many voices each has',
                     'GET /v1/voices?language=&engine=&gender=': 'voices to choose from',
@@ -979,10 +1020,57 @@ class Api:
                     'GET /v1/jobs/{id}/audio.mp3|wav?token=': 'the finished audio (signed link, no key needed)'},
                 'tools': [t['name'] for t in self.DEVICE_TOOLS + self.TOOLS], 'instructions': self.INSTRUCTIONS}
 
+    def openapi(self, base):
+        """OpenAPI 3.1 for the free endpoints, e.g. for a custom GPT's actions."""
+        play = next(t for t in self.DEVICE_TOOLS if t['name'] == 'play_on_device')
+        return {
+            'openapi': '3.1.0',
+            'info': {'title': 'Voxa', 'version': '1.0.0',
+                     'description': "Voxa reads podcasts and texts aloud with voices that run in the user's own browser. "
+                                    'Free, no key. Call playPodcast with a script, then give the user player_url.'},
+            'servers': [{'url': base}],
+            'paths': {
+                '/v1/play': {'post': {
+                    'operationId': 'playPodcast',
+                    'summary': 'Get a link to the Voxa player for a podcast script or a text',
+                    'description': 'Write the script with one turn per line as "Name: what they say" (optional "# Title" and '
+                                   '"## Part" headings), or give "text" to read with one voice. Returns player_url: the '
+                                   "user opens it and presses Play; the audio is made in their browser. Voices are synthetic.",
+                    'requestBody': {'required': True, 'content': {'application/json': {'schema': play['inputSchema']}}},
+                    'responses': {'200': {'description': 'The player link', 'content': {'application/json': {'schema': {
+                        'type': 'object', 'properties': {
+                            'player_url': {'type': 'string'}, 'title': {'type': 'string'}, 'lines': {'type': 'integer'},
+                            'minutes': {'type': 'number'},
+                            'speakers': {'type': 'array', 'items': {'type': 'object', 'properties': {
+                                'name': {'type': 'string'}, 'voice': {'type': 'string'}, 'voice_name': {'type': 'string'}}}}}}}}},
+                                  '400': {'description': 'Something to fix, in "error"'}}}},
+                '/v1/device/voices': {'get': {
+                    'operationId': 'listVoices',
+                    'summary': 'On-device voices for a language, or the languages when none is given',
+                    'parameters': [
+                        {'name': 'language', 'in': 'query', 'schema': {'type': 'string'},
+                         'description': 'e.g. "a" US English, "b" British English, "ar" Arabic, "f" French, "de" German'},
+                        {'name': 'gender', 'in': 'query', 'schema': {'type': 'string', 'enum': ['female', 'male']}}],
+                    'responses': {'200': {'description': 'Voices or languages', 'content': {'application/json': {'schema': {'type': 'object'}}}}}}},
+            }}
+
     def rest(self, method, path, query, body, key, base):
         """Returns (status, body, content_type, headers)."""
         if method == 'GET' and path == '/v1/docs':
-            return 200, self.docs(base), None, None
+            return 200, self.docs(base, key), None, None
+        if method == 'GET' and path == '/v1/openapi.json':
+            return 200, self.openapi(base), None, None
+        if method == 'POST' and path == '/v1/play':
+            d = self.device_play(base, body or {})
+            return 200, {'player_url': self.player_link(d, base), 'title': d['title'], 'speakers': d['speakers'],
+                         'lines': len(d['lines']), 'minutes': d['minutes'],
+                         'note': "Give the user player_url: the audio is made in their browser when they press Play."}, None, None
+        if method == 'GET' and path == '/v1/device/voices':
+            q = lambda k: (query.get(k) or [None])[0]
+            return 200, self._device_call(base, 'list_device_voices', {'language': q('language'), 'gender': q('gender')}), None, None
+        m = re.fullmatch(r'/v1/play/([0-9a-f]{16})', path)
+        if m and method == 'GET':
+            return 200, self.stored_play(m.group(1)), 'application/json', {'Cache-Control': 'public, max-age=86400'}
         if method == 'GET' and path == '/v1/local':
             return 200, self.local_manifest(base), None, None
         m = re.fullmatch(r'/v1/jobs/([0-9a-f]{16})/audio\.(wav|mp3)', path)

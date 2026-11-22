@@ -232,7 +232,7 @@ const voiceInfo = id => liteVoices().find(v => v.id === id) || (VOICES.catalogue
 
 function fillVoices(selected) {
   const k = $('#lang').value, lite = liteVoices(), studio = VOICES.catalogue[k] || [];
-  const opt = v => el('option', { value: v.id, textContent: v.name + (v.signature ? ' ✦' : ''), selected: v.id === selected });
+  const opt = v => el('option', { value: v.id, textContent: v.name + (v.signature ? ' ✦' : '') + (v.desktop ? ' · desktop only' : ''), selected: v.id === selected });
   const groups = [];
   // On-device first: whole books cost nothing and never hit a daily limit.
   if (lite.length) groups.push(el('optgroup', { label: 'On this device · free, no daily limit' }, ...lite.map(opt)));

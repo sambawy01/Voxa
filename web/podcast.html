@@ -45,7 +45,7 @@ ol.saved li{background:var(--surface);border:1px solid var(--line);border-radius
     <span class="pill server-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>PDF, PowerPoint or text</span>
     <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.8"/><path d="M16 14.2a5.5 5.5 0 0 1 5.5 5.8"/></svg><span class="server-only">Two hosts, your focus</span><span class="ondevice-only">Two hosts, any topic</span></span>
     <span class="pill server-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>Nine languages</span>
-    <span class="pill ondevice-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>33 languages</span>
+    <span class="pill ondevice-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>49 languages</span>
     <span class="pill ondevice-only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>On your device, free</span>
   </div>
 </section>
@@ -288,7 +288,7 @@ function fillVoices(sel = {}) {
   const lists = { A: listFor('A'), B: listFor('B') };
   const groups = all => {
     const lite = all.filter(v => v.lite), studio = all.filter(v => !v.lite);
-    const opt = v => el('option', { value: v.id, textContent: `${v.name} · ${v.gender === 'male' ? 'man' : v.gender === 'female' ? 'woman' : 'neutral'}` });
+    const opt = v => el('option', { value: v.id, textContent: `${v.name} · ${v.gender === 'male' ? 'man' : v.gender === 'female' ? 'woman' : 'neutral'}` + (v.desktop ? ' · desktop only' : '') });
     const out = [];
     if (lite.length) out.push(el('optgroup', { label: 'On this device · free, no daily limit' }, ...lite.map(opt)));
     if (studio.length) out.push(el('optgroup', { label: 'Studio voices' }, ...studio.map(opt)));

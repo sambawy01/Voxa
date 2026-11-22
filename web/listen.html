@@ -213,7 +213,7 @@ async function setupVoices() {
 
 function fillVoices() {
   const lang = $('#lang').value, all = voicesFor(lang);
-  const opt = v => Object.assign(document.createElement('option'), { value: v.id, textContent: `${v.name} · ${v.gender === 'male' ? 'man' : v.gender === 'female' ? 'woman' : 'neutral'}` });
+  const opt = v => Object.assign(document.createElement('option'), { value: v.id, textContent: `${v.name} · ${v.gender === 'male' ? 'man' : v.gender === 'female' ? 'woman' : 'neutral'}` + (v.desktop ? ' · desktop only' : '') });
   const group = (label, list) => { const g = document.createElement('optgroup'); g.label = label; g.append(...list.map(opt)); return g; };
   const studio = all.filter(v => !v.lite), lite = all.filter(v => v.lite);
   // Studio first: it starts fastest and keeps reading with the screen locked, which matters in a car.

@@ -8,10 +8,14 @@
 //   Pocket TTS (Kyutai; English, French, German, Spanish, Portuguese, Italian): ~134 MB per
 //   language from Hugging Face, run by a Candle WebAssembly build in web/pocket-worker.js.
 //   Kale TTS nano (KaleComputer, English, ten voices): ~25 MB, static/, web/kale-worker.js.
+//   SmollerTTS (2.8M, English, one voice): ~30 MB with its own runtime, run by its own worker in static/.
+//   Kokoro-82M (hexgrad, 28 English voices): 325 MB, desktop only; web/kokoro-worker.js, with Kale's front end.
+//   ZONOS3 Mini (Zyphra, 44 languages): WebGPU only and ~1 GB on first use, so its voices are marked
+//   desktop only; Zyphra's own browser engine (static/, from vendor/zonos3-web) loads the weights.
 // Each engine loads the first time one of its voices speaks, then comes from the cache.
 import { normalizeForHojo, splitForHojo } from '/hojo-text.js';
 
-const ABOUT_MB = { phonon: 65, hojo: 126, tinyvoca: 50, supertonic: 111, pocket: 140, kale: 25 };
+const ABOUT_MB = { phonon: 65, hojo: 126, tinyvoca: 50, supertonic: 111, pocket: 140, kale: 29, smoller: 30, kokoro: 326 };
 
 function statusText(engine, files, cached) {
   const mb = Object.values(files).reduce((a, b) => a + b, 0) / 1e6;
@@ -101,6 +105,15 @@ class Kale extends WorkerEngine {
   }
 }
 
+// Kokoro (desktop only): the 325 MB model loads on the first speak; English, US and UK.
+class Kokoro extends WorkerEngine {
+  constructor() { super('kokoro', '/kokoro-worker.js', { type: 'module' }); }
+  async synth(text, voice, { signal }) {
+    await this.ready;
+    return this.piece(text, { lang: voice.lang, url: voice.url, model: voice.model }, {}, signal);
+  }
+}
+
 // Pocket TTS keeps one language's model loaded; another language's voice swaps it in.
 class Pocket extends WorkerEngine {
   constructor() { super('pocket', '/pocket-worker.js', { type: 'module' }); }
@@ -111,6 +124,108 @@ class Pocket extends WorkerEngine {
   }
 }
 
+// Linear-phase windowed-sinc resampler for engines that are not 24 kHz (SmollerTTS: 22.05 kHz).
+function resample(x, from, to) {
+  if (from === to) return x;
+  const ratio = to / from, n = Math.floor(x.length * ratio), out = new Float32Array(n);
+  const cutoff = Math.min(1, ratio) * 0.97, half = 16 / cutoff;
+  for (let i = 0; i < n; i++) {
+    const t = i / ratio, lo = Math.max(0, Math.ceil(t - half)), hi = Math.min(x.length - 1, Math.floor(t + half));
+    let acc = 0, norm = 0;
+    for (let j = lo; j <= hi; j++) {
+      const d = j - t, a = Math.PI * d * cutoff, s = d === 0 ? 1 : Math.sin(a) / a;
+      const w = 0.42 + 0.5 * Math.cos(Math.PI * d / half) + 0.08 * Math.cos(2 * Math.PI * d / half);
+      acc += x[j] * s * w; norm += s * w;
+    }
+    out[i] = norm ? acc / norm : 0;
+  }
+  return out;
+}
+
+// SmollerTTS runs its own released worker, which streams a text's audio in chunks at 22.05 kHz.
+class Smoller {
+  constructor(url) {
+    this.worker = new Worker(url, { type: 'module' });
+    this.onStatus = () => {};
+    this.jobs = new Map(); this.next = 1;
+    this.ready = new Promise((resolve, reject) => {
+      this.worker.onmessage = ({ data }) => {
+        if (data.type === 'ready') return resolve();
+        if (data.type === 'load-error') return reject(new Error(data.message));
+        const job = this.jobs.get(data.id);
+        if (!job) return;
+        if (data.type === 'chunk') job.parts.push(data.wave);
+        else if (data.type === 'complete' || data.type === 'cancelled' || data.type === 'error') {
+          this.jobs.delete(data.id);
+          if (data.type === 'error') job.reject(new Error(data.message));
+          else if (data.type === 'cancelled') job.reject(new DOMException('Cancelled', 'AbortError'));
+          else {
+            const gap = new Float32Array(Math.round(22050 * 0.12)), all = [];
+            job.parts.forEach((p, i) => { if (i) all.push(gap); all.push(p); });
+            const pcm = new Float32Array(all.reduce((a, p) => a + p.length, 0));
+            let at = 0; for (const p of all) { pcm.set(p, at); at += p.length; }
+            job.resolve(resample(pcm, 22050, 24000));
+          }
+        }
+      };
+      this.worker.onerror = e => reject(new Error(e.message || 'The on-device voice could not start.'));
+    });
+    this.onStatus('Downloading the on-device voice (once)… about 30 MB');
+  }
+  async synth(text, voice, { signal }) {
+    await this.ready;
+    const id = this.next++;
+    return new Promise((resolve, reject) => {
+      this.jobs.set(id, { resolve, reject, parts: [] });
+      signal?.addEventListener('abort', () => this.worker.postMessage({ type: 'cancel', id }), { once: true });
+      this.worker.postMessage({ type: 'generate', id, text, controls: {} });
+    });
+  }
+}
+
+// ZONOS3 Mini: Zyphra's engine serves its HTTP API in-process; one sentence or so per request.
+class Zonos {
+  constructor(url, base) {
+    this.onStatus = () => {};
+    this.ready = (async () => {
+      if (!navigator.gpu) throw new Error('This voice needs WebGPU: use Chrome, Edge or Safari on a desktop or laptop computer.');
+      this.m = await import(url);
+      await this.m.engine.init(p => {
+        if (!p.total) return;
+        this.onStatus(p.fetched ? `Downloading the desktop voice (once)… ${(p.loaded / 1e6).toFixed(0)} MB of ${(p.total / 1e6).toFixed(0)}`
+          : 'Loading the desktop voice…');
+      }, { base });
+    })();
+  }
+  async piece(text, voice, seed, signal) {
+    const r = await this.m.localFetch('/v2/generate', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, language: voice.code, speaker_embedding_id: voice.source, stream: false, format: 'pcm',
+        seed: Number(BigInt.asUintN(32, BigInt(Math.floor(seed)))) }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `The desktop voice failed (${r.status}).`);
+    const rate = +(r.headers.get('x-audio-sample-rate') || 44100);
+    return resample(new Float32Array(await r.arrayBuffer()), rate, 24000);
+  }
+  async synth(text, voice, { seed = 4242, signal }) {
+    await this.ready;
+    this.onStatus('Speaking with the desktop voice on your graphics card…');
+    const parts = text.replace(/\s+/g, ' ').trim().match(/[^.!?。！？؟।]+[.!?。！？؟।]*["'”’)\]]*\s*/g) || [text];
+    const chunks = [];
+    let buf = '';
+    for (const s of parts) { if ((buf + s).length > 300 && buf) { chunks.push(buf.trim()); buf = s; } else buf += s; }
+    if (buf.trim()) chunks.push(buf.trim());
+    const gap = new Float32Array(Math.round(24000 * 0.2)), out = [];
+    for (const [i, c] of chunks.entries()) {
+      if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+      if (i) out.push(gap);
+      if (chunks.length > 1) this.onStatus(`Speaking with the desktop voice… part ${i + 1} of ${chunks.length}`);
+      out.push(await this.piece(c, voice, seed + i, signal));
+    }
+    const pcm = new Float32Array(out.reduce((a, p) => a + p.length, 0));
+    let at = 0; for (const p of out) { pcm.set(p, at); at += p.length; }
+    return pcm;
+  }
+}
+
 /**
  * The on-device voices for a page. config() returns the page's /api/voices answer (its
  * `lite` section and `phonon_version`); voices are entries of config().lite.voices.
@@ -118,7 +233,7 @@ class Pocket extends WorkerEngine {
 export function createLite(config) {
   let phonon = null, hojo = null, tinyVoca = null;
   const workers = {};  // supertonic, pocket, kale: started on first use
-  const KINDS = { supertonic: Supertonic, pocket: Pocket, kale: Kale };
+  const KINDS = { supertonic: Supertonic, pocket: Pocket, kale: Kale, kokoro: Kokoro };
   const phononVoices = new Set();
 
   async function phononEngine(status) {
@@ -147,6 +262,20 @@ export function createLite(config) {
         hojo.onStatus = status;
         try { await hojo.ready; } catch (e) { hojo = null; throw e; }
         return hojo.synth(text, voice.source, voice.lang, { temperature: hojoTemperature(temperature), seed, signal });
+      }
+      if (voice.engine === 'zonos') {
+        const e = workers.zonos ||= new Zonos(voice.engine_url, voice.base);
+        e.onStatus = status;
+        status('Loading the desktop voice…');
+        try { await e.ready; } catch (err) { delete workers.zonos; throw err; }
+        return e.synth(text, voice, { seed, signal });
+      }
+      if (voice.engine === 'smoller') {
+        const e = workers.smoller ||= new Smoller(voice.worker);
+        e.onStatus = status;
+        status('Loading the on-device voice…');
+        try { await e.ready; } catch (err) { delete workers.smoller; throw err; }
+        return e.synth(text, voice, { signal });
       }
       if (KINDS[voice.engine]) {
         const e = workers[voice.engine] ||= new KINDS[voice.engine]();

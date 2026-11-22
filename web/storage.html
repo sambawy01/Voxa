@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Voxa · Downloaded voices and storage</title>
+<meta name="description" content="See which voice models Voxa has saved on this device, how much space each takes, and delete any of them.">
+{{HEAD}}<style>
+.total{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.total b{font:900 40px/1 var(--font-display);font-variant-numeric:tabular-nums}
+.meter{height:8px;border-radius:8px;background:rgba(255,255,255,.07);overflow:hidden;margin:14px 0 6px}
+.meter i{display:block;height:100%;width:0;background:var(--grad)}
+.list{display:flex;flex-direction:column;gap:10px;margin:0;padding:0;list-style:none}
+.doc-body .list{padding:0 !important}
+.doc-body .list li{margin:0}
+.model{display:flex;align-items:center;gap:14px;border:1px solid var(--line);border-radius:16px;padding:14px 16px;background:var(--surface)}
+.model .what{flex:1;min-width:0}
+.model b{display:block;font:750 16px var(--font-display)}
+.model small{display:block;color:var(--dim);font-size:13px}
+.model .size{font:800 16px var(--font-display);font-variant-numeric:tabular-nums;white-space:nowrap}
+button.del,button.main{font:750 14px var(--font-display);border-radius:12px;padding:10px 14px;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink)}
+button.del:hover{border-color:var(--bad,#f87171);color:var(--bad,#f87171)}
+button.main{background:var(--grad);border:0;color:#fff}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.dim{color:var(--dim)}
+#status{min-height:20px;font-size:14px;color:#c4b5fd}
+.empty{color:var(--dim);padding:6px 0}
+</style></head>
+<body data-page="storage" data-mode="{{MODE}}">
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+</div></header>
+<main class="wrap doc">
+<section class="hero">
+  <span class="eyebrow"><span class="dot"></span>This device</span>
+  <h1 class="display sm"><span class="grad-text">Downloaded voices</span></h1>
+  <p class="lead">Voxa downloads each voice model once and keeps one copy on this device, so it works offline and
+    starts fast next time. Here you can see what is saved and delete what you don't use.</p>
+</section>
+
+<section class="card flat doc-body">
+  <div class="total"><b id="total">…</b><span class="dim" id="totalnote">of voice models on this device</span></div>
+  <div class="meter" aria-hidden="true"><i id="meter"></i></div>
+  <p class="dim" id="quota" style="margin:0"></p>
+  <ul class="list" id="list" style="margin-top:16px"><li class="empty">Looking…</li></ul>
+  <div class="row" style="margin-top:16px">
+    <button class="del" id="all" type="button" disabled>Delete all voice models</button>
+    <button class="main" id="keep" type="button" hidden>Keep voices on this device</button>
+  </div>
+  <p id="status" role="status"></p>
+</section>
+
+<section class="card flat doc-body">
+  <div class="card-head"><div><h2>Good to know</h2></div></div>
+  <ul>
+    <li>Switching between models never downloads a model again or makes a second copy: each one is saved once.</li>
+    <li>When Voxa updates a model, the old version is deleted as the new one is saved.</li>
+    <li>A deleted model downloads again the next time you use one of its voices.</li>
+    <li>Browsers can clear saved files when the device is low on space, or after a site isn't used for a while (Safari).
+      <b>Keep voices on this device</b> asks your browser not to, where it supports that.</li>
+    <li>Your saved audiobooks and podcasts are kept separately, on the Audiobooks and Podcasts pages, and are not touched here.</li>
+  </ul>
+</section>
+</main>
+{{FOOTER}}
+<script type="module">
+const $ = s => document.querySelector(s);
+// Each engine's saved files, by the name of its storage. Old versions of an engine share its prefix.
+const MODELS = [
+  { prefix: 'voxa-supertonic-', name: 'Supertonic 3', about: 'by Supertone · 310 voices in 31 languages' },
+  { prefix: 'voxa-pocket-tts', name: 'Pocket TTS', about: 'by Kyutai · English, French, German, Spanish, Portuguese, Italian; one model per language' },
+  { prefix: 'phonon-tts-', name: 'Phonon', about: 'by Gradium · English voices such as Wren and Calvin' },
+  { prefix: 'voxa-hojo-', name: 'Hojo TTS Light', about: 'English and Chinese voices' },
+  { prefix: 'voxa-kale-', name: 'Kale TTS nano', about: 'ten English voices' },
+  { prefix: 'voxa-tiny-voca-', name: 'tiny-voca', about: 'Pippa and Arlo' },
+  { prefix: 'smollertts-model-', name: 'SmollerTTS', about: 'Lyra, a 2.8M-parameter voice' },
+  { prefix: 'voxa-kokoro-', name: 'Kokoro-82M', about: 'desktop · 28 English voices' },
+  { prefix: 'zonos3-web-models-', name: 'ZONOS3 Mini', about: 'by Zyphra · desktop · 44 languages' },
+];
+const fmt = n => n >= 1e9 ? (n / 1e9).toFixed(2) + ' GB' : n >= 1e6 ? Math.round(n / 1e6) + ' MB' : n >= 1e3 ? Math.round(n / 1e3) + ' KB' : n + ' B';
+const status = t => { $('#status').textContent = t; };
+
+async function cacheSize(name) {
+  const cache = await caches.open(name);
+  let bytes = 0;
+  for (const req of await cache.keys()) {
+    const res = await cache.match(req);
+    if (!res) continue;
+    const len = +res.headers.get('Content-Length');
+    bytes += len > 0 ? len : (await res.blob()).size;
+  }
+  return bytes;
+}
+
+async function show() {
+  if (!('caches' in self)) {
+    $('#list').innerHTML = '<li class="empty">This browser does not let Voxa save voices (private browsing?). They download each time.</li>';
+    $('#total').textContent = '0 MB';
+    return;
+  }
+  const names = await caches.keys();
+  const rows = [];
+  let total = 0;
+  for (const m of MODELS) {
+    const mine = names.filter(n => n.startsWith(m.prefix));
+    if (!mine.length) continue;
+    let bytes = 0;
+    for (const n of mine) bytes += await cacheSize(n);
+    if (!bytes) continue;
+    total += bytes;
+    rows.push({ ...m, caches: mine, bytes });
+  }
+  $('#total').textContent = fmt(total);
+  $('#list').replaceChildren(...(rows.length ? rows.map(r => {
+    const li = document.createElement('li');
+    li.className = 'model';
+    li.innerHTML = `<div class="what"><b></b><small></small></div><span class="size"></span><button class="del" type="button">Delete</button>`;
+    li.querySelector('b').textContent = r.name;
+    li.querySelector('small').textContent = r.about;
+    li.querySelector('.size').textContent = fmt(r.bytes);
+    const btn = li.querySelector('button');
+    btn.setAttribute('aria-label', `Delete ${r.name} from this device`);
+    btn.onclick = async () => {
+      btn.disabled = true;
+      for (const n of r.caches) await caches.delete(n);
+      status(`${r.name} deleted. It downloads again the next time you use one of its voices.`);
+      show();
+    };
+    return li;
+  }) : [Object.assign(document.createElement('li'), { className: 'empty', textContent: 'No voice models are saved on this device yet. They download the first time you use a voice.' })]));
+  $('#all').disabled = !rows.length;
+  $('#all').onclick = async () => {
+    if (!rows.length) return;
+    $('#all').disabled = true;
+    for (const r of rows) for (const n of r.caches) await caches.delete(n);
+    status('All voice models deleted from this device.');
+    show();
+  };
+  if (navigator.storage && navigator.storage.estimate) {
+    const e = await navigator.storage.estimate().catch(() => null);
+    if (e && e.quota) {
+      $('#meter').style.width = Math.min(100, 100 * (e.usage || 0) / e.quota) + '%';
+      $('#quota').textContent = `Voxa uses ${fmt(e.usage || 0)} in all on this device, including saved audiobooks and podcasts. The browser allows up to about ${fmt(e.quota)}.`;
+    }
+  }
+}
+
+// Ask the browser to keep Voxa's files (no eviction under storage pressure), where supported.
+async function keepButton() {
+  if (!navigator.storage || !navigator.storage.persist) return;
+  const kept = await navigator.storage.persisted().catch(() => false);
+  const b = $('#keep');
+  b.hidden = false;
+  if (kept) { b.textContent = 'Voices are kept on this device ✓'; b.disabled = true; return; }
+  b.onclick = async () => {
+    const ok = await navigator.storage.persist().catch(() => false);
+    if (ok) { b.textContent = 'Voices are kept on this device ✓'; b.disabled = true; status('Your browser will keep Voxa\'s voices unless you delete them.'); }
+    else status('Your browser decides this by itself (it often agrees after you use Voxa more, or add it to your home screen).');
+  };
+}
+
+show().catch(e => status('Could not read this device\'s storage: ' + e.message));
+keepButton();
+</script>
+</body></html>

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Voxa Shows · podcasts made with Voxa</title>
+<meta name="description" content="Short podcasts about AI and tech, voiced entirely by AI voices made with Voxa, right in a web browser.">
+<!--og-->
+{{HEAD}}<style>
+.lead2{color:var(--dim);margin:0}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.btn{display:inline-flex;align-items:center;gap:8px;font:750 14.5px var(--font-display);border-radius:14px;padding:11px 16px;text-decoration:none;
+  border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+.btn.main{background:var(--grad);border:0;color:#fff;box-shadow:var(--glow)}
+.btn:focus-visible,.ep:focus-visible,.line:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 18px}
+.chip{border:1px solid var(--line);background:transparent;color:var(--dim);border-radius:99px;padding:7px 14px;font:700 13px var(--font-display);cursor:pointer}
+.chip[aria-pressed=true]{background:var(--surface);color:var(--ink);border-color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.ep{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:20px;overflow:hidden;background:var(--surface);text-decoration:none;color:var(--ink);
+  transition:transform .2s,border-color .2s}
+.ep:hover{transform:translateY(-2px);border-color:rgba(167,139,250,.5)}
+.ep .cv{position:relative;aspect-ratio:1/1;background:#120a26}
+.ep .cv img{width:100%;height:100%;object-fit:cover;display:block}
+.ep .play{position:absolute;right:12px;bottom:12px;width:48px;height:48px;border-radius:50%;background:var(--grad);display:grid;place-items:center;box-shadow:var(--glow)}
+.ep .play svg{width:20px;height:20px;margin-left:3px}
+.ep .dur{position:absolute;left:12px;bottom:12px;font:800 12px var(--font-display);background:rgba(0,0,0,.65);padding:5px 9px;border-radius:99px}
+.ep .body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:6px}
+.ep .meta{font:800 11.5px var(--font-display);letter-spacing:.12em;text-transform:uppercase;color:#c4b5fd}
+.ep b{font:800 18px/1.25 var(--font-display)}
+.ep p{margin:0;color:var(--dim);font-size:14px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.empty{color:var(--dim);padding:20px 0}
+/* one episode */
+.player{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:18px;align-items:start}
+@media (max-width:860px){.player{grid-template-columns:1fr}}
+video,.audio-only{width:100%;border-radius:20px;background:#000;display:block;aspect-ratio:1/1}
+.audio-only{display:grid;place-items:center;background:var(--surface)}
+.ehead .meta{font:800 12px var(--font-display);letter-spacing:.14em;text-transform:uppercase;color:#c4b5fd}
+.ehead h1{font:900 clamp(26px,4vw,38px)/1.1 var(--font-display);letter-spacing:-.02em;margin:6px 0 8px}
+.ehead p{color:var(--dim);margin:0;line-height:1.5}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+.badge{font:700 12.5px var(--font-display);padding:6px 11px;border-radius:99px;border:1px solid var(--line);background:var(--surface)}
+.badge.made{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:#6ee7b7}
+.tx{max-height:460px;overflow:auto;margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:2px}
+.doc-body .tx{padding:0 !important}
+.doc-body .tx li{margin:0}
+.line{display:grid;grid-template-columns:44px 1fr;gap:10px;padding:8px 10px;border-radius:12px;cursor:pointer;color:var(--dim);font-size:15px;line-height:1.45}
+.line:hover{background:rgba(255,255,255,.04)}
+.line time{font:700 12px var(--mono,monospace);color:#8d84b8;padding-top:3px}
+.line b{font-family:var(--font-display);margin-right:6px}
+.line.now{background:rgba(167,139,250,.14);color:var(--ink)}
+.part{font:800 11px var(--font-display);letter-spacing:.14em;text-transform:uppercase;color:#8d84b8;padding:12px 10px 4px}
+.back{display:inline-flex;gap:6px;color:var(--dim);text-decoration:none;font:700 14px var(--font-display);margin-bottom:12px}
+#status{color:var(--dim);font-size:14px}
+</style></head>
+<body data-page="shows" data-mode="{{MODE}}" data-slug="">
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+</div></header>
+<main class="wrap">
+<div id="listview">
+  <section class="hero">
+    <span class="eyebrow"><span class="dot"></span>Made with Voxa</span>
+    <h1 class="display sm"><span class="grad-text">Voxa Shows</span></h1>
+    <p class="lead">Short podcasts about AI, tech and the stories behind them. Every voice is AI, made with Voxa in a web browser.</p>
+    <div class="actions">
+      <a class="btn main" href="https://x.com/voxavocals" target="_blank" rel="noopener">Follow on X for new episodes</a>
+      <a class="btn" href="/shows/feed.xml">Podcast feed (RSS)</a>
+      <a class="btn" href="/podcast">Make your own podcast</a>
+    </div>
+  </section>
+  <div class="chips" id="chips" role="group" aria-label="Show"></div>
+  <div class="grid" id="grid"><p class="empty">Loading episodes…</p></div>
+</div>
+
+<div id="epview" hidden>
+  <a class="back" href="/shows">← All episodes</a>
+  <div class="player">
+    <div>
+      <div id="media"></div>
+    </div>
+    <div class="ehead">
+      <div class="meta" id="emeta"></div>
+      <h1 id="etitle"></h1>
+      <p id="edesc"></p>
+      <div class="badges" id="ebadges"></div>
+      <div class="actions">
+        <a class="btn main" id="share" target="_blank" rel="noopener">Share on X</a>
+        <a class="btn" id="download" hidden>Download MP3</a>
+        <a class="btn" id="onx" target="_blank" rel="noopener" hidden>Watch on X</a>
+        <button class="btn" id="copy" type="button">Copy link</button>
+      </div>
+    </div>
+  </div>
+  <section class="card flat doc-body" style="margin-top:18px" id="txbox" hidden>
+    <div class="card-head"><div><h2>Transcript</h2></div></div>
+    <ol class="tx" id="tx"></ol>
+  </section>
+  <section class="card flat doc-body" style="margin-top:18px">
+    <div class="card-head"><div><h2>Made with Voxa</h2></div></div>
+    <p class="dim" style="margin:0">Every voice in this episode is AI, generated by Voxa right in a web browser: no studio, no cloud.
+      Write a script with any AI, paste it into <a href="/podcast">Podcasts</a>, pick voices, and get a full episode.</p>
+  </section>
+</div>
+<p id="status" role="status"></p>
+</main>
+{{FOOTER}}
+<script type="module">
+const $ = s => document.querySelector(s);
+let EPS = [], series = 'All';
+const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
+const PLAY = '<svg viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>';
+
+function card(e) {
+  const a = el('a', { className: 'ep', href: e.url });
+  a.innerHTML = `<div class="cv">${e.cover ? '<img alt="" loading="lazy">' : ''}<span class="dur"></span><span class="play">${PLAY}</span></div>
+    <div class="body"><span class="meta"></span><b></b><p></p></div>`;
+  if (e.cover) a.querySelector('img').src = e.cover;
+  a.querySelector('.dur').textContent = e.duration ? fmtTime(e.duration) : 'Episode';
+  a.querySelector('.meta').textContent = [e.series, e.number ? `Ep. ${String(e.number).padStart(2, '0')}` : ''].filter(Boolean).join(' · ');
+  a.querySelector('b').textContent = e.title;
+  a.querySelector('p').textContent = e.description || '';
+  a.onclick = ev => { if (ev.metaKey || ev.ctrlKey) return; ev.preventDefault(); open(e.slug, true); };
+  return a;
+}
+
+function showList() {
+  $('#listview').hidden = false; $('#epview').hidden = true;
+  document.title = 'Voxa Shows · podcasts made with Voxa';
+  const names = ['All', ...new Set(EPS.map(e => e.series).filter(Boolean))];
+  $('#chips').replaceChildren(...(names.length > 2 ? names.map(n => {
+    const b = el('button', { className: 'chip', type: 'button', textContent: n });
+    b.setAttribute('aria-pressed', String(n === series));
+    b.onclick = () => { series = n; showList(); };
+    return b;
+  }) : []));
+  const list = EPS.filter(e => series === 'All' || e.series === series);
+  $('#grid').replaceChildren(...(list.length ? list.map(card) : [el('p', { className: 'empty', textContent: 'The first episodes are on their way. Follow Voxa on X to hear them first.' })]));
+}
+
+function open(slug, push) {
+  const e = EPS.find(x => x.slug === slug);
+  if (!e) { showList(); return; }
+  if (push) history.pushState({ slug }, '', e.url);
+  $('#listview').hidden = true; $('#epview').hidden = false;
+  document.title = `${e.title} · ${e.series || 'Voxa Shows'}`;
+  $('#emeta').textContent = [e.series, e.number ? `Episode ${e.number}` : '', e.published].filter(Boolean).join(' · ');
+  $('#etitle').textContent = e.title;
+  $('#edesc').textContent = e.description || '';
+  const badges = [e.duration ? fmtTime(e.duration) : '', ...(e.hosts || []).map(h => `🎙️ ${h}`)].filter(Boolean)
+    .map(t => el('span', { className: 'badge', textContent: t }));
+  if (e.made_in) badges.unshift(el('span', { className: 'badge made', textContent: `Made in ${e.made_in} with Voxa` }));
+  $('#ebadges').replaceChildren(...badges);
+  const url = location.origin + e.url;
+  $('#share').href = 'https://x.com/intent/post?text=' + encodeURIComponent(`🎙️ ${e.title}, made entirely with AI voices by @voxavocals`) + '&url=' + encodeURIComponent(url);
+  $('#download').hidden = !e.audio; if (e.audio) { $('#download').href = e.audio; $('#download').download = `${e.title}.mp3`; }
+  $('#onx').hidden = !e.x_url; if (e.x_url) $('#onx').href = e.x_url;
+  $('#copy').onclick = async () => { try { await navigator.clipboard.writeText(url); $('#copy').textContent = 'Copied'; } catch { $('#copy').textContent = url; } setTimeout(() => { $('#copy').textContent = 'Copy link'; }, 1800); };
+  // the player: video if there is one, else audio
+  const media = e.video ? el('video', { controls: true, playsInline: true, preload: 'metadata', src: e.video })
+    : e.audio ? el('audio', { controls: true, preload: 'metadata', src: e.audio, style: 'width:100%' }) : el('div', { className: 'audio-only', textContent: 'Coming soon' });
+  if (e.video && e.cover) media.poster = e.cover;
+  $('#media').replaceChildren(media);
+  // transcript, following the player
+  const tx = e.transcript || [];
+  $('#txbox').hidden = !tx.length;
+  let lastPart = null;
+  const items = [], lines = [];
+  for (const l of tx) {
+    if (l.part && l.part !== lastPart) items.push(el('li', { className: 'part', textContent: l.part }));
+    lastPart = l.part;
+    const li = el('li', { className: 'line', tabIndex: 0 }, el('time', { textContent: l.start != null ? fmtTime(l.start) : '' }), el('span', {}, el('b', { textContent: l.speaker || '' }), l.text));
+    if (l.start != null && media.tagName) {
+      const seek = () => { media.currentTime = l.start; media.play().catch(() => {}); };
+      li.onclick = seek; li.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); seek(); } };
+    }
+    items.push(li); lines.push([l, li]);
+  }
+  $('#tx').replaceChildren(...items);
+  let cur = null;
+  media.ontimeupdate = () => {
+    const t = media.currentTime;
+    const hit = lines.find(([l]) => t >= l.start && t <= (l.end ?? l.start + 1));
+    const li = hit && hit[1];
+    if (li === cur) return;
+    if (cur) cur.classList.remove('now');
+    cur = li;
+    if (li) { li.classList.add('now'); const box = $('#tx'); box.scrollTo({ top: li.offsetTop - box.offsetTop - 80, behavior: 'smooth' }); }
+  };
+  window.scrollTo({ top: 0 });
+}
+
+addEventListener('popstate', () => { const m = location.pathname.match(/^\/shows\/([a-z0-9-]+)$/); m ? open(m[1]) : showList(); });
+try {
+  EPS = (await fetch('/api/episodes', { cache: 'no-store' }).then(r => r.json())).episodes || [];
+} catch { $('#status').textContent = 'Could not load the episodes. Try again in a moment.'; }
+const slug = document.body.dataset.slug;
+slug ? open(slug) : showList();
+</script>
+</body></html>

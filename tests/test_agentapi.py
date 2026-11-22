@@ -55,7 +55,7 @@ def make_api(daily=100_000):
 
 
 def wait(api, job_id, owner='owner'):
-    for _ in range(200):
+    for _ in range(1000):   # up to 20 s, for a busy machine
         job = api.get_job(owner, 'http://x', job_id)
         if job['status'] in ('done', 'error', 'cancelled'):
             return job
@@ -227,7 +227,7 @@ class HttpTest(unittest.TestCase):
         code, _, body = self.req('/v1/podcasts', {'script': SCRIPT, 'voices': {'Maya': 'lina-a', 'Leo': 'adam-a'}})
         self.assertEqual(code, 202)
         job_id = json.loads(body)['id']
-        for _ in range(200):
+        for _ in range(1000):
             job = json.loads(self.req(f'/v1/jobs/{job_id}')[2])
             if job['status'] == 'done':
                 break

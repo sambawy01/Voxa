@@ -204,6 +204,8 @@ class DeviceTest(unittest.TestCase):
         init = self.call(api, 'initialize', {'protocolVersion': '2025-06-18'})['result']
         self.assertIn('io.modelcontextprotocol/ui', init['capabilities']['extensions'])
         tools = {t['name']: t for t in self.call(api, 'tools/list')['result']['tools']}
+        self.assertEqual(set(tools), {'play_on_device', 'list_device_voices'})   # no key: only the free tools
+        self.assertIn('play_on_device', init['instructions'])
         self.assertEqual(tools['play_on_device']['_meta']['ui']['resourceUri'], agentapi.PLAYER_URI)
         res = self.call(api, 'resources/read', {'uri': agentapi.PLAYER_URI})['result']['contents'][0]
         self.assertEqual(res['mimeType'], 'text/html;profile=mcp-app')

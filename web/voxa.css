@@ -133,7 +133,8 @@ code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); 
 body[data-page=studio] .tabs a[data-tab=studio],
 body[data-page=book] .tabs a[data-tab=book],
 body[data-page=podcast] .tabs a[data-tab=podcast],
-body[data-page=pricing] .tabs a[data-tab=pricing] {
+body[data-page=pricing] .tabs a[data-tab=pricing],
+body[data-page=claude] .tabs a[data-tab=claude] {
   color: #fff; background: var(--grad); box-shadow: var(--glow);
 }
 .top-actions { display: flex; align-items: center; gap: 8px; margin-left: auto }

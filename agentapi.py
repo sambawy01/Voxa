@@ -1101,6 +1101,11 @@ class Api:
                           'list_voices (Supertonic 3, 31 languages). To play something in the chat instead, use '
                           'play_on_device. Voices are synthetic; tell listeners they are AI.')
 
+    DEVICE_INSTRUCTIONS = ("Voxa reads podcasts and texts aloud in the user's own browser, free. Write the script "
+                           '("Name: line" turns, optional "# Title" and "## Part" headings) and call play_on_device; '
+                           'the Voxa player appears in the chat and the user presses Play. Pick voices with '
+                           'list_device_voices, or leave them to Voxa. Voices are synthetic; tell listeners they are AI.')
+
     def open_audio(self, owner, job_id):
         import subprocess
         job = self._job(owner, job_id)
@@ -1187,10 +1192,13 @@ class Api:
                        'capabilities': {'tools': {'listChanged': False}, 'resources': {},
                                         'extensions': {'io.modelcontextprotocol/ui': {'mimeTypes': ['text/html;profile=mcp-app']}}},
                        'serverInfo': {'name': 'voxa', 'title': 'Voxa', 'version': '1.0.0'},
-                       'instructions': self.LOCAL_INSTRUCTIONS if self.out_dir else self.INSTRUCTIONS})
+                       'instructions': self.LOCAL_INSTRUCTIONS if self.out_dir else
+                       self.INSTRUCTIONS if self.keys.check(key) else self.DEVICE_INSTRUCTIONS})
         if method == 'ping':
             return ok({})
         if method == 'tools/list':
+            if not self.out_dir and not self.keys.check(key):
+                return ok({'tools': self.DEVICE_TOOLS})     # without a key: only the free, on-device tools
             return ok({'tools': self.DEVICE_TOOLS + self.TOOLS + (self.LOCAL_TOOLS if self.out_dir else [])})
         if method == 'resources/list':
             r = self.player_resource(base)

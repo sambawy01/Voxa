@@ -252,6 +252,62 @@ class DeviceTest(unittest.TestCase):
         self.assertIn('calvin', [v['id'] for v in voices])
 
 
+class LocalTest(unittest.TestCase):
+    """The local server (python agentapi.py): no key, audio saved to a folder, MCP over stdio."""
+    def make(self):
+        d = tempfile.mkdtemp()
+        self.out = os.path.join(d, 'out')
+        return agentapi.Api(server, data_dir=d, keys=agentapi.LocalKeys(), voices=FakeVoices(), secret='s', out_dir=self.out)
+
+    def test_saved_to_the_folder(self):
+        api = self.make()
+        job = api.create_podcast('local', 'http://x', script=SCRIPT, voices={'Maya': 'lina-a', 'Leo': 'adam-a'})
+        done = wait(api, job['id'], owner='local')
+        self.assertNotIn('audio', done)                                  # no links: files
+        path = done['files'].get('mp3') or done['files']['wav']
+        self.assertEqual(os.path.dirname(path), self.out)
+        self.assertTrue(os.path.basename(path).startswith('Coffee Talk.'))
+        api.edit_line('local', 'http://x', job['id'], 0, text='Hello again!')
+        self.assertEqual(wait(api, job['id'], owner='local')['files'], done['files'])   # same file, remade
+        again = api.create_podcast('local', 'http://x', script=SCRIPT, voices={'Maya': 'lina-a', 'Leo': 'adam-a'})
+        other = wait(api, again['id'], owner='local')['files']
+        self.assertNotEqual(other, done['files'])                        # a second episode does not overwrite
+        self.assertIn('(2)', next(iter(other.values())))
+
+    def test_stdio(self):
+        import io
+        api = self.make()
+        lines = [json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {'protocolVersion': '2025-06-18'}}),
+                 json.dumps({'jsonrpc': '2.0', 'method': 'notifications/initialized'}),
+                 json.dumps({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'}),
+                 json.dumps({'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call', 'params': {'name': 'list_jobs', 'arguments': {}}}),
+                 json.dumps({'jsonrpc': '2.0', 'id': 4, 'method': 'tools/call', 'params': {'name': 'open_audio', 'arguments': {'job_id': 'nope'}}}),
+                 '{broken', '']
+        out = io.StringIO()
+        agentapi.serve_stdio(api, 'http://x', io.StringIO('\n'.join(lines)), out)
+        replies = [json.loads(l) for l in out.getvalue().splitlines()]
+        self.assertEqual([r.get('id') for r in replies], [1, 2, 3, 4, None])
+        self.assertIn('this computer', replies[0]['result']['instructions'])
+        self.assertIn('open_audio', [t['name'] for t in replies[1]['result']['tools']])
+        self.assertNotIn('isError', replies[2]['result'])                 # no key needed locally
+        self.assertTrue(replies[3]['result']['isError'])
+        self.assertEqual(replies[4]['error']['code'], -32700)
+
+    def test_manifest_for_the_download(self):
+        from types import SimpleNamespace
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, 'st-1'))
+        with open(os.path.join(d, 'st-1', 'tts.json'), 'w') as f:
+            f.write('{}')
+        fake = SimpleNamespace(STATIC_DIR=d, SUPERTONIC_DIR='st-1', ALL_LANG_LABELS={'a': 'English (US)'},
+                               LITE={'voices': {'a': []}, 'expressiveness': []}, DATA_DIR=d)
+        api = agentapi.Api(fake, data_dir=d, keys=agentapi.LocalKeys(), voices=FakeVoices(), secret='s')
+        m = api.rest('GET', '/v1/local', {}, None, None, 'https://voxa.test')[1]   # no key
+        self.assertEqual(m['base'], 'https://voxa.test/static/st-1/')
+        self.assertEqual(m['supertonic']['files']['tts.json'],
+                         {'sha256': hashlib.sha256(b'{}').hexdigest(), 'size': 2})
+
+
 class HttpTest(unittest.TestCase):
     """The routes through the real server, which hands /v1 and /mcp to the agent API."""
 
@@ -302,6 +358,11 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(self.req(f'/v1/jobs/{job_id}', method='DELETE')[0], 200)
         self.assertEqual(self.req('/v1/podcasts', {'script': SCRIPT})[0], 400)
         self.assertEqual(self.req('/v1/nothing')[0], 404)
+        code, headers, body = self.req('/voxa-mcp.py', key=None)
+        self.assertEqual(code, 200)
+        self.assertTrue(headers['Content-Type'].startswith('text/x-python'))
+        self.assertIn(b'# /// script', body[:40])
+        self.assertIn(b'def serve_stdio', body)
 
     def test_mcp_over_http(self):
         code, _, body = self.req('/mcp', {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',

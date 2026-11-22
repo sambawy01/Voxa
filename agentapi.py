@@ -1,5 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["numpy>=1.24", "onnxruntime>=1.17", "lameenc>=1.4"]
+# ///
 """Voxa for AI agents: a REST API (/v1/...) and an MCP server (/mcp) that make speech,
 podcasts and audiobooks on Voxa's server.
+
+Run on its own, this file is also a local MCP server for Claude Desktop and Claude Code: it
+downloads Supertonic 3 from Voxa once and makes everything on the user's own computer, saving
+MP3s to a folder there. See main() and docs/API.md.
 
 The website's voices run in the visitor's browser; an agent such as Claude calls from its
 own servers, so here Voxa's server makes the audio, with two engines:
@@ -26,6 +34,7 @@ import os
 import queue
 import re
 import secrets
+import sys
 import threading
 import time
 import uuid
@@ -182,6 +191,7 @@ class Supertonic:
         self.folder = folder
         self.sessions = None
         self.lock = threading.Lock()
+        self.prepare = None           # called once before loading, e.g. to download the files
 
     def _load(self):
         import numpy as np
@@ -249,6 +259,8 @@ class Supertonic:
         import numpy as np
         with self.lock:
             if self.sessions is None:
+                if self.prepare:
+                    self.prepare()
                 self._load()
             ttl, dp = self._style(style_name)
             rng = np.random.default_rng(seed)
@@ -541,6 +553,7 @@ class Job:
         self.created = d.get('created', time.time())
         self.finished = d.get('finished')
         self.duration = d.get('duration')
+        self.files = d.get('files')   # local server: the saved audio on the user's computer
         self.cancelled = False
 
     def progress(self):
@@ -552,17 +565,19 @@ class Job:
     def to_dict(self):
         return {'id': self.id, 'kind': self.kind, 'owner': self.owner, 'title': self.title, 'lines': self.lines,
                 'chapters': self.chapters, 'pause': self.pause, 'status': self.status, 'error': self.error,
-                'created': self.created, 'finished': self.finished, 'duration': self.duration}
+                'created': self.created, 'finished': self.finished, 'duration': self.duration, 'files': self.files}
 
 
 class Api:
-    def __init__(self, server, data_dir=None, keys=None, voices=None, secret=None, daily=None, public_url=None):
+    def __init__(self, server, data_dir=None, keys=None, voices=None, secret=None, daily=None, public_url=None,
+                 out_dir=None):
         self.data_dir = data_dir or os.path.join(server.DATA_DIR, 'agent')
         os.makedirs(os.path.join(self.data_dir, 'jobs'), exist_ok=True)
         self.keys = keys or Keys(os.environ.get('VOXA_API_KEYS', ''), self.data_dir,
                                  int(os.environ.get('VOXA_API_DAILY_CHARS', '300000')) if daily is None else daily)
         self.voices = voices or Voices(server)
         self.server, self._device = server, None
+        self.out_dir = out_dir        # local server: finished audio is copied here, and links are file paths
         self.public_url = (public_url or os.environ.get('VOXA_PUBLIC_URL', '')).rstrip('/')
         self.secret = (secret or os.environ.get('VOXA_API_SECRET') or self._secret()).encode()
         self.jobs, self.lock, self.q = {}, threading.Lock(), queue.Queue()
@@ -643,6 +658,8 @@ class Api:
                     job.status = 'cancelled'
                 else:
                     self._render(job)
+                    if self.out_dir:
+                        self._keep(job)
                     job.status, job.error = 'done', None
             except ApiError as e:
                 job.status, job.error = 'error', e.message
@@ -683,6 +700,27 @@ class Api:
         with open(os.path.join(self._dir(job.id), 'chapters.json'), 'w', encoding='utf-8') as f:
             json.dump(marks, f, ensure_ascii=False)
 
+    def _keep(self, job):
+        """Local server: copy the finished audio to the user's folder, named after the title."""
+        import shutil
+        os.makedirs(self.out_dir, exist_ok=True)
+        name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', ' ', job.title).strip().rstrip('.')[:80] or 'Voxa'
+        files = {}
+        for fmt in ('mp3', 'wav'):
+            src = os.path.join(self._dir(job.id), f'audio.{fmt}')
+            if not os.path.exists(src) or (fmt == 'wav' and 'mp3' in files):
+                continue
+            old = (job.files or {}).get(fmt)
+            dst = old if old and os.path.dirname(old) == self.out_dir else None
+            n = 1
+            while dst is None:
+                cand = os.path.join(self.out_dir, f'{name}{"" if n == 1 else f" ({n})"}.{fmt}')
+                dst = cand if not os.path.exists(cand) else None
+                n += 1
+            shutil.copyfile(src, dst)
+            files[fmt] = dst
+        job.files = files
+
     # -- links
     def token(self, job_id):
         return hmac.new(self.secret, job_id.encode(), hashlib.sha256).hexdigest()[:32]
@@ -705,9 +743,12 @@ class Api:
             out['error'] = job.error
         if job.status == 'done':
             out['duration_seconds'] = job.duration
-            out['audio'] = {'wav': self.link(job.id, 'wav', base)}
-            if os.path.exists(os.path.join(self._dir(job.id), 'audio.mp3')):
-                out['audio']['mp3'] = self.link(job.id, 'mp3', base)
+            if self.out_dir:
+                out['files'] = job.files or {}
+            else:
+                out['audio'] = {'wav': self.link(job.id, 'wav', base)}
+                if os.path.exists(os.path.join(self._dir(job.id), 'audio.mp3')):
+                    out['audio']['mp3'] = self.link(job.id, 'mp3', base)
             try:
                 with open(os.path.join(self._dir(job.id), 'chapters.json'), encoding='utf-8') as f:
                     out['chapters'] = json.load(f)
@@ -942,6 +983,8 @@ class Api:
         """Returns (status, body, content_type, headers)."""
         if method == 'GET' and path == '/v1/docs':
             return 200, self.docs(base), None, None
+        if method == 'GET' and path == '/v1/local':
+            return 200, self.local_manifest(base), None, None
         m = re.fullmatch(r'/v1/jobs/([0-9a-f]{16})/audio\.(wav|mp3)', path)
         if m and method == 'GET':
             data, name = self.audio(m.group(1), m.group(2), (query.get('token') or [''])[0])
@@ -1047,6 +1090,48 @@ class Api:
                     'seconds until status is "done", then give the user the mp3 link. To fix a line, read the script '
                     'with get_job(script=true) and call edit_line. Voices are synthetic; tell listeners they are AI.')
 
+    LOCAL_TOOLS = [
+        {'name': 'open_audio', 'title': 'Play a saved file',
+         'description': "Open a finished job's audio file in the computer's default player.",
+         'inputSchema': {'type': 'object', 'required': ['job_id'], 'properties': {'job_id': {'type': 'string'}}}},
+    ]
+    LOCAL_INSTRUCTIONS = ('Voxa runs on this computer. create_podcast, create_audiobook and make_speech make the audio '
+                          'here and save an MP3 in the folder named in each finished job ("files"); poll get_job until '
+                          'status is "done", then tell the user the file path, or call open_audio to play it. Voices: '
+                          'list_voices (Supertonic 3, 31 languages). To play something in the chat instead, use '
+                          'play_on_device. Voices are synthetic; tell listeners they are AI.')
+
+    def open_audio(self, owner, job_id):
+        import subprocess
+        job = self._job(owner, job_id)
+        path = next(iter((job.files or {}).values()), None)
+        if job.status != 'done' or not path or not os.path.exists(path):
+            raise ApiError(400, 'That job has no saved audio yet; check get_job.')
+        if sys.platform == 'darwin':
+            subprocess.Popen(['open', path])
+        elif os.name == 'nt':
+            os.startfile(path)  # noqa: S606 (a file this server wrote)
+        else:
+            subprocess.Popen(['xdg-open', path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {'opened': path}
+
+    # -- for the local server: what it downloads (GET /v1/local, no key)
+    def local_manifest(self, base):
+        if getattr(self, '_manifest', None) is None:
+            folder = os.path.join(self.server.STATIC_DIR, self.server.SUPERTONIC_DIR)
+            files = {}
+            for name in sorted(os.listdir(folder)):
+                h = hashlib.sha256()
+                with open(os.path.join(folder, name), 'rb') as f:
+                    for block in iter(lambda: f.read(1 << 20), b''):
+                        h.update(block)
+                files[name] = {'sha256': h.hexdigest(), 'size': os.path.getsize(os.path.join(folder, name))}
+            lite = self.server.LITE or {}
+            self._manifest = {'version': 1, 'supertonic': {'dir': self.server.SUPERTONIC_DIR, 'files': files},
+                              'languages': self.server.ALL_LANG_LABELS,
+                              'lite': {'voices': lite.get('voices', {}), 'expressiveness': lite.get('expressiveness', [])}}
+        return {**self._manifest, 'base': f'{base}/static/{self.server.SUPERTONIC_DIR}/'}
+
     def _device_call(self, base, name, a):
         if name == 'list_device_voices':
             if not a.get('language'):
@@ -1084,6 +1169,8 @@ class Api:
             return self.edit_line(owner, base, a.get('job_id'), a.get('line'), a.get('text'), a.get('voice'))
         if name == 'cancel_job':
             return self.cancel_job(owner, base, a.get('job_id'))
+        if name == 'open_audio' and self.out_dir:
+            return self.open_audio(owner, a.get('job_id'))
         raise ApiError(400, f'Unknown tool {name!r}.')
 
     def mcp(self, msg, key, base):
@@ -1100,11 +1187,11 @@ class Api:
                        'capabilities': {'tools': {'listChanged': False}, 'resources': {},
                                         'extensions': {'io.modelcontextprotocol/ui': {'mimeTypes': ['text/html;profile=mcp-app']}}},
                        'serverInfo': {'name': 'voxa', 'title': 'Voxa', 'version': '1.0.0'},
-                       'instructions': self.INSTRUCTIONS})
+                       'instructions': self.LOCAL_INSTRUCTIONS if self.out_dir else self.INSTRUCTIONS})
         if method == 'ping':
             return ok({})
         if method == 'tools/list':
-            return ok({'tools': self.DEVICE_TOOLS + self.TOOLS})
+            return ok({'tools': self.DEVICE_TOOLS + self.TOOLS + (self.LOCAL_TOOLS if self.out_dir else [])})
         if method == 'resources/list':
             r = self.player_resource(base)
             return ok({'resources': [{k: r[k] for k in ('uri', 'name', 'mimeType', 'description')}]})
@@ -1135,3 +1222,142 @@ class Api:
             except ApiError as e:
                 return ok({'isError': True, 'content': [{'type': 'text', 'text': e.message}]})
         return {'jsonrpc': '2.0', 'id': mid, 'error': {'code': -32601, 'message': f'Method not found: {method}'}}
+
+
+# --- The local server: `uv run <site>/voxa-mcp.py` -------------------------------------------
+
+DEFAULT_SITE = 'https://voxa-zpukmw.fly.dev'
+
+
+class LocalKeys:
+    """On the user's own computer there is no key and no allowance."""
+    by_hash = {'local': 'local'}
+    daily = 0
+
+    def check(self, key):
+        return 'local'
+
+    def charge(self, name, n):
+        return lambda: None
+
+    def used(self, name):
+        return 0
+
+
+def _fetch(url, timeout=60):
+    import urllib.request
+    req = urllib.request.Request(url, headers={'User-Agent': 'voxa-mcp/1'})
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def local_site(site, home):
+    """What Voices and Api read from `server`, for the user's computer. The catalogue comes from
+    the site (and is kept, so the server starts offline); the model files download on first use."""
+    from types import SimpleNamespace
+    cache = os.path.join(home, 'manifest.json')
+    try:
+        with _fetch(f'{site}/v1/local', timeout=20) as r:
+            manifest = json.load(r)
+        os.makedirs(home, exist_ok=True)
+        with open(cache + '.tmp', 'w', encoding='utf-8') as f:
+            json.dump(manifest, f)
+        os.replace(cache + '.tmp', cache)
+    except Exception as e:  # offline: use the last one
+        try:
+            with open(cache, encoding='utf-8') as f:
+                manifest = json.load(f)
+            log.warning('Voxa is not reachable (%s); using the saved voice list.', e)
+        except OSError:
+            raise SystemExit(f'Voxa: cannot reach {site} to fetch the voice list ({e}).') from None
+    st = manifest['supertonic']
+    folder = os.path.join(home, 'models', st['dir'])
+    lock = threading.Lock()
+
+    def download():
+        with lock:
+            for name, meta in st['files'].items():
+                path = os.path.join(folder, name)
+                if os.path.exists(path) and os.path.getsize(path) == meta['size']:
+                    continue
+                os.makedirs(folder, exist_ok=True)
+                log.info('Voxa: downloading %s (%.0f MB, once)', name, meta['size'] / 1e6)
+                h, tmp = hashlib.sha256(), path + '.part'
+                with _fetch(manifest['base'] + name, timeout=120) as r, open(tmp, 'wb') as f:
+                    for block in iter(lambda: r.read(1 << 20), b''):
+                        h.update(block)
+                        f.write(block)
+                if h.hexdigest() != meta['sha256']:
+                    os.remove(tmp)
+                    raise ApiError(502, f'The download of {name} was damaged; try again.')
+                os.replace(tmp, path)
+
+    server = SimpleNamespace(STATIC_DIR=os.path.join(home, 'models'), SUPERTONIC_DIR=st['dir'],
+                             ALL_LANG_LABELS=manifest['languages'], LITE=manifest['lite'], CATALOGUE=[],
+                             DATA_DIR=home, synth=None)
+    return server, download
+
+
+def serve_stdio(api, base, stdin=None, stdout=None):
+    """MCP over stdio: one JSON-RPC message per line in, one per line out."""
+    stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
+    for raw in stdin:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            msg = json.loads(raw)
+        except ValueError:
+            out = {'jsonrpc': '2.0', 'id': None, 'error': {'code': -32700, 'message': 'Parse error'}}
+        else:
+            try:
+                out = ([r for r in (api.mcp(m, 'local', base) for m in msg) if r] or None) if isinstance(msg, list) \
+                    else api.mcp(msg, 'local', base)
+            except Exception:
+                log.exception('MCP message failed')
+                out = {'jsonrpc': '2.0', 'id': msg.get('id') if isinstance(msg, dict) else None,
+                       'error': {'code': -32603, 'message': 'Internal error'}}
+        if out:
+            stdout.write(json.dumps(out, ensure_ascii=False) + '\n')
+            stdout.flush()
+
+
+def default_out_dir():
+    home = os.path.expanduser('~')
+    music = os.path.join(home, 'Music')
+    return os.path.join(music if os.path.isdir(music) else home, 'Voxa')
+
+
+def main(argv=None):
+    import argparse
+    p = argparse.ArgumentParser(prog='voxa-mcp', description='Voxa on this computer, for Claude Desktop and Claude Code (MCP over stdio).')
+    p.add_argument('--out', default=os.environ.get('VOXA_OUT') or default_out_dir(), help='where finished audio is saved')
+    p.add_argument('--site', default=os.environ.get('VOXA_SITE') or DEFAULT_SITE, help='the Voxa site to download from')
+    p.add_argument('--home', default=os.environ.get('VOXA_HOME') or os.path.join(os.path.expanduser('~'), '.voxa'),
+                   help='where models and jobs are kept')
+    p.add_argument('--check', action='store_true', help='download the voices, say one sentence, and exit')
+    a = p.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(message)s')
+    site, out = a.site.rstrip('/'), os.path.abspath(os.path.expanduser(a.out))
+    server, download = local_site(site, a.home)
+    api = Api(server, data_dir=a.home, keys=LocalKeys(), out_dir=out)
+    api.voices.supertonic.prepare = download
+    if a.check:
+        job = api.speech_job('local', site, 'lina-a', 'Hello! Voxa is working on this computer.', 'Voxa check')
+        while api.jobs[job['id']].status in ('queued', 'running'):
+            time.sleep(0.2)
+        print(json.dumps(api.get_job('local', site, job['id']), indent=2))
+        return
+    threading.Thread(target=lambda: _quiet(download), name='voxa-download', daemon=True).start()
+    log.info('Voxa MCP server ready; audio is saved to %s', out)
+    serve_stdio(api, site)
+
+
+def _quiet(fn):
+    try:
+        fn()
+    except Exception as e:  # tried again on first use
+        log.warning('Voxa: download failed for now (%s)', e)
+
+
+if __name__ == '__main__':
+    main()

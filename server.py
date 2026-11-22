@@ -1237,6 +1237,11 @@ class Handler(BaseHTTPRequestHandler):
         p = urlparse(self.path).path
         if p.startswith('/v1/') or p == '/mcp':
             return self._agent('GET')
+        if p == '/voxa-mcp.py':
+            # The local MCP server for Claude Desktop/Code is agentapi.py itself:
+            # `uv run https://<this site>/voxa-mcp.py` (see docs/API.md).
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'agentapi.py'), 'rb') as f:
+                return self._send(200, f.read(), 'text/x-python; charset=utf-8', {'Cache-Control': 'no-cache'})
         if p == '/index.html':
             p = '/'
         if p.startswith('/static/'):

@@ -45,8 +45,13 @@ jobs:
             if curl -fsS https://voxa-zpukmw.fly.dev/health; then echo; break; fi
             sleep 10
           done
-          for p in / /listen /podcast /book /pricing /voxa.css; do
+          # /listen and /pricing redirect home while the site is on-device only (ON_DEVICE_ONLY=1),
+          # so they must answer 200 or that redirect.
+          for p in / /podcast /book /integrations /storage /voxa.css /listen /pricing; do
             code=$(curl -s -o /dev/null -w '%{http_code}' https://voxa-zpukmw.fly.dev$p)
             echo "$code $p" | tee -a "$GITHUB_STEP_SUMMARY"
-            [ "$code" = 200 ] || exit 1
+            case "$p:$code" in
+              *:200|/listen:302|/pricing:302) ;;
+              *) exit 1 ;;
+            esac
           done

@@ -1,11 +1,66 @@
 # The Voxa API for AI agents
 
-Voxa has an API that AI agents (Claude and others) can use to make speech, podcasts and
-audiobooks: a **REST API** under `/v1/` and an **MCP server** at `/mcp`. Both offer the same
-things, from the same code (`agentapi.py`).
+AI agents (Claude and others) can use Voxa in three ways, all from the same code (`agentapi.py`):
 
-The website's voices run in the visitor's browser. An agent calls from its own servers, so
-here **Voxa's server makes the audio**, with:
+| | Where the voices run | Key | Gives |
+|---|---|---|---|
+| **Player in the chat** (`play_on_device`) | the user's browser, inside the Claude chat | none | plays at once; Save MP3 |
+| **Voxa on your computer** (local MCP server) | the user's computer | none | MP3 files in a folder |
+| **Voxa's server** (MCP at `/mcp`, REST at `/v1/`) | Voxa's server | API key | MP3/WAV links to share |
+
+## Player in the chat: free, on the user's device
+
+The MCP server has two tools that need no key and cost the server nothing:
+
+- `play_on_device`: give it a podcast `script` ("Name: line" turns, `#`/`##` headings) or a
+  `text`. Claude shows the **Voxa player** in the chat (an [MCP App](https://github.com/modelcontextprotocol/ext-apps)):
+  speaker cards that light up as each one talks, the words on screen, Play/Pause, a clickable
+  script, and Save MP3. The player is the page `/player`, framed in the chat, so it runs the
+  website's own on-device engines; nothing is sent to a server. Voices are chosen for each
+  speaker (Wren and Calvin in English) unless the agent picks them; `style` is `steady`,
+  `natural` or `expressive`. Up to 60,000 characters.
+- `list_device_voices`: the on-device voices by language (desktop-only ones are marked).
+
+Chat apps that do not show MCP Apps get a link instead that opens the same player on Voxa.
+Some chat apps block downloads inside the chat; the player's **Open in Voxa** button opens it
+in a browser tab, where Save MP3 works.
+
+Connect it like the server below, with or without a key (without one, only these two tools work):
+`https://voxa-zpukmw.fly.dev/mcp`.
+
+## Voxa on your computer (Claude Desktop, Claude Code)
+
+The same MCP server runs on your own computer: `agentapi.py` is served as
+`https://voxa-zpukmw.fly.dev/voxa-mcp.py`, and [uv](https://docs.astral.sh/uv/) runs it
+with what it needs (Python, numpy, onnxruntime, an MP3 encoder). On first use it downloads
+Supertonic 3 from Voxa (111 MB, checked against SHA-256 hashes) to `~/.voxa`; after that it
+works offline. Finished audio is saved as MP3 in `~/Music/Voxa` (or `~/Voxa`).
+
+1. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh` (macOS, Linux) or
+   `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"` (Windows).
+2. Check it works: `uv run https://voxa-zpukmw.fly.dev/voxa-mcp.py --check` says one sentence
+   into `~/Music/Voxa/Voxa check.mp3`.
+3. Connect Claude:
+   - **Claude Code:** `claude mcp add voxa -- uv run https://voxa-zpukmw.fly.dev/voxa-mcp.py`
+   - **Claude Desktop:** Settings → Developer → Edit Config, and add:
+     ```json
+     {"mcpServers": {"voxa": {"command": "uv", "args": ["run", "https://voxa-zpukmw.fly.dev/voxa-mcp.py"]}}}
+     ```
+     On macOS, if Claude Desktop cannot find `uv`, use its full path (`which uv`, usually
+     `/Users/you/.local/bin/uv`).
+
+Options: `--out FOLDER` (or `VOXA_OUT`) for where audio is saved; `--home` for models and
+jobs. Running from the URL fetches the latest script each time Claude starts it; to pin a
+version, download the file and run `uv run voxa-mcp.py` instead.
+
+Locally there is no key and no daily limit. The tools are the server's (below), plus
+`open_audio` (plays a finished file in the computer's default player); finished jobs give
+`files` (paths on the computer) instead of links. Voices are Supertonic 3's ten, in 31
+languages; the Studio (Kokoro) voices are server-only. `play_on_device` works here too.
+
+## Voxa's server
+
+An agent calling Voxa's server gets the audio made there, with:
 
 - **Supertonic 3** (Supertone, OpenRAIL-M): 31 languages, ten voices (`lina-a`, `adam-a`,
   `amira-ar`, ...), about 4-5x faster than real time per CPU core.
@@ -28,6 +83,8 @@ Lina and Adam, and give me the MP3 link."*
 
 | Tool | What it does |
 |---|---|
+| `play_on_device` | No key. The Voxa player in the chat, making the audio in the user's browser |
+| `list_device_voices` | No key. The on-device voices, by language |
 | `list_languages` | Languages and how many voices each has |
 | `list_voices` | Voices, filtered by language, engine or gender |
 | `make_speech` | Read up to 3,000 characters with one voice |
@@ -43,7 +100,8 @@ links are signed (`?token=`), so they work without the key and can be given to a
 
 ## REST
 
-Send `Authorization: Bearer YOUR_KEY`. `GET /v1/docs` (no key) lists everything.
+Send `Authorization: Bearer YOUR_KEY`. `GET /v1/docs` (no key) lists everything. `GET /v1/local`
+(no key) is what the local server downloads.
 
 ```bash
 KEY=YOUR_KEY; B=https://voxa-zpukmw.fly.dev

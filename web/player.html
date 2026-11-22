@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Voxa player · made on your device</title>
+{{HEAD}}<style>
+body{margin:0;background:var(--bg);overflow-x:hidden}
+body.embed{background:#0b0914}
+.pl{max-width:760px;margin:0 auto;padding:18px 16px 20px;display:flex;flex-direction:column;gap:14px}
+body:not(.embed) .pl{padding:28px 16px 40px}
+body.embed .topbar,body.embed .tabs,body.embed .footer{display:none}
+.brand{display:flex;align-items:center;gap:8px;font:800 12px var(--font-display);letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.brand i{width:8px;height:8px;border-radius:50%;background:var(--grad)}
+h1{font:800 clamp(20px,4.6vw,28px)/1.15 var(--font-display);letter-spacing:-.02em;margin:0}
+.sub{margin:4px 0 0;color:var(--dim);font-size:13.5px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.spk{position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;padding:16px 12px 14px;border-radius:16px;border:1px solid var(--line);
+  background:var(--surface);transition:border-color .25s,background .25s,transform .25s}
+.spk .av{flex:none;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font:800 17px var(--font-display);color:#fff}
+.spk b{display:block;font:750 15px var(--font-display);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.spk small{display:block;color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.spk .bars{position:absolute;right:12px;top:12px;display:flex;gap:3px;align-items:center;height:20px;opacity:0}
+.spk .bars span{width:3px;border-radius:2px;background:#fff;height:6px}
+.spk.on{transform:translateY(-1px)}
+.spk.on .bars{opacity:1}
+.spk.on .bars span{animation:bar .9s ease-in-out infinite}
+.spk.on .bars span:nth-child(2){animation-delay:.15s}.spk.on .bars span:nth-child(3){animation-delay:.3s}.spk.on .bars span:nth-child(4){animation-delay:.45s}
+@keyframes bar{0%,100%{height:5px}50%{height:19px}}
+@media (prefers-reduced-motion:reduce){.spk.on .bars span{animation:none;height:12px}.spk{transition:none}}
+.caption{min-height:72px;padding:14px 16px;border-radius:16px;background:rgba(255,255,255,.025);border:1px solid var(--line);font-size:16px;line-height:1.5}
+.caption b{font-family:var(--font-display);margin-right:6px}
+.caption.idle{color:var(--dim);font-size:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+button,.btn{font:750 14.5px var(--font-display);border-radius:14px;padding:12px 18px;cursor:pointer;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink);text-decoration:none;display:inline-flex;align-items:center;gap:8px}
+button.main{background:var(--grad);border:0;color:#fff;box-shadow:var(--glow);min-width:150px;justify-content:center}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,.btn:focus-visible,.line:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.bar{height:6px;border-radius:6px;background:rgba(255,255,255,.07);overflow:hidden;position:relative}
+.bar i{position:absolute;inset:0 auto 0 0;width:0;background:rgba(167,139,250,.45);transition:width .3s}
+.bar u{position:absolute;inset:0 auto 0 0;width:0;background:var(--grad);transition:width .3s}
+#status{font-size:13px;color:#c4b5fd;min-height:18px}
+#status.err{color:var(--bad,#f87171)}
+details summary{cursor:pointer;color:var(--accent);font-weight:650;font-size:13.5px}
+ol{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:2px;max-height:300px;overflow:auto}
+.line{display:flex;gap:8px;padding:7px 10px;border-radius:10px;cursor:pointer;font-size:14px;color:var(--dim)}
+.line:hover{background:rgba(255,255,255,.04)}
+.line b{flex:none;font-family:var(--font-display);color:var(--ink)}
+.line.made{color:var(--ink)}
+.line.now{background:rgba(167,139,250,.12)}
+.line h4{margin:0}
+.chap{font:800 11px var(--font-display);letter-spacing:.12em;text-transform:uppercase;color:var(--dim);padding:10px 10px 2px}
+.note{font-size:12px;color:var(--dim);margin:0}
+</style></head>
+<body data-page="player" data-mode="{{MODE}}">
+<script>if (/[?&]embed=/.test(location.search) && window.parent !== window) document.body.classList.add('embed');</script>
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+</div></header>
+<main class="pl">
+  <div class="brand"><i></i>Voxa · made on this device</div>
+  <div><h1 id="title">Loading…</h1><p class="sub" id="sub"></p></div>
+  <div class="cards" id="cards"></div>
+  <div class="caption idle" id="caption" aria-live="polite">Press Play. Your browser makes every voice itself, so nothing you hear is sent anywhere.</div>
+  <div class="bar" title="Made · played"><i id="made"></i><u id="played"></u></div>
+  <div class="row">
+    <button class="main" id="play" disabled>▶ Play</button>
+    <button id="save" disabled>Save MP3</button>
+    <button id="open" hidden>Open in Voxa ↗</button>
+  </div>
+  <div id="status" role="status"></div>
+  <details id="scriptbox"><summary>Script</summary><ol id="lines"></ol></details>
+  <p class="note">Voices are synthetic (AI). Made with <a href="/" target="_blank" rel="noopener" style="color:var(--accent)">Voxa</a>, in your browser: no cloud, no server.</p>
+</main>
+{{FOOTER}}
+<script type="module">
+import { createLite, IS_PHONE, DESKTOP_ONLY } from '/lite.js?v={{LITE_VERSION}}';
+import { floatToInt16, SAMPLE_RATE } from '/book.js?v={{BOOK_VERSION}}';
+
+const $ = s => document.querySelector(s);
+const params = new URLSearchParams(location.search);
+const EMBED = params.has('embed') && window.parent !== window;
+if (EMBED) document.body.classList.add('embed');
+const SEED = 4242424242424242;
+const COLORS = ['linear-gradient(135deg,#f472b6,#a855f7)', 'linear-gradient(135deg,#22d3ee,#6366f1)',
+  'linear-gradient(135deg,#fbbf24,#f97316)', 'linear-gradient(135deg,#34d399,#0ea5e9)', 'linear-gradient(135deg,#a78bfa,#ec4899)'];
+const GLOWS = ['rgba(244,114,182,.5)', 'rgba(34,211,238,.5)', 'rgba(251,191,36,.5)', 'rgba(52,211,153,.5)', 'rgba(167,139,250,.5)'];
+
+function el(tag, props = {}, ...children) {
+  const n = Object.assign(document.createElement(tag), props);
+  n.append(...children);
+  return n;
+}
+function status(text, err = false) { $('#status').textContent = text; $('#status').className = err ? 'err' : ''; }
+function tellHeight() {
+  if (EMBED) window.parent.postMessage({ type: 'voxa-height', height: document.documentElement.scrollHeight }, '*');
+}
+new ResizeObserver(tellHeight).observe(document.body);
+
+function readData() {
+  const m = location.hash.match(/[#&]d=([^&]+)/);
+  if (!m) return null;
+  const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+  const bytes = Uint8Array.from(atob(b64 + '==='.slice((b64.length + 3) % 4)), c => c.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+let D;
+try { D = readData(); } catch { D = null; }
+if (!D || !Array.isArray(D.lines) || !D.lines.length || !Array.isArray(D.speakers)) {
+  $('#title').textContent = 'Nothing to play';
+  $('#caption').textContent = 'This player is opened by an AI assistant (Claude) with a script. See voxa’s API page to connect one.';
+  throw new Error('no data');
+}
+
+// --- The page --------------------------------------------------------------------------------
+const who = Object.fromEntries(D.speakers.map((s, i) => [s.name, { ...s, i }]));
+$('#title').textContent = D.title || 'Voxa';
+document.title = `${D.title || 'Voxa'} · Voxa player`;
+const chars = D.lines.reduce((a, l) => a + l.text.length, 0);
+$('#sub').textContent = `${D.speakers.length === 1 ? 'Read aloud' : D.speakers.length + ' voices'} · about ${Math.max(1, Math.round(chars / 15 / 60))} min · ${D.lines.length} lines`;
+$('#cards').replaceChildren(...D.speakers.map((s, i) => el('div', { className: 'spk', id: 'card' + i },
+  el('div', { className: 'av', textContent: (s.name[0] || '?').toUpperCase(), style: `background:${COLORS[i % COLORS.length]}` }),
+  el('div', { style: 'min-width:0;max-width:100%' }, el('b', { textContent: s.name }),
+    el('small', { textContent: `${s.voice_name}${s.desktop ? ' · desktop voice' : ''}` })),
+  el('div', { className: 'bars' }, el('span'), el('span'), el('span'), el('span')))));
+let lastChapter = -1;
+const items = [];
+for (const [i, l] of D.lines.entries()) {
+  if ((D.chapters || []).length > 1 && l.chapter !== lastChapter) items.push(el('li', { className: 'chap', textContent: D.chapters[l.chapter] }));
+  lastChapter = l.chapter;
+  const li = el('li', { className: 'line', id: 'l' + i, tabIndex: 0, title: 'Play from here' }, el('b', { textContent: l.speaker }), el('span', { textContent: l.text }));
+  li.onclick = () => jump(i);
+  li.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(i); } };
+  items.push(li);
+}
+$('#lines').replaceChildren(...items);
+if (EMBED) $('#open').hidden = false;
+
+const phoneBlocked = IS_PHONE && D.speakers.find(s => s.desktop);
+if (phoneBlocked) status(`${phoneBlocked.name} has a desktop voice. ${DESKTOP_ONLY}`, true);
+$('#play').disabled = !!phoneBlocked;
+tellHeight();
+
+// --- Making the audio, in this browser --------------------------------------------------------
+let VOICES = null;
+const LITE = createLite(() => VOICES);
+const pcm = new Array(D.lines.length).fill(null);
+let making = null;
+
+function voice(id) {
+  for (const list of Object.values(VOICES.lite.voices)) {
+    const v = list.find(x => x.id === id);
+    if (v) return v;
+  }
+  throw new Error(`The voice ${id} is not on this Voxa site any more.`);
+}
+
+async function make() {
+  VOICES ||= await fetch('/api/voices').then(r => { if (!r.ok) throw new Error('Could not reach Voxa'); return r.json(); });
+  const wake = navigator.wakeLock ? await navigator.wakeLock.request('screen').catch(() => null) : null;
+  try {
+    for (let i = 0; i < D.lines.length; i++) {
+      if (pcm[i]) continue;
+      const l = D.lines[i], s = who[l.speaker];
+      const label = `Making line ${i + 1} of ${D.lines.length} (${l.speaker})`;
+      status(label + '…');
+      pcm[i] = await LITE.synth(voice(s.voice), l.text, {
+        temperature: D.temperature ?? 0.3, seed: SEED,
+        status: t => status(/\d/.test(t) && !/^Making/.test(t) ? `${t}` : label + '…'),
+      });
+      $('#l' + i).classList.add('made');
+      $('#made').style.width = (100 * (i + 1) / D.lines.length) + '%';
+      if (waiting === i && state === 'playing') start(i);
+    }
+    status(`All ${D.lines.length} lines made on this device.`);
+    $('#save').disabled = false;
+  } finally {
+    if (wake) wake.release().catch(() => {});
+  }
+}
+
+// --- Playing: each line as soon as it is made -------------------------------------------------
+let ctx = null, state = 'idle', cur = 0, src = null, timer = null, waiting = null, resumeAt = null;
+const gapAfter = i => {
+  const a = D.lines[i], b = D.lines[i + 1], p = D.pause ?? 0.35;
+  return !b ? 0 : b.chapter !== a.chapter ? p * 2.5 : b.speaker !== a.speaker ? p : p * 0.6;
+};
+function highlight(i) {
+  document.querySelectorAll('.spk').forEach(c => { c.classList.remove('on'); c.style.borderColor = ''; c.style.boxShadow = ''; });
+  document.querySelectorAll('.line.now').forEach(x => x.classList.remove('now'));
+  if (i == null) return;
+  const s = who[D.lines[i].speaker], card = $('#card' + s.i);
+  card.classList.add('on'); card.style.borderColor = GLOWS[s.i % GLOWS.length]; card.style.boxShadow = `0 0 26px -6px ${GLOWS[s.i % GLOWS.length]}`;
+  $('#l' + i).classList.add('now');
+  $('#caption').className = 'caption';
+  $('#caption').replaceChildren(el('b', { textContent: D.lines[i].speaker }), D.lines[i].text);
+  $('#played').style.width = (100 * i / D.lines.length) + '%';
+}
+function start(i) {
+  clearTimeout(timer); timer = null; waiting = null;
+  if (i >= D.lines.length) { finish(); return; }
+  cur = i;
+  highlight(i);
+  if (!pcm[i]) { waiting = i; return; }
+  const buf = ctx.createBuffer(1, pcm[i].length, SAMPLE_RATE);
+  buf.copyToChannel(pcm[i], 0);
+  const me = ctx.createBufferSource();
+  me.buffer = buf; me.connect(ctx.destination);
+  me.onended = () => {
+    if (src !== me) return;
+    src = null;
+    if (state === 'playing') timer = setTimeout(() => start(i + 1), gapAfter(i) * 1000);
+    else resumeAt = i + 1;
+  };
+  src = me; me.start();
+}
+function stopSource() {
+  clearTimeout(timer); timer = null;
+  if (src) { const s = src; src = null; s.onended = null; try { s.stop(); } catch {} }
+}
+function finish() {
+  state = 'idle'; cur = 0; highlight(null);
+  $('#played').style.width = '100%';
+  $('#play').textContent = '▶ Play again';
+  $('#caption').className = 'caption idle';
+  $('#caption').textContent = 'The end. Play again, or save the MP3.';
+}
+async function play() {
+  ctx ||= new AudioContext();
+  await ctx.resume();
+  making ||= make().catch(e => { making = null; status(`Stopped: ${e.message}`, true); });
+  if (state === 'paused') {
+    state = 'playing';
+    if (resumeAt != null) { const n = resumeAt; resumeAt = null; start(n); }
+    else if (waiting != null || (!src && !timer)) start(waiting ?? cur);
+  } else { state = 'playing'; start(cur); }
+  $('#play').textContent = '❚❚ Pause';
+}
+function pause() {
+  state = 'paused';
+  if (timer) { clearTimeout(timer); timer = null; resumeAt = cur + 1; }
+  ctx.suspend();
+  $('#play').textContent = '▶ Play';
+}
+async function jump(i) {
+  stopSource(); resumeAt = null;
+  ctx ||= new AudioContext();
+  await ctx.resume();
+  making ||= make().catch(e => { making = null; status(`Stopped: ${e.message}`, true); });
+  state = 'playing'; $('#play').textContent = '❚❚ Pause';
+  start(i);
+}
+$('#play').onclick = () => state === 'playing' ? pause() : play();
+
+// --- Saving -----------------------------------------------------------------------------------
+function joined() {
+  const gaps = D.lines.map((_, i) => Math.round(SAMPLE_RATE * gapAfter(i)));
+  const out = new Int16Array(pcm.reduce((a, p, i) => a + p.length + gaps[i], 0));
+  let at = 0;
+  pcm.forEach((p, i) => { out.set(floatToInt16(p), at); at += p.length + gaps[i]; });
+  return out;
+}
+$('#save').onclick = async () => {
+  $('#save').disabled = true;
+  status('Making the MP3…');
+  try {
+    const worker = new Worker('/mp3-worker.js', { type: 'module' });
+    const mp3 = await new Promise((ok, fail) => {
+      worker.onmessage = e => { if (e.data.progress != null) return; e.data.error ? fail(new Error(e.data.error)) : ok(e.data.mp3); };
+      const all = joined();
+      worker.postMessage({ id: 1, pcm: all }, [all.buffer]);
+    });
+    worker.terminate();
+    const url = URL.createObjectURL(new Blob([mp3], { type: 'audio/mpeg' }));
+    const name = (D.title || 'Voxa').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) || 'Voxa';
+    const a = el('a', { href: url, download: name + '.mp3' });
+    document.body.append(a); a.click(); a.remove();
+    status(EMBED ? 'MP3 ready. If nothing downloaded, this chat app blocks downloads: use “Open in Voxa”.' : 'MP3 saved.');
+  } catch (e) {
+    status(`Could not make the MP3: ${e.message}`, true);
+  } finally {
+    $('#save').disabled = false;
+  }
+};
+$('#open').onclick = () => {
+  const url = location.origin + '/player' + location.hash;
+  window.parent.postMessage({ type: 'voxa-open', url }, '*');
+};
+</script>
+</body></html>

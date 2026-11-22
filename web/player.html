@@ -104,10 +104,13 @@ function readData() {
 }
 
 let D;
-try { D = readData(); } catch { D = null; }
+try {
+  const pid = params.get('p');
+  D = pid && /^[0-9a-f]{16}$/.test(pid) ? await fetch('/v1/play/' + pid).then(r => r.ok ? r.json() : null) : readData();
+} catch { D = null; }
 if (!D || !Array.isArray(D.lines) || !D.lines.length || !Array.isArray(D.speakers)) {
   $('#title').textContent = 'Nothing to play';
-  $('#caption').textContent = 'This player is opened by an AI assistant (Claude) with a script. See voxa’s API page to connect one.';
+  $('#caption').textContent = 'This player is opened by an AI assistant with a script, or the link has expired. See Voxa’s MCP & API page to connect one.';
   throw new Error('no data');
 }
 
@@ -282,7 +285,7 @@ $('#save').onclick = async () => {
   }
 };
 $('#open').onclick = () => {
-  const url = location.origin + '/player' + location.hash;
+  const url = location.origin + '/player' + (params.get('p') ? '?p=' + params.get('p') : '') + location.hash;
   window.parent.postMessage({ type: 'voxa-open', url }, '*');
 };
 </script>

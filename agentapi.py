@@ -464,13 +464,26 @@ VIEW_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 html,body{margin:0;background:transparent;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;color:#e7e5f2}
-iframe{display:block;width:100%;height:440px;border:0;border-radius:16px;background:#0f0d1a}
-p{margin:12px 4px;color:#a8a3bd}
+.card{border-radius:16px;padding:16px 18px;background:#0f0d1a;border:1px solid rgba(255,255,255,.08)}
+.brand{font:800 11px system-ui;letter-spacing:.14em;text-transform:uppercase;color:#8f97b5}
+h1{font:800 20px/1.2 system-ui;margin:6px 0 4px;color:#f2f4ff}
+.who{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 14px}
+.who span{padding:4px 10px;border-radius:999px;background:rgba(167,139,250,.14);font-size:13px}
+.sub,.note{color:#a8a3bd;margin:0}
+.note{font-size:12.5px;margin-top:10px}
+button{font:750 14.5px system-ui;border:0;border-radius:14px;padding:12px 18px;cursor:pointer;color:#fff;
+  background:linear-gradient(115deg,#5e17eb,#7c3aed 55%,#22d3ee)}
+button:focus-visible{outline:2px solid #a78bfa;outline-offset:2px}
+iframe{display:block;width:100%;height:440px;border:0;border-radius:16px;background:#0f0d1a;margin-bottom:10px}
+.small button{padding:8px 12px;font-size:13px;background:rgba(255,255,255,.08)}
 </style></head><body>
-<p id="wait">Getting the Voxa player ready…</p>
+<div class="card" id="card"><div class="brand">Voxa · made on your device</div><h1 id="title">Getting the Voxa player ready…</h1>
+<p class="sub" id="sub"></p><div class="who" id="who"></div>
+<div id="act" hidden><button id="go" type="button">▶ Open the Voxa player</button>
+<p class="note">Opens in your browser, where Voxa's voices make the audio on your device: free, nothing sent to a server.</p></div></div>
 <script>
 const SITE = __SITE__;
-let seq = 0, frame = null, theme = null;
+let seq = 0, frame = null, theme = null, allowed;   // allowed: the frame origins Claude reports (undefined: not reported)
 const pending = new Map();
 function send(msg) { window.parent.postMessage(msg, '*'); }
 function request(method, params) {
@@ -487,23 +500,34 @@ function size() {
   notify('ui/notifications/size-changed', { width: w, height: h });
 }
 new ResizeObserver(size).observe(document.body);
+const openLink = url => request('ui/open-link', { url }).catch(() => {});
 
-function open(data) {
-  if (frame || !data || !data.lines) return;
+function show(data) {
+  if (!data || !data.lines) return;
+  const $ = id => document.getElementById(id);
+  $('title').textContent = data.title || 'Voxa';
+  $('sub').textContent = `${data.lines.length} lines · ${data.minutes >= 1 ? 'about ' + data.minutes + ' min' : 'under a minute'}`;
+  $('who').replaceChildren(...data.speakers.map(s => Object.assign(document.createElement('span'), { textContent: `${s.name} · ${s.voice_name}` })));
+  $('act').hidden = false;
+  $('go').onclick = () => openLink(data.player_url);
+  // Play right here when Claude lets the view frame Voxa; otherwise (or as well) the button opens it.
+  const canFrame = allowed === undefined || allowed.some(o => o === SITE || (o.includes('*.') && SITE.endsWith(o.split('*')[1])));
+  if (!canFrame || frame) return size();
   const hash = 'd=' + btoa(unescape(encodeURIComponent(JSON.stringify(data)))).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
   frame = document.createElement('iframe');
   frame.allow = 'autoplay; clipboard-write';
   frame.title = 'Voxa player';
   frame.src = SITE + '/player?embed=1' + (theme ? '&theme=' + theme : '') + '#' + hash;
-  document.getElementById('wait').replaceWith(frame);
+  document.body.prepend(frame);
+  document.getElementById('card').classList.add('small');
+  $('go').textContent = 'Open in a browser tab ↗';
   size();
 }
 
 window.addEventListener('message', e => {
   const m = e.data;
   if (frame && e.source === frame.contentWindow) {            // from the player
-    if (m && m.type === 'voxa-open' && typeof m.url === 'string' && m.url.startsWith(SITE + '/'))
-      request('ui/open-link', { url: m.url }).catch(() => {});
+    if (m && m.type === 'voxa-open' && typeof m.url === 'string' && m.url.startsWith(SITE + '/')) openLink(m.url);
     if (m && m.type === 'voxa-height' && m.height > 120) { frame.style.height = Math.min(900, m.height) + 'px'; size(); }
     return;
   }
@@ -514,8 +538,8 @@ window.addEventListener('message', e => {
   }
   if (m.method === 'ui/notifications/tool-result') {
     const r = m.params || {};
-    if (r.isError) { document.getElementById('wait').textContent = ((r.content || [])[0] || {}).text || 'Voxa could not open the player.'; return; }
-    open(r.structuredContent);
+    if (r.isError) { document.getElementById('title').textContent = ((r.content || [])[0] || {}).text || 'Voxa could not open the player.'; return size(); }
+    show(r.structuredContent);
   }
   if (m.id != null && m.method) send({ jsonrpc: '2.0', id: m.id, result: {} });   // e.g. ui/resource-teardown
 });
@@ -526,6 +550,8 @@ request('ui/initialize', {
   appCapabilities: { availableDisplayModes: ['inline'] }, capabilities: {},
 }).then(r => {
   theme = r && r.hostContext && r.hostContext.theme;
+  const fd = r && r.hostCapabilities && r.hostCapabilities.sandbox && r.hostCapabilities.sandbox.csp && r.hostCapabilities.sandbox.csp.frameDomains;
+  allowed = Array.isArray(fd) ? fd : undefined;
   notify('ui/notifications/initialized', {});
   size();
 }).catch(() => notify('ui/notifications/initialized', {}));
@@ -950,22 +976,63 @@ class Api:
                 'chapters': [c['title'] for c in chapters], 'speakers': speakers, 'lines': lines,
                 'characters': n, 'minutes': round(n / 15 / 60, 1), 'site': base}
 
+    PLAYER_KEYS = ('title', 'style', 'temperature', 'pause', 'chapters', 'speakers', 'lines')
+    MAX_PLAYS = 5000                  # stored scripts for long player links; the oldest go first
+
+    def player_link(self, d, base):
+        """A link that opens the player with this script. Short scripts travel in the link itself (after #, so
+        they never reach a server); long ones are kept here as text, 30 days, and the link carries an id."""
+        data = json.dumps({k: d[k] for k in self.PLAYER_KEYS}, ensure_ascii=False, separators=(',', ':'))
+        link = base + '/player#d=' + _b64(data)
+        if len(link) <= 6000:
+            return link
+        folder = os.path.join(self.data_dir, 'plays')
+        os.makedirs(folder, exist_ok=True)
+        old = sorted((os.path.getmtime(os.path.join(folder, n)), n) for n in os.listdir(folder))
+        for t, n in old[:max(0, len(old) - self.MAX_PLAYS + 1)] + [x for x in old if x[0] < time.time() - 30 * 86400]:
+            try:
+                os.remove(os.path.join(folder, n))
+            except OSError:
+                pass
+        pid = uuid.uuid4().hex[:16]
+        with open(os.path.join(folder, pid + '.json'), 'w', encoding='utf-8') as f:
+            f.write(data)
+        return f'{base}/player?p={pid}'
+
+    def stored_play(self, pid):
+        if not re.fullmatch(r'[0-9a-f]{16}', pid or ''):
+            raise ApiError(404, 'Not found.')
+        try:
+            with open(os.path.join(self.data_dir, 'plays', pid + '.json'), 'rb') as f:
+                return f.read()
+        except OSError:
+            raise ApiError(404, 'This player link has expired. Ask the AI to make it again.') from None
+
     def device_summary(self, d, base):
         who = ', '.join(f"{s['name']} ({s['voice_name']}{', desktop only' if s['desktop'] else ''})" for s in d['speakers'])
-        link = base + '/player#d=' + _b64(json.dumps({k: d[k] for k in ('title', 'style', 'temperature', 'pause', 'chapters', 'speakers', 'lines')},
-                                                     ensure_ascii=False, separators=(',', ':')))
+        link = self.player_link(d, base)
         out = (f'The Voxa player is showing "{d["title"]}" in the chat: {len(d["lines"])} lines, '
                f'{"about %s minutes" % d["minutes"] if d["minutes"] >= 1 else "under a minute"}, '
                f'voices: {who}. It makes the audio in the user\'s own browser, so nothing is sent to a server and there is '
                'no limit; the first time, the browser downloads the voices (tens of MB). The user presses Play, '
                'and can save an MP3 when it is done.')
-        if len(link) < 30000:
-            out += f' If no player appears (an app without MCP Apps), give the user this link, which opens the same player on Voxa: {link}'
-        return out
+        return out + f' If no player appears (an app without MCP Apps), give the user this link, which opens the same player on Voxa: {link}'
 
-    def docs(self, base):
-        """GET /v1/docs: what an agent can do here (no key needed to read it)."""
-        return {'name': 'Voxa API', 'mcp': f'{base}/mcp', 'auth': 'Authorization: Bearer <key> (MCP also accepts ?key=<key>)',
+    def public_docs(self, base):
+        return {'name': 'Voxa API', 'free': True,
+                'about': "Voxa's voices run in the user's own browser or computer: free, no key, no limit.",
+                'mcp': f'{base}/mcp', 'openapi': f'{base}/openapi.json', 'local_mcp': f'uv run {base}/voxa-mcp.py',
+                'endpoints': {
+                    'POST /v1/play {script | text, voices?, voice?, language?, style?, title?}':
+                        'a link to the Voxa player, which makes and plays the audio in the browser',
+                    'GET /v1/device/voices?language=&gender=': 'the on-device voices (no language: the languages)'},
+                'tools': [t['name'] for t in self.DEVICE_TOOLS], 'instructions': self.DEVICE_INSTRUCTIONS}
+
+    def docs(self, base, key=None):
+        """GET /v1/docs: the free API; with a key, also the server's own (private) API."""
+        if not self.keys.check(key):
+            return self.public_docs(base)
+        return {'name': 'Voxa API', 'free_api': self.public_docs(base), 'mcp': f'{base}/mcp', 'auth': 'Authorization: Bearer <key> (MCP also accepts ?key=<key>)',
                 'endpoints': {
                     'GET /v1/languages': 'languages and how many voices each has',
                     'GET /v1/voices?language=&engine=&gender=': 'voices to choose from',
@@ -979,10 +1046,57 @@ class Api:
                     'GET /v1/jobs/{id}/audio.mp3|wav?token=': 'the finished audio (signed link, no key needed)'},
                 'tools': [t['name'] for t in self.DEVICE_TOOLS + self.TOOLS], 'instructions': self.INSTRUCTIONS}
 
+    def openapi(self, base):
+        """OpenAPI 3.1 for the free endpoints, e.g. for a custom GPT's actions."""
+        play = next(t for t in self.DEVICE_TOOLS if t['name'] == 'play_on_device')
+        return {
+            'openapi': '3.1.0',
+            'info': {'title': 'Voxa', 'version': '1.0.0',
+                     'description': "Voxa reads podcasts and texts aloud with voices that run in the user's own browser. "
+                                    'Free, no key. Call playPodcast with a script, then give the user player_url.'},
+            'servers': [{'url': base}],
+            'paths': {
+                '/v1/play': {'post': {
+                    'operationId': 'playPodcast',
+                    'summary': 'Get a link to the Voxa player for a podcast script or a text',
+                    'description': 'Write the script with one turn per line as "Name: what they say" (optional "# Title" and '
+                                   '"## Part" headings), or give "text" to read with one voice. Returns player_url: the '
+                                   "user opens it and presses Play; the audio is made in their browser. Voices are synthetic.",
+                    'requestBody': {'required': True, 'content': {'application/json': {'schema': play['inputSchema']}}},
+                    'responses': {'200': {'description': 'The player link', 'content': {'application/json': {'schema': {
+                        'type': 'object', 'properties': {
+                            'player_url': {'type': 'string'}, 'title': {'type': 'string'}, 'lines': {'type': 'integer'},
+                            'minutes': {'type': 'number'},
+                            'speakers': {'type': 'array', 'items': {'type': 'object', 'properties': {
+                                'name': {'type': 'string'}, 'voice': {'type': 'string'}, 'voice_name': {'type': 'string'}}}}}}}}},
+                                  '400': {'description': 'Something to fix, in "error"'}}}},
+                '/v1/device/voices': {'get': {
+                    'operationId': 'listVoices',
+                    'summary': 'On-device voices for a language, or the languages when none is given',
+                    'parameters': [
+                        {'name': 'language', 'in': 'query', 'schema': {'type': 'string'},
+                         'description': 'e.g. "a" US English, "b" British English, "ar" Arabic, "f" French, "de" German'},
+                        {'name': 'gender', 'in': 'query', 'schema': {'type': 'string', 'enum': ['female', 'male']}}],
+                    'responses': {'200': {'description': 'Voices or languages', 'content': {'application/json': {'schema': {'type': 'object'}}}}}}},
+            }}
+
     def rest(self, method, path, query, body, key, base):
         """Returns (status, body, content_type, headers)."""
         if method == 'GET' and path == '/v1/docs':
-            return 200, self.docs(base), None, None
+            return 200, self.docs(base, key), None, None
+        if method == 'GET' and path == '/v1/openapi.json':
+            return 200, self.openapi(base), None, None
+        if method == 'POST' and path == '/v1/play':
+            d = self.device_play(base, body or {})
+            return 200, {'player_url': self.player_link(d, base), 'title': d['title'], 'speakers': d['speakers'],
+                         'lines': len(d['lines']), 'minutes': d['minutes'],
+                         'note': "Give the user player_url: the audio is made in their browser when they press Play."}, None, None
+        if method == 'GET' and path == '/v1/device/voices':
+            q = lambda k: (query.get(k) or [None])[0]
+            return 200, self._device_call(base, 'list_device_voices', {'language': q('language'), 'gender': q('gender')}), None, None
+        m = re.fullmatch(r'/v1/play/([0-9a-f]{16})', path)
+        if m and method == 'GET':
+            return 200, self.stored_play(m.group(1)), 'application/json', {'Cache-Control': 'public, max-age=86400'}
         if method == 'GET' and path == '/v1/local':
             return 200, self.local_manifest(base), None, None
         m = re.fullmatch(r'/v1/jobs/([0-9a-f]{16})/audio\.(wav|mp3)', path)
@@ -1101,6 +1215,20 @@ class Api:
                           'list_voices (Supertonic 3, 31 languages). To play something in the chat instead, use '
                           'play_on_device. Voices are synthetic; tell listeners they are AI.')
 
+    # Titles and hints for every tool (Claude uses them for permissions; the directory requires them).
+    ANNOTATIONS = {
+        'list_device_voices': ('On-device voices', True), 'play_on_device': ('Play in the chat with Voxa', True),
+        'list_languages': ('Languages', True), 'list_voices': ('Voices', True), 'get_job': ('Job status', True),
+        'list_jobs': ('Recent jobs', True), 'make_speech': ('Read a text aloud', False),
+        'create_podcast': ('Make a podcast', False), 'create_audiobook': ('Make an audiobook', False),
+        'edit_line': ('Remake one line', 'destructive'), 'cancel_job': ('Stop a job', 'destructive'),
+        'open_audio': ('Play a saved file', False)}
+
+    DEVICE_INSTRUCTIONS = ("Voxa reads podcasts and texts aloud in the user's own browser, free. Write the script "
+                           '("Name: line" turns, optional "# Title" and "## Part" headings) and call play_on_device; '
+                           'the Voxa player appears in the chat and the user presses Play. Pick voices with '
+                           'list_device_voices, or leave them to Voxa. Voices are synthetic; tell listeners they are AI.')
+
     def open_audio(self, owner, job_id):
         import subprocess
         job = self._job(owner, job_id)
@@ -1187,10 +1315,13 @@ class Api:
                        'capabilities': {'tools': {'listChanged': False}, 'resources': {},
                                         'extensions': {'io.modelcontextprotocol/ui': {'mimeTypes': ['text/html;profile=mcp-app']}}},
                        'serverInfo': {'name': 'voxa', 'title': 'Voxa', 'version': '1.0.0'},
-                       'instructions': self.LOCAL_INSTRUCTIONS if self.out_dir else self.INSTRUCTIONS})
+                       'instructions': self.LOCAL_INSTRUCTIONS if self.out_dir else
+                       self.INSTRUCTIONS if self.keys.check(key) else self.DEVICE_INSTRUCTIONS})
         if method == 'ping':
             return ok({})
         if method == 'tools/list':
+            if not self.out_dir and not self.keys.check(key):
+                return ok({'tools': self.DEVICE_TOOLS})     # without a key: only the free, on-device tools
             return ok({'tools': self.DEVICE_TOOLS + self.TOOLS + (self.LOCAL_TOOLS if self.out_dir else [])})
         if method == 'resources/list':
             r = self.player_resource(base)
@@ -1207,6 +1338,7 @@ class Api:
                 return ok({'isError': True, 'content': [{'type': 'text', 'text': e.message}]})
             if params['name'] == 'play_on_device':
                 data, summary = result
+                data = {**data, 'player_url': self.player_link(data, base)}
                 return ok({'content': [{'type': 'text', 'text': summary}], 'structuredContent': data})
             return ok({'content': [{'type': 'text', 'text': json.dumps(result, ensure_ascii=False)}],
                        'structuredContent': result})
@@ -1357,6 +1489,17 @@ def _quiet(fn):
         fn()
     except Exception as e:  # tried again on first use
         log.warning('Voxa: download failed for now (%s)', e)
+
+
+def _annotate():
+    for tool in Api.DEVICE_TOOLS + Api.TOOLS + Api.LOCAL_TOOLS:
+        title, kind = Api.ANNOTATIONS[tool['name']]
+        tool['title'] = title
+        tool['annotations'] = {'title': title, 'readOnlyHint': kind is True, 'destructiveHint': kind == 'destructive',
+                               'openWorldHint': False}
+
+
+_annotate()
 
 
 if __name__ == '__main__':

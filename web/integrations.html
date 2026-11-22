@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Voxa MCP &amp; API · podcasts and audiobooks from Claude, ChatGPT or any AI</title>
+<meta name="description" content="Connect Voxa to Claude, ChatGPT or any AI with MCP or a REST API. The AI writes the script; Voxa's voices read it on your own device. Free, no key.">
+{{HEAD}}<style>
+.steps{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:12px}
+.steps li{padding-left:4px}
+.code{position:relative;display:flex;align-items:stretch;gap:8px;margin-top:8px}
+.code pre{flex:1;min-width:0;margin:0;background:var(--field,rgba(255,255,255,.04));border:1px solid var(--line);border-radius:12px;padding:11px 13px;
+  font:13px/1.5 var(--mono,ui-monospace,monospace);white-space:pre-wrap;word-break:break-all;color:var(--ink)}
+.code button{flex:none;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:12px;padding:0 14px;
+  font:700 13px var(--font-display);cursor:pointer}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.free{display:inline-block;margin-left:8px;padding:3px 9px;border-radius:999px;background:rgba(52,211,153,.14);color:#6ee7b7;
+  font:800 11px var(--font-display);letter-spacing:.08em;text-transform:uppercase;vertical-align:middle}
+.doc-body .ways,.ways{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:0;padding:0 !important;list-style:none}
+.doc-body .ways li{margin:0;border:1px solid var(--line);border-radius:16px;padding:14px 16px;background:var(--surface)}
+.ways b{display:block;font:750 16px var(--font-display);margin-bottom:4px}
+.ways span{color:var(--dim);font-size:14px}
+.doc-body .prompts,.prompts{display:flex;flex-direction:column;gap:8px;margin:0;padding:0 !important;list-style:none}
+.doc-body .prompts li{margin:0;border-left:3px solid var(--accent);padding:6px 12px;background:rgba(167,139,250,.06);border-radius:0 10px 10px 0;font-size:15px}
+.seg{display:flex;gap:6px;flex-wrap:wrap;padding:5px;border:1px solid var(--line);border-radius:16px;background:var(--surface);position:sticky;top:76px;z-index:2;backdrop-filter:blur(12px)}
+.seg button{flex:1 1 auto;border:0;background:transparent;color:var(--dim);border-radius:12px;padding:10px 14px;font:750 14px var(--font-display);cursor:pointer}
+.seg button[aria-selected=true]{background:var(--grad);color:#fff}
+.os{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.os button{border:1px solid var(--line);background:transparent;color:var(--dim);border-radius:999px;padding:6px 12px;font:700 12.5px var(--font-display);cursor:pointer}
+.os button[aria-pressed=true]{background:var(--surface);color:var(--ink);border-color:var(--accent)}
+.dim{color:var(--dim)}
+h3{font:750 17px var(--font-display);margin:18px 0 8px}
+h3:first-child{margin-top:0}
+table.tools{width:100%;border-collapse:collapse;font-size:14px}
+table.tools td,table.tools th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+table.tools th{color:var(--dim);font:700 12px var(--font-display);letter-spacing:.06em;text-transform:uppercase}
+.panel[hidden]{display:none}
+</style></head>
+<body data-page="integrations" data-mode="{{MODE}}">
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+</div></header>
+<main class="wrap doc">
+<section class="hero">
+  <span class="eyebrow"><span class="dot"></span>MCP &amp; API</span>
+  <h1 class="display sm"><span class="grad-text">Voxa for AI assistants</span></h1>
+  <p class="lead">Connect Voxa to Claude, ChatGPT or any AI. The AI writes the podcast or picks the text; Voxa's voices
+    read it on your own device. Free, with no key and no limit: nothing is made on our servers.</p>
+</section>
+
+<section class="card flat doc-body">
+  <ul class="ways">
+    <li><b>MCP connector</b><span>For apps that support MCP. The AI writes the script and shows a Voxa card; the player opens in the chat where the app allows it, or in your browser.</span></li>
+    <li><b>On your computer</b><span>A local MCP server for desktop AI apps. Finished MP3s are saved in your Music folder.</span></li>
+    <li><b>REST API</b><span>For anything else: custom GPTs, scripts, your own app. One call returns a player link.</span></li>
+  </ul>
+</section>
+
+<div class="seg" role="tablist" aria-label="Your AI">
+  <button role="tab" id="t-claude" aria-controls="claude" aria-selected="true">Claude</button>
+  <button role="tab" id="t-chatgpt" aria-controls="chatgpt" aria-selected="false">ChatGPT</button>
+  <button role="tab" id="t-other" aria-controls="other" aria-selected="false">Other AI apps</button>
+  <button role="tab" id="t-dev" aria-controls="dev" aria-selected="false">Developers</button>
+</div>
+
+<!-- Claude -->
+<div class="panel" id="claude" role="tabpanel" aria-labelledby="t-claude">
+<section class="card flat doc-body">
+  <div class="card-head"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg></span>
+    <div><h2>In the Claude chat <span class="free">Free</span></h2></div></div>
+  <ol class="steps">
+    <li>In Claude, open <b>Settings → Connectors</b> and choose <b>Add custom connector</b>.</li>
+    <li>Name it <b>Voxa</b> and paste this address:
+      <div class="code"><pre data-copy>https://voxa-zpukmw.fly.dev/mcp</pre><button type="button">Copy</button></div></li>
+    <li>In a new chat, turn on Voxa and ask: <i>“Use Voxa to make a two-minute podcast about coffee, and play it.”</i></li>
+  </ol>
+  <p class="dim">Claude shows a Voxa card with the episode. Where Claude allows it, the player runs right in the chat;
+    otherwise press <b>Open the Voxa player</b> and it opens in your browser. The first time, your browser downloads the voices
+    (tens of MB); after that they are kept. Save the MP3 from the player.</p>
+</section>
+<section class="card flat doc-body">
+  <div class="card-head"><span class="ico cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+    <div><h2>Claude Code and Claude Desktop, on your computer <span class="free">Free</span></h2></div></div>
+  <ol class="steps">
+    <li>Install <a href="https://docs.astral.sh/uv/" target="_blank" rel="noopener">uv</a>, a small tool that runs Voxa with everything it needs:
+      <div class="os" role="group" aria-label="Your computer">
+        <button type="button" data-os="unix" aria-pressed="true">Mac or Linux</button>
+        <button type="button" data-os="win" aria-pressed="false">Windows</button>
+      </div>
+      <div class="code" data-os-show="unix"><pre data-copy>curl -LsSf https://astral.sh/uv/install.sh | sh</pre><button type="button">Copy</button></div>
+      <div class="code" data-os-show="win" hidden><pre data-copy>powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"</pre><button type="button">Copy</button></div></li>
+    <li><b>Claude Code:</b> run
+      <div class="code"><pre data-copy>claude mcp add voxa -- uv run https://voxa-zpukmw.fly.dev/voxa-mcp.py</pre><button type="button">Copy</button></div>
+      <p style="margin:12px 0 0"><b>Claude Desktop:</b> Settings → Developer → Edit Config, and put this in the file:</p>
+      <div class="code"><pre data-copy>{"mcpServers": {"voxa": {"command": "uv", "args": ["run", "https://voxa-zpukmw.fly.dev/voxa-mcp.py"]}}}</pre><button type="button">Copy</button></div>
+      <p class="dim" style="margin:8px 0 0">On a Mac, if Claude Desktop cannot find uv, run <code>which uv</code> in Terminal and put that full path
+        (usually <code>/Users/<i>you</i>/.local/bin/uv</code>) in place of <code>"uv"</code>. Then restart Claude Desktop.</p></li>
+    <li>Ask: <i>“Use Voxa to read this article aloud in Lina’s voice.”</i> The MP3 lands in <b>Music → Voxa</b>.</li>
+  </ol>
+  <p class="dim">The first time, Voxa downloads its voices (111 MB) from this site; after that it works offline. Ten voices in 31 languages,
+    including Arabic. To check it works: <code>uv run <span class="site">https://voxa-zpukmw.fly.dev</span>/voxa-mcp.py --check</code></p>
+</section>
+</div>
+
+<!-- ChatGPT -->
+<div class="panel" id="chatgpt" role="tabpanel" aria-labelledby="t-chatgpt" hidden>
+<section class="card flat doc-body">
+  <div class="card-head"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg></span>
+    <div><h2>A custom GPT <span class="free">Free</span></h2></div></div>
+  <ol class="steps">
+    <li>In ChatGPT, open <b>GPTs → Create</b>, then <b>Configure → Create new action</b>.</li>
+    <li>Choose <b>Import from URL</b> and paste:
+      <div class="code"><pre data-copy>https://voxa-zpukmw.fly.dev/openapi.json</pre><button type="button">Copy</button></div>
+      Set <b>Authentication</b> to <b>None</b>, and the privacy policy to
+      <div class="code"><pre data-copy>https://voxa-zpukmw.fly.dev/privacy</pre><button type="button">Copy</button></div></li>
+    <li>In the GPT's instructions, add: <i>“Write podcast scripts as ‘Name: line’ turns, call playPodcast, and give me the player link.”</i></li>
+  </ol>
+  <p class="dim">The GPT answers with a link to the Voxa player. Open it and press Play: the voices run in your browser.</p>
+</section>
+<section class="card flat doc-body">
+  <div class="card-head"><span class="ico cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></span>
+    <div><h2>As an MCP connector <span class="free">Free</span></h2></div></div>
+  <ol class="steps">
+    <li>Where your ChatGPT plan offers custom MCP connectors (in <b>Settings</b>, often under <b>Apps</b> or <b>Connectors</b>, with developer mode on), add a new one.</li>
+    <li>Use this address, with no authentication:
+      <div class="code"><pre data-copy>https://voxa-zpukmw.fly.dev/mcp</pre><button type="button">Copy</button></div></li>
+    <li>Ask: <i>“Use Voxa to play a short podcast about the news I pasted.”</i></li>
+  </ol>
+  <p class="dim">The menus differ between ChatGPT plans and change often; if you cannot find them, the custom GPT above works everywhere GPTs do.</p>
+</section>
+</div>
+
+<!-- Other AI apps -->
+<div class="panel" id="other" role="tabpanel" aria-labelledby="t-other" hidden>
+<section class="card flat doc-body">
+  <div class="card-head"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></span>
+    <div><h2>Any MCP app <span class="free">Free</span></h2></div></div>
+  <p>Cursor, VS Code, Windsurf, Gemini CLI, LM Studio and most AI apps can add an MCP server. Use one of these:</p>
+  <h3>Remote server (Streamable HTTP, no key)</h3>
+  <div class="code"><pre data-copy>https://voxa-zpukmw.fly.dev/mcp</pre><button type="button">Copy</button></div>
+  <h3>Local server (runs on your computer, saves MP3s)</h3>
+  <div class="code"><pre data-copy>uv run https://voxa-zpukmw.fly.dev/voxa-mcp.py</pre><button type="button">Copy</button></div>
+  <h3>Examples</h3>
+  <p class="dim" style="margin:0 0 4px">Cursor (<code>~/.cursor/mcp.json</code>), and most apps with an <code>mcpServers</code> file:</p>
+  <div class="code"><pre data-copy>{"mcpServers": {"voxa": {"url": "https://voxa-zpukmw.fly.dev/mcp"}}}</pre><button type="button">Copy</button></div>
+  <p class="dim" style="margin:12px 0 4px">VS Code (<code>.vscode/mcp.json</code>):</p>
+  <div class="code"><pre data-copy>{"servers": {"voxa": {"type": "http", "url": "https://voxa-zpukmw.fly.dev/mcp"}}}</pre><button type="button">Copy</button></div>
+  <p class="dim" style="margin:12px 0 4px">Gemini CLI (<code>~/.gemini/settings.json</code>):</p>
+  <div class="code"><pre data-copy>{"mcpServers": {"voxa": {"httpUrl": "https://voxa-zpukmw.fly.dev/mcp"}}}</pre><button type="button">Copy</button></div>
+  <p class="dim" style="margin:12px 0 4px">Any app, the local server:</p>
+  <div class="code"><pre data-copy>{"mcpServers": {"voxa": {"command": "uv", "args": ["run", "https://voxa-zpukmw.fly.dev/voxa-mcp.py"]}}}</pre><button type="button">Copy</button></div>
+  <p class="dim">Apps that show MCP Apps get the Voxa player in the chat; others get a link that opens it here.</p>
+</section>
+</div>
+
+<!-- Developers -->
+<div class="panel" id="dev" role="tabpanel" aria-labelledby="t-dev" hidden>
+<section class="card flat doc-body">
+  <div class="card-head"><span class="ico pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg></span>
+    <div><h2>REST API <span class="free">Free</span></h2></div></div>
+  <p>No key. Send a script; get a link to the Voxa player, which makes the audio in the browser of whoever opens it.</p>
+  <div class="code"><pre data-copy>curl https://voxa-zpukmw.fly.dev/v1/play -H 'Content-Type: application/json' -d '{
+  "title": "Coffee Talk",
+  "script": "Maya: Welcome to Coffee Talk!\nLeo: Thanks, Maya. Today: espresso.",
+  "style": "expressive"
+}'</pre><button type="button">Copy</button></div>
+  <p class="dim">Answer: <code>{"player_url": "…/player#d=…", "speakers": [{"name": "Maya", "voice": "wren"}, …], "minutes": 0.1}</code>.
+    Give <code>text</code> instead of <code>script</code> to read with one voice. Choose voices with <code>"voices": {"Maya": "wren"}</code>
+    from:</p>
+  <div class="code"><pre data-copy>curl 'https://voxa-zpukmw.fly.dev/v1/device/voices?language=ar'</pre><button type="button">Copy</button></div>
+  <p class="dim">Short scripts travel inside the link itself (after <code>#</code>, so they never reach a server). Longer ones are kept here as text
+    for 30 days and the link carries an id. Up to 60,000 characters.</p>
+  <h3>Descriptions for machines</h3>
+  <ul>
+    <li>OpenAPI: <a class="site-link" href="/openapi.json">/openapi.json</a> (custom GPTs, LangChain, and other tool frameworks)</li>
+    <li>Overview: <a class="site-link" href="/v1/docs">/v1/docs</a></li>
+    <li>MCP: <code>/mcp</code> (Streamable HTTP) and the local server <code>/voxa-mcp.py</code></li>
+  </ul>
+</section>
+<section class="card flat doc-body">
+  <div class="card-head"><span class="ico mint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/></svg></span>
+    <div><h2>Tools an AI gets</h2></div></div>
+  <table class="tools">
+    <tr><th>Tool</th><th>Where</th><th>What it does</th></tr>
+    <tr><td><code>play_on_device</code></td><td>MCP, both</td><td>The Voxa player for a podcast script or a text, in the chat or as a link</td></tr>
+    <tr><td><code>list_device_voices</code></td><td>MCP, both</td><td>The on-device voices by language</td></tr>
+    <tr><td><code>create_podcast</code>, <code>create_audiobook</code>, <code>make_speech</code></td><td>Local server</td><td>Make the audio on your computer and save an MP3</td></tr>
+    <tr><td><code>get_job</code>, <code>edit_line</code>, <code>open_audio</code></td><td>Local server</td><td>Follow a job, remake one line, play the file</td></tr>
+  </table>
+</section>
+</div>
+
+<section class="card flat doc-body">
+  <div class="card-head"><span class="ico pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l1.9 5 5 1.9-5 1.9-1.9 5-1.9-5-5-1.9 5-1.9z"/></svg></span>
+    <div><h2>Things to ask</h2></div></div>
+  <ul class="prompts">
+    <li>Make a podcast with three hosts about this PDF, in an expressive style.</li>
+    <li>Turn my notes into a five-minute episode and play it here.</li>
+    <li>Read chapter one of this story aloud, with a calm British voice.</li>
+    <li>Make the same episode in Arabic, with a man and a woman hosting.</li>
+  </ul>
+  <p class="dim">Voices are synthetic: when you share what you make, say it is AI.</p>
+</section>
+</main>
+{{FOOTER}}
+<script>
+// Show this site's own address in every command.
+const site = location.origin;
+if (/^https?:\/\/(localhost|127\.|.*voxa)/.test(site)) document.querySelectorAll('[data-copy], .site').forEach(n => { n.textContent = n.textContent.replaceAll('https://voxa-zpukmw.fly.dev', site); });
+document.querySelectorAll('.code button').forEach(b => b.addEventListener('click', async () => {
+  const pre = b.previousElementSibling;
+  try { await navigator.clipboard.writeText(pre.textContent); b.textContent = 'Copied'; }
+  catch { const r = document.createRange(); r.selectNodeContents(pre); getSelection().removeAllRanges(); getSelection().addRange(r); b.textContent = 'Selected'; }
+  setTimeout(() => { b.textContent = 'Copy'; }, 1600);
+}));
+function pickOs(os) {
+  document.querySelectorAll('[data-os]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.os === os)));
+  document.querySelectorAll('[data-os-show]').forEach(n => { n.hidden = n.dataset.osShow !== os; });
+}
+document.querySelectorAll('[data-os]').forEach(b => b.addEventListener('click', () => pickOs(b.dataset.os)));
+pickOs(/Win/.test(navigator.platform || navigator.userAgent) ? 'win' : 'unix');
+// Claude / ChatGPT / Other / Developers, remembered in the address (#chatgpt).
+const tabs = [...document.querySelectorAll('[role=tab]')];
+function show(id, focus) {
+  const tab = tabs.find(t => t.getAttribute('aria-controls') === id) || tabs[0];
+  tabs.forEach(t => { const on = t === tab; t.setAttribute('aria-selected', String(on)); t.tabIndex = on ? 0 : -1;
+    document.getElementById(t.getAttribute('aria-controls')).hidden = !on; });
+  if (focus) tab.focus();
+}
+tabs.forEach((t, i) => {
+  t.addEventListener('click', () => { show(t.getAttribute('aria-controls')); history.replaceState(null, '', '#' + t.getAttribute('aria-controls')); });
+  t.addEventListener('keydown', e => {
+    const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    if (d) { e.preventDefault(); const n = tabs[(i + d + tabs.length) % tabs.length]; show(n.getAttribute('aria-controls'), true); }
+  });
+});
+show(location.hash.slice(1) || 'claude');
+</script>
+</body></html>

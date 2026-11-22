@@ -174,7 +174,7 @@ class McpTest(unittest.TestCase):
         self.assertIn('tools', init['capabilities'])
         self.assertIsNone(api.mcp({'jsonrpc': '2.0', 'method': 'notifications/initialized'}, KEY, 'http://x'))
         names = [t['name'] for t in self.call(api, 'tools/list')['result']['tools']]
-        self.assertEqual(names, ['list_languages', 'list_voices', 'make_speech', 'create_podcast', 'create_audiobook',
+        self.assertEqual(names, ['list_device_voices', 'play_on_device', 'list_languages', 'list_voices', 'make_speech', 'create_podcast', 'create_audiobook',
                                  'get_job', 'list_jobs', 'edit_line', 'cancel_job'])
         res = self.call(api, 'tools/call', {'name': 'create_podcast', 'arguments': {
             'script': SCRIPT, 'voices': {'Maya': 'lina-a', 'Leo': 'adam-a'}}})['result']
@@ -189,6 +189,67 @@ class McpTest(unittest.TestCase):
         bad = self.call(api, 'tools/call', {'name': 'edit_line', 'arguments': {'job_id': job_id, 'line': 99, 'text': 'x'}})['result']
         self.assertTrue(bad['isError'])
         self.assertEqual(self.call(api, 'nope')['error']['code'], -32601)
+
+
+class DeviceTest(unittest.TestCase):
+    """play_on_device and list_device_voices: free and keyless, the audio is made in the user's browser."""
+    def call(self, api, method, params=None, key=None):
+        return api.mcp({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params or {}}, key, 'https://voxa.test')
+
+    def tool(self, api, name, **args):
+        return self.call(api, 'tools/call', {'name': name, 'arguments': args})['result']
+
+    def test_listed_with_the_player(self):
+        api = make_api()
+        init = self.call(api, 'initialize', {'protocolVersion': '2025-06-18'})['result']
+        self.assertIn('io.modelcontextprotocol/ui', init['capabilities']['extensions'])
+        tools = {t['name']: t for t in self.call(api, 'tools/list')['result']['tools']}
+        self.assertEqual(tools['play_on_device']['_meta']['ui']['resourceUri'], agentapi.PLAYER_URI)
+        res = self.call(api, 'resources/read', {'uri': agentapi.PLAYER_URI})['result']['contents'][0]
+        self.assertEqual(res['mimeType'], 'text/html;profile=mcp-app')
+        self.assertEqual(res['_meta']['ui']['csp']['frameDomains'], ['https://voxa.test'])
+        self.assertIn('"https://voxa.test"', res['text'])
+        self.assertIn('ui/initialize', res['text'])
+        self.assertEqual(self.call(api, 'resources/read', {'uri': 'ui://nope'})['error']['code'], -32002)
+        listed = self.call(api, 'resources/list')['result']['resources']
+        self.assertEqual([r['uri'] for r in listed], [agentapi.PLAYER_URI])
+
+    def test_play_a_script_without_a_key(self):
+        api = make_api()
+        r = self.tool(api, 'play_on_device', script=SCRIPT, voices={'Leo': 'calvin'}, style='expressive')
+        self.assertNotIn('isError', r)
+        d = r['structuredContent']
+        self.assertEqual(d['title'], 'Coffee Talk')
+        self.assertEqual({s['name']: s['voice'] for s in d['speakers']}, {'Maya': 'wren', 'Leo': 'calvin'})
+        self.assertEqual(d['temperature'], 0.5)
+        self.assertEqual([l['speaker'] for l in d['lines']][:2], ['Maya', 'Leo'])
+        self.assertEqual(d['chapters'], ['Opening', 'The beans'])
+        self.assertIn('https://voxa.test/player#d=', r['content'][0]['text'])
+        self.assertEqual(api.voices.calls, [])           # nothing made on the server
+
+    def test_read_text_in_another_language(self):
+        api = make_api()
+        d = self.tool(api, 'play_on_device', text='Bonjour à tous.\n\nDeuxième paragraphe.', language='f')['structuredContent']
+        self.assertEqual(len(d['speakers']), 1)
+        self.assertTrue(d['speakers'][0]['voice'].endswith('-f'))
+        self.assertEqual(len(d['lines']), 2)
+
+    def test_mistakes(self):
+        api = make_api()
+        self.assertTrue(self.tool(api, 'play_on_device', script='A: hi', voices={'A': 'nope'})['isError'])
+        self.assertTrue(self.tool(api, 'play_on_device')['isError'])
+        self.assertTrue(self.tool(api, 'play_on_device', script='A: hi', style='loud')['isError'])
+        long = 'A: ' + 'word ' * 400 + '\n'
+        self.assertIn('60,000', self.tool(api, 'play_on_device', script=long * 40)['content'][0]['text'])
+        self.assertTrue(self.tool(api, 'list_jobs')['isError'])   # the server's own tools still need a key
+
+    def test_voice_list(self):
+        api = make_api()
+        langs = self.tool(api, 'list_device_voices')['structuredContent']['languages']
+        self.assertIn('ar', [l['code'] for l in langs])
+        voices = self.tool(api, 'list_device_voices', language='a', gender='male')['structuredContent']['voices']
+        self.assertTrue(voices and all(v['gender'] == 'male' and v['language'] == 'a' for v in voices))
+        self.assertIn('calvin', [v['id'] for v in voices])
 
 
 class HttpTest(unittest.TestCase):

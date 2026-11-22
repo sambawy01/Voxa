@@ -13,9 +13,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install test dependencies
-        run: pip install cryptography
+        run: pip install cryptography numpy
       - name: Compile
-        run: python -m py_compile server.py billing.py podcast.py scripts/smoke.py
+        run: python -m py_compile server.py billing.py podcast.py agentapi.py scripts/smoke.py
       - uses: actions/setup-node@v4
         with:
           node-version: 22

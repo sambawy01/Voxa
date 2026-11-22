@@ -53,7 +53,7 @@ WORKDIR /app
 # is a separate download, and fugashi prefers it over unidic-lite and then fails to start.
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake \
     && pip install --index-url https://download.pytorch.org/whl/cpu torch \
-    && pip install "kokoro>=0.9.4" soundfile numpy "misaki[zh]>=0.9.4" cryptography \
+    && pip install "kokoro>=0.9.4" soundfile numpy "misaki[zh]>=0.9.4" cryptography onnxruntime==1.21.1 lameenc==1.9.0 \
         fugashi jaconv mojimoji pyopenjtalk unidic-lite \
     && apt-get purge -y build-essential cmake && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
@@ -88,7 +88,7 @@ COPY vendor/zonos3-web /app/static/zonos3-web-a50e141
 # Everything is local now; fail fast rather than reach the network at runtime.
 ENV HF_HUB_OFFLINE=1
 
-COPY server.py billing.py podcast.py voices.json /app/
+COPY server.py billing.py podcast.py agentapi.py voices.json /app/
 COPY web /app/web
 
 EXPOSE 8080

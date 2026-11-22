@@ -46,6 +46,7 @@ import uuid
 
 import agentapi
 import analytics
+import episodes
 import billing
 import podcast
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -159,7 +160,7 @@ PLAIN_PAGES = {'/checkout'}
 WEB_PAGES = {'/': 'index.html', '/voxa.css': 'voxa.css', '/checkout': 'checkout.html', '/pricing': 'pricing.html', '/terms': 'terms.html',
              '/privacy': 'privacy.html', '/refunds': 'refunds.html', '/lite/benchmark': 'lite-benchmark.html', '/book': 'book.html', '/book.js': 'book.js',
              '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html',
-             '/podcast': 'podcast.html', '/player': 'player.html', '/integrations': 'integrations.html', '/storage': 'storage.html', '/stats': 'stats.html', '/claude': 'integrations.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
+             '/podcast': 'podcast.html', '/player': 'player.html', '/integrations': 'integrations.html', '/storage': 'storage.html', '/shows': 'shows.html', '/stats': 'stats.html', '/claude': 'integrations.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
              '/listen': 'listen.html', '/listen.js': 'listen.js', '/manifest.webmanifest': 'manifest.webmanifest',
              '/lite.js': 'lite.js', '/hojo-text.js': 'hojo-text.js', '/hojo-worker.js': 'hojo-worker.js',
              '/tiny-voca-text.js': 'tiny-voca-text.js', '/tiny-voca-worker.js': 'tiny-voca-worker.js',
@@ -743,6 +744,7 @@ def identity_from_claims(claims, ip):
 
 _auth = None  # a TokenVerifier once sign-in is configured
 _agent_api = None  # agentapi.Api, started in main()
+_episodes = None  # episodes.Episodes: the shows under /shows, stored on the data volume, started in main()
 _analytics = None  # analytics.Analytics: Voxa's own cookie-free visitor counter, started in main()
 MAX_AGENT_BODY = 2_000_000  # a whole book's text fits
 
@@ -1151,6 +1153,95 @@ class Handler(BaseHTTPRequestHandler):
         self._send(401, {'error': 'Your sign-in has expired. Please sign in again.'},
                    extra={'WWW-Authenticate': 'Bearer error="invalid_token"'})
 
+    def _base(self):
+        host = self.headers.get('X-Forwarded-Host') or self.headers.get('Host') or f'localhost:{PORT}'
+        proto = self.headers.get('X-Forwarded-Proto') or ('http' if host.startswith(('localhost', '127.')) else 'https')
+        return f'{proto}://{host}'
+
+    def _show_page(self, slug):
+        """/shows/<slug>: the shows page opened on one episode, with link-preview tags for X and others."""
+        ep = _episodes.get(slug, drafts=False) if _episodes else None
+        if not ep:
+            return self._send(404, {'error': 'not found'})
+        with open(os.path.join(WEB_DIR, 'shows.html'), encoding='utf-8') as f:
+            page = f.read()
+        for key, value in web_values().items():
+            page = page.replace('{{' + key + '}}', value)
+        base, esc = self._base(), lambda v: html.escape(str(v or ''), quote=True)
+        title = f'{ep["title"]} · {ep.get("series") or "Voxa Shows"}'
+        tags = [f'<meta property="og:title" content="{esc(title)}">', f'<meta property="og:description" content="{esc(ep.get("description"))}">',
+                f'<meta property="og:url" content="{base}{ep["url"]}">', '<meta property="og:type" content="video.episode">',
+                f'<meta name="twitter:card" content="{"summary_large_image" if ep.get("cover") else "summary"}">',
+                f'<meta name="twitter:title" content="{esc(title)}">', f'<meta name="twitter:description" content="{esc(ep.get("description"))}">']
+        if ep.get('cover'):
+            tags += [f'<meta property="og:image" content="{base}{ep["cover"]}">', f'<meta name="twitter:image" content="{base}{ep["cover"]}">']
+        page = page.replace('<!--og-->', '\n'.join(tags)).replace('data-slug=""', f'data-slug="{esc(slug)}"')
+        page = re.sub(r'<title>.*?</title>', f'<title>{esc(title)}</title>', page, count=1)
+        self._count_view('/shows/' + slug)
+        return self._send(200, page, 'text/html; charset=utf-8', {**ISOLATION, 'Cache-Control': 'no-cache'})
+
+    def _send_ranged(self, path, ctype):
+        """A file with HTTP byte ranges (phones play and seek audio and video only with these)."""
+        size = os.path.getsize(path)
+        start, end, status = 0, size - 1, 200
+        m = re.fullmatch(r'bytes=(\d*)-(\d*)', (self.headers.get('Range') or '').strip())
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                start = int(m.group(1)); end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+            else:
+                start = max(0, size - int(m.group(2)))
+            if start > end or start >= size:
+                return self._send(416, b'', 'text/plain', {'Content-Range': f'bytes */{size}'})
+            status = 206
+        with open(path, 'rb') as f:
+            f.seek(start)
+            self.send_response(status)
+            self.send_header('Content-Type', ctype)
+            self.send_header('Content-Length', str(end - start + 1))
+            self.send_header('Accept-Ranges', 'bytes')
+            if status == 206:
+                self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+            for k, v in {'Cache-Control': 'public, max-age=3600', 'Cross-Origin-Resource-Policy': 'cross-origin',
+                         'Access-Control-Allow-Origin': '*'}.items():
+                self.send_header(k, v)
+            self.end_headers()
+            left = end - start + 1
+            while left:
+                block = f.read(min(left, 1 << 20))
+                if not block:
+                    break
+                self.wfile.write(block)
+                left -= len(block)
+
+    def _episode_write(self, method):
+        """PUT /api/episodes/<slug>[/<file>], DELETE /api/episodes/<slug>: the owner's API key only."""
+        auth = self.headers.get('Authorization', '')
+        key = auth[7:].strip() if auth.startswith('Bearer ') else ''
+        if _agent_api is None or _episodes is None or not _agent_api.keys.check(key):
+            self.close_connection = True
+            return self._send(401, {'error': 'The owner key is needed.'}, extra={'WWW-Authenticate': 'Bearer'})
+        m = re.fullmatch(r'/api/episodes/([a-z0-9-]+)(?:/([a-z0-9.]+))?', urlparse(self.path).path)
+        if not m:
+            return self._send(404, {'error': 'not found'})
+        slug, name = m.groups()
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+            if method == 'DELETE':
+                return self._send(200 if _episodes.delete(slug) else 404, {'slug': slug})
+            if name:
+                return self._send(200, _episodes.put_file(slug, name, self.rfile, n))
+            if not 0 < n <= 2_000_000:
+                raise ValueError('episode.json is up to 2 MB.')
+            return self._send(200, _episodes.put_meta(slug, json.loads(self.rfile.read(n))))
+        except ValueError as e:
+            self.close_connection = True
+            return self._send(400, {'error': str(e)})
+
+    def do_PUT(self):
+        if urlparse(self.path).path.startswith('/api/episodes/'):
+            return self._episode_write('PUT')
+        self._send(405, {'error': 'method not allowed'})
+
     def _count_view(self, path):
         """Count a page view (never the stats page itself, nor prefetches). Never fails a page."""
         if _analytics is None or path == '/stats' or self.headers.get('Sec-Purpose', '').startswith('prefetch') \
@@ -1289,6 +1380,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, f.read(), 'image/png', {'Cache-Control': 'public, max-age=86400'})
         if ON_DEVICE_ONLY and p in SERVER_VOICE_PAGES:
             return self._send(302, {'redirect': '/'}, extra={'Location': '/', 'Cache-Control': 'no-cache'})
+        if p == '/api/episodes':
+            return self._send(200, {'episodes': _episodes.list() if _episodes else []}, extra={'Cache-Control': 'no-cache'})
+        if p == '/shows/feed.xml':
+            return self._send(200, _episodes.rss(self._base()) if _episodes else '', 'application/rss+xml; charset=utf-8',
+                              {'Cache-Control': 'public, max-age=600'})
+        m = re.fullmatch(r'/episodes/([a-z0-9-]+)/([a-z0-9.]+)', p)
+        if m:
+            found = _episodes.file(m.group(1), m.group(2)) if _episodes else None
+            return self._send_ranged(*found) if found else self._send(404, {'error': 'not found'})
+        m = re.fullmatch(r'/shows/([a-z0-9-]+)', p)
+        if m:
+            return self._show_page(m.group(1))
         if p in WEB_PAGES:
             name = WEB_PAGES[p]
             with open(os.path.join(WEB_DIR, name), encoding='utf-8') as f:
@@ -1419,6 +1522,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(status, out, ctype or 'application/json', extra)
 
     def do_DELETE(self):
+        if urlparse(self.path).path.startswith('/api/episodes/'):
+            return self._episode_write('DELETE')
         if self.path.startswith('/v1/'):
             try:
                 return self._agent('DELETE')
@@ -1440,7 +1545,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version')
-        self.send_header('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS')
         self.send_header('Content-Length', '0')
         self.end_headers()
 
@@ -1567,7 +1672,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global _auth, _quota, _podcast_quota, _jobs, _agent_api, _analytics
+    global _auth, _quota, _podcast_quota, _jobs, _agent_api, _analytics, _episodes
     if SUPABASE_URL and SUPABASE_ANON_KEY:
         _auth = TokenVerifier(SUPABASE_URL, SUPABASE_JWT_SECRET)
         log.info('sign-in enabled via %s', SUPABASE_URL)
@@ -1582,6 +1687,7 @@ def main():
     _jobs.start()
     _agent_api = agentapi.Api(sys.modules[__name__])
     _analytics = analytics.Analytics(DATA_DIR)
+    _episodes = episodes.Episodes(DATA_DIR)
     log.info('visitor counter: %s', os.path.join(DATA_DIR, 'analytics'))
     log.info('agent API (/v1, /mcp): %s', f'{len(_agent_api.keys.by_hash)} key(s)' if _agent_api.enabled else 'no keys set (VOXA_API_KEYS)')
     try:

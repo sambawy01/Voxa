@@ -227,6 +227,7 @@ class DeviceTest(unittest.TestCase):
         self.assertEqual([l['speaker'] for l in d['lines']][:2], ['Maya', 'Leo'])
         self.assertEqual(d['chapters'], ['Opening', 'The beans'])
         self.assertIn('https://voxa.test/player#d=', r['content'][0]['text'])
+        self.assertTrue(d['player_url'].startswith('https://voxa.test/player'))   # the view's "Open" button
         self.assertEqual(api.voices.calls, [])           # nothing made on the server
 
     def test_read_text_in_another_language(self):
@@ -244,6 +245,13 @@ class DeviceTest(unittest.TestCase):
         long = 'A: ' + 'word ' * 400 + '\n'
         self.assertIn('60,000', self.tool(api, 'play_on_device', script=long * 40)['content'][0]['text'])
         self.assertTrue(self.tool(api, 'list_jobs')['isError'])   # the server's own tools still need a key
+
+    def test_every_tool_has_a_title_and_hints(self):
+        for t in agentapi.Api.DEVICE_TOOLS + agentapi.Api.TOOLS + agentapi.Api.LOCAL_TOOLS:
+            self.assertTrue(t['title'] and t['annotations']['title'], t['name'])
+            self.assertIsInstance(t['annotations']['readOnlyHint'], bool)
+            self.assertIsInstance(t['annotations']['destructiveHint'], bool)
+            self.assertLessEqual(len(t['name']), 64)
 
     def test_voice_list(self):
         api = make_api()

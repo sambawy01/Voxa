@@ -47,7 +47,7 @@ table.tools th{color:var(--dim);font:700 12px var(--font-display);letter-spacing
 
 <section class="card flat doc-body">
   <ul class="ways">
-    <li><b>MCP connector</b><span>For apps that support MCP. The Voxa player appears in the chat, where the app can show it, or the AI gives you a link to it.</span></li>
+    <li><b>MCP connector</b><span>For apps that support MCP. The AI writes the script and shows a Voxa card; the player opens in the chat where the app allows it, or in your browser.</span></li>
     <li><b>On your computer</b><span>A local MCP server for desktop AI apps. Finished MP3s are saved in your Music folder.</span></li>
     <li><b>REST API</b><span>For anything else: custom GPTs, scripts, your own app. One call returns a player link.</span></li>
   </ul>
@@ -71,8 +71,9 @@ table.tools th{color:var(--dim);font:700 12px var(--font-display);letter-spacing
       <div class="code"><pre data-copy>https://voxa-zpukmw.fly.dev/mcp</pre><button type="button">Copy</button></div></li>
     <li>In a new chat, turn on Voxa and ask: <i>“Use Voxa to make a two-minute podcast about coffee, and play it.”</i></li>
   </ol>
-  <p class="dim">The player appears in the chat with a card for each speaker. The first time, your browser downloads the voices
-    (tens of MB); after that they are kept. If the chat blocks the download, press <b>Open in Voxa</b> and save the MP3 there.</p>
+  <p class="dim">Claude shows a Voxa card with the episode. Where Claude allows it, the player runs right in the chat;
+    otherwise press <b>Open the Voxa player</b> and it opens in your browser. The first time, your browser downloads the voices
+    (tens of MB); after that they are kept. Save the MP3 from the player.</p>
 </section>
 <section class="card flat doc-body">
   <div class="card-head"><span class="ico cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>

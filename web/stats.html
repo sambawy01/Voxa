@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Voxa · Visitors</title>
+<meta name="robots" content="noindex">
+{{HEAD}}<style>
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.kpi{border:1px solid var(--line);border-radius:16px;padding:14px 16px;background:var(--surface)}
+.kpi b{display:block;font:900 34px/1.05 var(--font-display);font-variant-numeric:tabular-nums}
+.kpi span{color:var(--dim);font-size:13px}
+.kpi small{display:block;color:var(--dim);font-size:12px;margin-top:4px}
+.chart{display:flex;align-items:flex-end;gap:4px;height:170px;padding-top:10px}
+.chart .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0}
+.chart .bar{width:100%;border-radius:6px 6px 2px 2px;background:var(--grad);min-height:2px}
+.chart .bar.views{background:rgba(167,139,250,.28)}
+.chart .stack{width:100%;display:flex;align-items:flex-end;gap:2px;height:140px}
+.chart small{font-size:10.5px;color:var(--dim);white-space:nowrap}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.tbl{width:100%;border-collapse:collapse;font-size:14px}
+.tbl td{padding:7px 4px;border-bottom:1px solid var(--line)}
+.tbl td:last-child{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+.tbl .pct{display:block;height:4px;border-radius:4px;background:var(--grad);margin-top:4px;opacity:.7}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input[type=password]{flex:1;min-width:220px;background:var(--field,rgba(255,255,255,.04));border:1px solid var(--line);border-radius:12px;padding:11px 13px;color:var(--ink);font:14px var(--mono,monospace)}
+button{font:750 14px var(--font-display);border-radius:12px;padding:11px 16px;cursor:pointer;border:0;background:var(--grad);color:#fff}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+select{background:var(--surface);border:1px solid var(--line);border-radius:10px;color:var(--ink);padding:8px 10px}
+.dim{color:var(--dim)}
+#err{color:var(--bad,#f87171);min-height:20px}
+h3{font:800 15px var(--font-display);margin:0 0 8px}
+</style></head>
+<body data-page="stats" data-mode="{{MODE}}">
+<header class="topbar"><div class="topbar-in">
+{{NAV}}
+</div></header>
+<main class="wrap doc">
+<section class="hero">
+  <span class="eyebrow"><span class="dot"></span>Private</span>
+  <h1 class="display sm"><span class="grad-text">Visitors</span></h1>
+  <p class="lead">Voxa's own visitor counter: no cookies, no outside service. Bots and scripts are left out.</p>
+</section>
+
+<section class="card flat doc-body" id="login">
+  <p>Enter the owner API key. It stays on this device.</p>
+  <form class="row" id="keyform"><input type="password" id="key" placeholder="vx_…" autocomplete="off" aria-label="Owner API key"><button type="submit">Open</button></form>
+  <p id="err" role="alert"></p>
+</section>
+
+<div id="board" hidden>
+<section class="card flat doc-body">
+  <div class="row" style="justify-content:space-between">
+    <h2 style="margin:0">Today <span class="dim" id="today" style="font-size:15px;font-weight:600"></span></h2>
+    <div class="row"><label class="dim" for="range">Show</label>
+      <select id="range"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option><option value="90">90 days</option></select>
+      <button class="ghost" id="refresh" type="button">Refresh</button><button class="ghost" id="logout" type="button">Forget key</button></div>
+  </div>
+  <div class="kpis" style="margin-top:14px">
+    <div class="kpi"><b id="kVis">0</b><span>visitors today</span><small id="kVisY"></small></div>
+    <div class="kpi"><b id="kViews">0</b><span>page views today</span><small id="kViewsY"></small></div>
+    <div class="kpi"><b id="kMade">0</b><span>made audio today</span><small id="kMadeD"></small></div>
+    <div class="kpi"><b id="kTop">–</b><span>top source today</span><small id="kTopN"></small></div>
+  </div>
+</section>
+
+<section class="card flat doc-body">
+  <h3>Visitors per day <span class="dim" style="font-weight:600">(bright) and page views (pale), UTC</span></h3>
+  <div class="chart" id="chart"></div>
+  <p class="dim" id="totals" style="margin:10px 0 0;font-size:13.5px"></p>
+</section>
+
+<div class="cols">
+  <section class="card flat doc-body"><h3>Where visitors came from</h3><table class="tbl" id="tSources"></table></section>
+  <section class="card flat doc-body"><h3>Pages</h3><table class="tbl" id="tPages"></table></section>
+  <section class="card flat doc-body"><h3>Audio made</h3><table class="tbl" id="tEvents"></table></section>
+  <section class="card flat doc-body"><h3>Phone or computer</h3><table class="tbl" id="tDevices"></table>
+    <h3 style="margin-top:16px">Nearest Fly region</h3><table class="tbl" id="tRegions"></table></section>
+</div>
+<p class="dim" style="font-size:13px">Totals for the chosen period. "Visitors" counts a person once per day per page or source;
+  the same person on two days counts twice. Bots and link previews today: <b id="bots">0</b>.</p>
+</div>
+</main>
+{{FOOTER}}
+<script type="module">
+const $ = s => document.querySelector(s);
+const PAGES = { '/': 'Speak', '/book': 'Audiobooks', '/podcast': 'Podcasts', '/integrations': 'MCP & API', '/claude': 'MCP & API (/claude)',
+  '/player': 'Player (from AI)', '/storage': 'Downloaded voices', '/credits': 'Credits', '/terms': 'Terms', '/privacy': 'Privacy',
+  '/pricing': 'Pricing', '/listen': 'Reader', '/refunds': 'Refunds', '/lite/benchmark': 'Speed test' };
+const EVENTS = { speak: 'Speak (a clip)', podcast: 'Podcasts (an episode)', audiobook: 'Audiobooks (a book)', player: 'Player from an AI' };
+const REGIONS = { fra: 'Frankfurt', ams: 'Amsterdam', lhr: 'London', cdg: 'Paris', mad: 'Madrid', arn: 'Stockholm', waw: 'Warsaw',
+  otp: 'Bucharest', iad: 'Virginia, US', ewr: 'New Jersey, US', ord: 'Chicago', dfw: 'Dallas', lax: 'Los Angeles', sjc: 'San Jose',
+  sea: 'Seattle', yyz: 'Toronto', gru: 'São Paulo', bog: 'Bogotá', qro: 'Querétaro', scl: 'Santiago', jnb: 'Johannesburg',
+  bom: 'Mumbai', sin: 'Singapore', nrt: 'Tokyo', hkg: 'Hong Kong', syd: 'Sydney', dxb: 'Dubai' };
+let key = '';
+try { key = localStorage.getItem('voxa-owner-key') || ''; } catch {}
+const fmt = n => (n || 0).toLocaleString();
+const add = (a, b) => { for (const [k, v] of Object.entries(b || {})) a[k] = (a[k] || 0) + v; return a; };
+
+function table(el, obj, names = {}, limit = 12) {
+  const rows = Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, limit);
+  const max = rows.length ? rows[0][1] : 1;
+  el.replaceChildren(...(rows.length ? rows.map(([k, v]) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td><span></span><i class="pct"></i></td><td></td>';
+    tr.querySelector('span').textContent = names[k] || k;
+    tr.querySelector('.pct').style.width = (100 * v / max) + '%';
+    tr.lastChild.textContent = fmt(v);
+    return tr;
+  }) : [Object.assign(document.createElement('tr'), { innerHTML: '<td class="dim">Nothing yet</td><td></td>' })]));
+}
+
+async function load() {
+  $('#err').textContent = '';
+  const days = +$('#range').value;
+  const r = await fetch('/api/stats?days=' + days, { headers: { Authorization: 'Bearer ' + key }, cache: 'no-store' });
+  if (r.status === 401) { $('#err').textContent = 'That key was not accepted.'; $('#login').hidden = false; $('#board').hidden = true; return; }
+  if (!r.ok) { $('#err').textContent = `Could not load the numbers (${r.status}).`; return; }
+  const data = await r.json();
+  try { localStorage.setItem('voxa-owner-key', key); } catch {}
+  $('#login').hidden = true; $('#board').hidden = false;
+  const list = data.days.slice().sort((a, b) => a.day.localeCompare(b.day));
+  const today = list[list.length - 1] || { views: {}, events: {}, sources: {} };
+  const yest = list[list.length - 2];
+  const sum = o => Object.values(o || {}).reduce((a, b) => a + b, 0);
+  $('#today').textContent = today.day ? `${today.day} (UTC) · updated ${new Date(data.now).toLocaleTimeString()}` : '';
+  $('#kVis').textContent = fmt(today.visitors);
+  $('#kViews').textContent = fmt(sum(today.views));
+  $('#kVisY').textContent = yest ? `yesterday ${fmt(yest.visitors)}` : '';
+  $('#kViewsY').textContent = yest ? `yesterday ${fmt(sum(yest.views))}` : '';
+  $('#kMade').textContent = fmt(sum(today.event_visitors));
+  $('#kMadeD').textContent = `${fmt(sum(today.events))} audio files in all`;
+  const top = Object.entries(today.sources || {}).sort((a, b) => b[1] - a[1])[0];
+  $('#kTop').textContent = top ? top[0] : '–';
+  $('#kTopN').textContent = top ? `${fmt(top[1])} arrivals` : '';
+  $('#bots').textContent = fmt(today.bots);
+  // chart: one column per day in the range, empty days included
+  const byDay = Object.fromEntries(list.map(d => [d.day, d]));
+  const cols = [];
+  for (let i = days - 1; i >= 0; i--) cols.push(new Date(Date.now() - i * 864e5).toISOString().slice(0, 10));
+  const maxV = Math.max(1, ...cols.map(c => sum((byDay[c] || {}).views)));
+  $('#chart').replaceChildren(...cols.map(c => {
+    const d = byDay[c] || { views: {}, visitors: 0 }, v = sum(d.views);
+    const col = document.createElement('div'); col.className = 'col';
+    col.title = `${c}: ${fmt(d.visitors)} visitors, ${fmt(v)} page views`;
+    col.innerHTML = `<div class="stack"><div class="bar" style="height:${100 * (d.visitors || 0) / maxV}%"></div><div class="bar views" style="height:${100 * v / maxV}%"></div></div><small>${days <= 14 || c.endsWith('01') || c === cols[cols.length - 1] ? c.slice(5) : ''}</small>`;
+    return col;
+  }));
+  const totV = list.reduce((a, d) => a + (d.visitors || 0), 0), totP = list.reduce((a, d) => a + sum(d.views), 0);
+  $('#totals').textContent = `${fmt(totV)} visitors and ${fmt(totP)} page views in the last ${days} days.`;
+  const agg = k => list.reduce((a, d) => add(a, d[k]), {});
+  table($('#tSources'), agg('sources'));
+  table($('#tPages'), agg('page_visitors'), PAGES);
+  table($('#tEvents'), agg('events'), EVENTS);
+  table($('#tDevices'), agg('devices'));
+  table($('#tRegions'), agg('regions'), REGIONS, 8);
+}
+$('#keyform').onsubmit = e => { e.preventDefault(); key = $('#key').value.trim(); if (key) load().catch(err => { $('#err').textContent = err.message; }); };
+$('#refresh').onclick = () => load();
+$('#range').onchange = () => load();
+$('#logout').onclick = () => { try { localStorage.removeItem('voxa-owner-key'); } catch {} key = ''; $('#board').hidden = true; $('#login').hidden = false; };
+if (key) load().catch(err => { $('#err').textContent = err.message; });
+setInterval(() => { if (key && !$('#board').hidden) load().catch(() => {}); }, 60000);
+</script>
+</body></html>

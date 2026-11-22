@@ -411,6 +411,7 @@ $('#cancel').addEventListener('click',()=>{if(ctrl)ctrl.abort();});
 function showAudio(blob, fileUrl){
   const url=URL.createObjectURL(blob);
   const p=$('#player'); p.src=url; p.hidden=false; p.play().catch(()=>{});
+  navigator.sendBeacon && navigator.sendBeacon('/api/hit', JSON.stringify({ e: 'speak' }));  // counts that audio was made, never the text
   const a=$('#download');
   a.href=url; a.download='voxa.wav'; a.hidden=false; a.onclick=null;
   const pl=$('#playerlink');

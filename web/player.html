@@ -175,6 +175,7 @@ async function make() {
       if (waiting === i && state === 'playing') start(i);
     }
     status(`All ${D.lines.length} lines made on this device.`);
+    navigator.sendBeacon && navigator.sendBeacon('/api/hit', JSON.stringify({ e: 'player' }));
     $('#save').disabled = false;
   } finally {
     if (wake) wake.release().catch(() => {});

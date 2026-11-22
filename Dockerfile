@@ -83,6 +83,7 @@ COPY --from=supertonic /out /app/static
 COPY --from=kale /out /app/static
 COPY --from=smoller /out /app/static
 COPY vendor/pocket-tts-wasm /app/static/pocket-tts-wasm-4ac4680
+COPY vendor/zonos3-web /app/static/zonos3-web-a50e141
 
 # Everything is local now; fail fast rather than reach the network at runtime.
 ENV HF_HUB_OFFLINE=1

@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import io
 import json
+import re
 import os
 import sys
 import threading
@@ -711,11 +712,11 @@ class LiteCatalogueTest(ServerTestCase):
         self.assertEqual(sorted(v['source'] for v in hojo),
                          [f'hojo_en_f_0{i}' for i in range(1, 8)] + [f'hojo_en_m_0{i}' for i in range(1, 6)]
                          + ['hojo_en_u_01', 'hojo_zh_f_01', 'hojo_zh_f_02'])
-        self.assertEqual([v['source'] for v in lite['voices']['z']], ['hojo_zh_f_01', 'hojo_zh_f_02'])
+        self.assertEqual([v['source'] for v in lite['voices']['z'] if v['engine'] == 'hojo'], ['hojo_zh_f_01', 'hojo_zh_f_02'])
         for v in phonon:
             self.assertRegex(v['url'], r'^https://huggingface\.co/gradium/phonon-voices/resolve/[0-9a-f]{40}/voices/')
         for v in voices:
-            self.assertTrue(v['description'].endswith('On this device'))
+            self.assertTrue(v['description'].endswith('needs a computer with WebGPU' if v.get('desktop') else 'On this device'))
             with self.subTest(v['id']):  # the server refuses Lite voices for Studio jobs
                 code, _, _ = self.req('/api/tts', {'text': 'x', 'lang': v['lang'], 'voice': v['id']})
                 self.assertEqual(code, 400)
@@ -747,6 +748,14 @@ class LiteCatalogueTest(ServerTestCase):
         sm = by('smoller')
         self.assertEqual([(v['name'], v['lang']) for v in sm], [('Lyra', 'a')])
         self.assertEqual(sm[0]['worker'], f'/static/{server.SMOLLER_DIR}/worker.mjs')
+        # ZONOS3 Mini: 44 languages, desktop only (marked, not hidden), pinned weights
+        zo = by('zonos')
+        self.assertEqual(len({v['lang'] for v in zo}), 44)
+        self.assertTrue(all(v.get('desktop') and v['description'].endswith('needs a computer with WebGPU') for v in zo))
+        self.assertFalse(any(v.get('desktop') for v in every if v['engine'] != 'zonos'))
+        self.assertTrue(all(re.fullmatch(r'https://huggingface\.co/Zyphra/ZONOS3-Mini/resolve/[0-9a-f]{40}/web/', v['base']) for v in zo))
+        self.assertEqual(sorted(v['name'] for v in zo if v['lang'] == 'ar'), ['Savannah', 'Wyatt'])
+        self.assertEqual(sorted(v['name'] for v in zo if v['lang'] == 'te'), ['Chaitanya', 'Sravya'])
         # a voice's name appears once per language
         for lang, vs in lite.items():
             self.assertEqual(len({v['name'] for v in vs}), len(vs), lang)
@@ -938,8 +947,8 @@ class OnDeviceOnlyTest(ServerTestCase):
         self.assertEqual((v['voices'], v['catalogue']), ({}, {}))
         langs = set(v['lite']['voices'])
         self.assertTrue({'a', 'b', 'z', 'ar', 'de', 'f', 'j', 'ko'} <= langs)
-        self.assertEqual(len(langs), 33)
-        self.assertEqual(sum(len(x) for x in v['lite']['voices'].values()), 478)
+        self.assertEqual(len(langs), 49)
+        self.assertEqual(sum(len(x) for x in v['lite']['voices'].values()), 572)
         _, _, body = self.req('/api/languages')
         self.assertEqual(set(json.loads(body)['languages']), langs)
         _, _, body = self.req('/api/config')

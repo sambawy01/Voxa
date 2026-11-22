@@ -1249,6 +1249,315 @@
       "accent": "American"
      }
     ]
+   },
+   "zonos": {
+    "about": "ZONOS3 Mini by Zyphra (weights Apache-2.0, browser engine MIT): 44 languages on WebGPU, about 1 GB on first use, so desktop only. Default voices with Voxa names where they would clash; Savannah and Wyatt also speak the languages without a native voice.",
+    "repo": "Zyphra/ZONOS3-Mini",
+    "revision": "2921b8821772b0bd10a04456863d21abf9d2f283",
+    "desktop": true,
+    "languages": {
+     "a": "en_us",
+     "b": "en_gb",
+     "f": "fr_fr",
+     "de": "de",
+     "e": "es",
+     "i": "it",
+     "p": "pt_br",
+     "j": "ja",
+     "z": "cmn",
+     "ko": "ko",
+     "h": "hi",
+     "ar": "ar",
+     "bn": "bn",
+     "bg": "bg",
+     "cs": "cs",
+     "da": "da",
+     "nl": "nl",
+     "fi": "fi",
+     "ka": "ka",
+     "el": "el",
+     "gu": "gu",
+     "he": "he",
+     "hu": "hu",
+     "id": "id",
+     "kn": "kn",
+     "ms": "ms",
+     "ml": "ml",
+     "mr": "mr",
+     "no": "no",
+     "or": "or",
+     "pl": "pl",
+     "pa": "pa",
+     "ro": "ro",
+     "ru": "ru",
+     "sk": "sk",
+     "sv": "sv",
+     "tl": "tl",
+     "ta": "ta",
+     "te": "te",
+     "th": "th",
+     "tr": "tr",
+     "uk": "uk",
+     "ur": "ur",
+     "vi": "vi"
+    },
+    "voices": [
+     {
+      "id": "cillian",
+      "name": "Cillian",
+      "source": "default_2c5123a959875341",
+      "gender": "male",
+      "langs": [
+       "a"
+      ],
+      "accent": "Irish"
+     },
+     {
+      "id": "jett",
+      "name": "Jett",
+      "source": "default_c95cf57259ed7313",
+      "gender": "male",
+      "langs": [
+       "a"
+      ],
+      "accent": "Energetic"
+     },
+     {
+      "id": "morgana",
+      "name": "Morgana",
+      "source": "default_40a3ba1017bfb68a",
+      "gender": "female",
+      "langs": [
+       "a"
+      ],
+      "accent": "Storyteller"
+     },
+     {
+      "id": "sakura",
+      "name": "Sakura",
+      "source": "default_c5e098c322aae901",
+      "gender": "female",
+      "langs": [
+       "a"
+      ],
+      "accent": "Animated"
+     },
+     {
+      "id": "savannah",
+      "name": "Savannah",
+      "source": "default_de4d191ca7574982",
+      "gender": "female",
+      "langs": [
+       "a",
+       "*"
+      ],
+      "accent": "American"
+     },
+     {
+      "id": "thaddeus",
+      "name": "Thaddeus",
+      "source": "default_3c00e421e684f949",
+      "gender": "male",
+      "langs": [
+       "a"
+      ],
+      "accent": "Announcer"
+     },
+     {
+      "id": "willow",
+      "name": "Willow",
+      "source": "default_940eaff39a929da0",
+      "gender": "female",
+      "langs": [
+       "a"
+      ],
+      "accent": "Soft, ASMR"
+     },
+     {
+      "id": "wyatt",
+      "name": "Wyatt",
+      "source": "default_34370fd91e3484ef",
+      "gender": "male",
+      "langs": [
+       "a",
+       "*"
+      ],
+      "accent": "American"
+     },
+     {
+      "id": "ottilie",
+      "name": "Ottilie",
+      "source": "default_b78b28baf5c31a1d",
+      "gender": "female",
+      "langs": [
+       "b"
+      ],
+      "accent": "British"
+     },
+     {
+      "id": "rufus",
+      "name": "Rufus",
+      "source": "default_3765f0d1140c05c0",
+      "gender": "male",
+      "langs": [
+       "b"
+      ],
+      "accent": "British"
+     },
+     {
+      "id": "gaspard",
+      "name": "Gaspard",
+      "source": "default_517319c805b927e9",
+      "gender": "male",
+      "langs": [
+       "f"
+      ]
+     },
+     {
+      "id": "liesel",
+      "name": "Liesel",
+      "source": "default_09d206a5b067ae71",
+      "gender": "female",
+      "langs": [
+       "de"
+      ]
+     },
+     {
+      "id": "wolfgang",
+      "name": "Wolfgang",
+      "source": "default_ec650ef042ed1f14",
+      "gender": "male",
+      "langs": [
+       "de"
+      ]
+     },
+     {
+      "id": "anika",
+      "name": "Anika",
+      "source": "default_f76cf78a50cf8496",
+      "gender": "female",
+      "langs": [
+       "h"
+      ]
+     },
+     {
+      "id": "aarav",
+      "name": "Aarav",
+      "source": "default_849a62ace1f85759",
+      "gender": "male",
+      "langs": [
+       "h"
+      ]
+     },
+     {
+      "id": "ginevra",
+      "name": "Ginevra",
+      "source": "default_792987ff6236e50d",
+      "gender": "female",
+      "langs": [
+       "i"
+      ]
+     },
+     {
+      "id": "lorenzo",
+      "name": "Lorenzo",
+      "source": "default_ccb71e6596453e72",
+      "gender": "male",
+      "langs": [
+       "i"
+      ]
+     },
+     {
+      "id": "minjun",
+      "name": "Minjun",
+      "source": "default_aa6e36b246dc01f9",
+      "gender": "male",
+      "langs": [
+       "ko"
+      ]
+     },
+     {
+      "id": "seoyeon",
+      "name": "Seoyeon",
+      "source": "default_b7a257a5b1478493",
+      "gender": "female",
+      "langs": [
+       "ko"
+      ]
+     },
+     {
+      "id": "haoran",
+      "name": "Haoran",
+      "source": "default_d8a9b688b64e638d",
+      "gender": "male",
+      "langs": [
+       "z"
+      ]
+     },
+     {
+      "id": "meilin",
+      "name": "Meilin",
+      "source": "default_eaee7325255d4783",
+      "gender": "female",
+      "langs": [
+       "z"
+      ]
+     },
+     {
+      "id": "leonor",
+      "name": "Leonor",
+      "source": "default_e11f53895cad62fa",
+      "gender": "female",
+      "langs": [
+       "p"
+      ]
+     },
+     {
+      "id": "thiago",
+      "name": "Thiago",
+      "source": "default_4562e98e005b69cc",
+      "gender": "male",
+      "langs": [
+       "p"
+      ]
+     },
+     {
+      "id": "rodrigo",
+      "name": "Rodrigo",
+      "source": "default_87250baa043e5bba",
+      "gender": "male",
+      "langs": [
+       "e"
+      ]
+     },
+     {
+      "id": "ximena",
+      "name": "Ximena",
+      "source": "default_43e790fc116fd62a",
+      "gender": "female",
+      "langs": [
+       "e"
+      ]
+     },
+     {
+      "id": "chaitanya",
+      "name": "Chaitanya",
+      "source": "default_26fb443b7759bce0",
+      "gender": "male",
+      "langs": [
+       "te"
+      ]
+     },
+     {
+      "id": "sravya",
+      "name": "Sravya",
+      "source": "default_c3bb44b62cf13a5c",
+      "gender": "female",
+      "langs": [
+       "te"
+      ]
+     }
+    ]
    }
   }
  }

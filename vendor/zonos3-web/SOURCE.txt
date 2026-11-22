@@ -1,0 +1,6 @@
+ZONOS3 Mini's in-browser engine (WebGPU): servers/web of https://github.com/Zyphra/ZONOS3-Mini
+(MIT, see LICENSE; third-party notices in NOTICE.txt), commit a50e14117d99181ba7f28047b451ba03ba1a09a9, built with
+  pnpm install --filter zonos3-web --frozen-lockfile && pnpm --dir servers/web build
+(dist/engine.js, worker.js, codec-worker.js). The model weights and default voices are not here:
+the browser loads them from https://huggingface.co/Zyphra/ZONOS3-Mini (web/, Apache-2.0) at a
+pinned revision, about 1 GB on first use. Needs WebGPU (a desktop or laptop browser).

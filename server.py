@@ -133,6 +133,8 @@ SUPERTONIC_DIR = 'supertonic-3-3cadd1e'
 KALE_DIR = 'kale-nano-b6ce188'  # scripts/build_kale.py
 POCKET_WASM_DIR = 'pocket-tts-wasm-4ac4680'  # vendor/pocket-tts-wasm, copied in by the Dockerfile
 SMOLLER_DIR = 'smollertts-a4b7e51'  # scripts/build_smoller.py: SmollerTTS's own browser runtime
+# ZONOS3 Mini's WebGPU engine (vendor/zonos3-web); its ~1 GB of weights load from Hugging Face.
+ZONOS_WEB_DIR = 'zonos3-web-a50e141'
 # Pocket TTS (Kyutai, CC-BY-4.0) in six languages runs on a Candle WebAssembly build of
 # idle-intelligence/tts-web (vendor/pocket-tts-wasm); its weights and voices load from Hugging
 # Face. Kale TTS nano (Apache-2.0) adds ten English voices, also from Hugging Face.
@@ -188,7 +190,7 @@ def web_values():
             'PODCAST_VERSION': version('podcast.js'), 'PREVIEW_VERSION': version('preview.js'),
             'LISTEN_VERSION': version('listen.js'), 'LITE_VERSION': version('lite.js'),
             'HOJO_DIR': HOJO_DIR, 'TINYVOCA_DIR': TINYVOCA_DIR, 'ORT_VERSION': ORT_VERSION,
-            'SUPERTONIC_DIR': SUPERTONIC_DIR, 'KALE_DIR': KALE_DIR, 'POCKET_WASM_DIR': POCKET_WASM_DIR,
+            'SUPERTONIC_DIR': SUPERTONIC_DIR, 'KALE_DIR': KALE_DIR, 'POCKET_WASM_DIR': POCKET_WASM_DIR, 'ZONOS_WEB_DIR': ZONOS_WEB_DIR,
             'FREE_DAILY': f'{FREE_DAILY_CHARS:,}', 'PAID_DAILY': f'{PAID_DAILY_CHARS:,}',
             'PODCAST_MINUTES_FREE': str(PODCAST_MAX_MINUTES['free']),
             'PODCAST_MINUTES_PAID': str(PODCAST_MAX_MINUTES['paid']),
@@ -224,6 +226,10 @@ LITE_LANG_LABELS = {
     'ko': 'Korean', 'lt': 'Lithuanian', 'lv': 'Latvian', 'nl': 'Dutch', 'pl': 'Polish', 'ro': 'Romanian',
     'ru': 'Russian', 'sk': 'Slovak', 'sl': 'Slovenian', 'sv': 'Swedish', 'tr': 'Turkish', 'uk': 'Ukrainian',
     'vi': 'Vietnamese',
+    # ZONOS3 Mini (desktop only) adds these
+    'bn': 'Bengali', 'gu': 'Gujarati', 'he': 'Hebrew', 'ka': 'Georgian', 'kn': 'Kannada', 'ml': 'Malayalam',
+    'mr': 'Marathi', 'ms': 'Malay', 'no': 'Norwegian', 'or': 'Odia', 'pa': 'Punjabi', 'ta': 'Tamil', 'te': 'Telugu',
+    'th': 'Thai', 'tl': 'Filipino', 'ur': 'Urdu',
 }
 ALL_LANG_LABELS = {**LANG_LABELS, **LITE_LANG_LABELS}
 
@@ -276,14 +282,17 @@ def load_lite(path=CATALOGUE_PATH, studio_ids=()):
     base = f'https://huggingface.co/{lite["voices_repo"]}/resolve/{lite["revision"]}/'
     out = {lang: [] for lang in ALL_LANG_LABELS}
 
-    def add(v, engine, **extra):
+    def add(v, engine, desktop=False, **extra):
+        """desktop: the engine needs a computer (a large download, WebGPU); its voices stay on
+        offer everywhere, marked so, rather than being hidden on phones."""
         if v['lang'] not in ALL_LANG_LABELS:
             raise ValueError(f'Lite voice {v["id"]!r} has unknown language {v["lang"]!r}')
         out[v['lang']].append({
             'id': v['id'], 'name': v['name'], 'gender': v['gender'], 'lang': v['lang'], 'engine': engine,
             'description': ' · '.join([v['gender'].capitalize(), *([v['accent']] if v.get('accent') else []),
-                                       *([v['age']] if v.get('age') else []), 'On this device']),
-            **extra})
+                                       *([v['age']] if v.get('age') else []),
+                                       'Desktop only: needs a computer with WebGPU' if desktop else 'On this device']),
+            **({'desktop': True} if desktop else {}), **extra})
 
     for v in lite['voices']:
         engine = v.get('engine', 'phonon')
@@ -332,6 +341,22 @@ def load_lite(path=CATALOGUE_PATH, studio_ids=()):
             if v['lang'] not in ('a', 'b') or not re.fullmatch(r'[a-z0-9]+', v['source']):
                 raise ValueError(f'Kale voice {v["id"]!r}: English (a, b) only, plain source names')
             add(v, 'kale', source=v['source'])
+
+    zo = engines.get('zonos')
+    if zo:
+        base = f'https://huggingface.co/{zo["repo"]}/resolve/{zo["revision"]}/web/'
+        native = {lang for v in zo['voices'] for lang in v['langs'] if lang != '*'}
+        for lang, code in zo['languages'].items():
+            for v in zo['voices']:
+                # a voice speaks its own languages; the '*' voices also every language without
+                # native voices of both genders
+                genders = {x['gender'] for x in zo['voices'] if lang in x['langs']}
+                if lang in v['langs'] or ('*' in v['langs'] and (lang not in native or len(genders) < 2)
+                                          and v['gender'] not in genders):
+                    if not re.fullmatch(r'default_[0-9a-f]{16}', v['source']):
+                        raise ValueError(f'ZONOS3 voice {v["id"]!r}: unexpected source {v["source"]!r}')
+                    add({**v, 'id': f'{v["id"]}-zo-{lang}', 'lang': lang}, 'zonos', desktop=zo.get('desktop', False),
+                        source=v['source'], code=code, base=base, engine_url=f'/static/{ZONOS_WEB_DIR}/engine.js')
 
     sm = engines.get('smoller')
     if sm:

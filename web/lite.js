@@ -9,6 +9,8 @@
 //   language from Hugging Face, run by a Candle WebAssembly build in web/pocket-worker.js.
 //   Kale TTS nano (KaleComputer, English, ten voices): ~25 MB, static/, web/kale-worker.js.
 //   SmollerTTS (2.8M, English, one voice): ~30 MB with its own runtime, run by its own worker in static/.
+//   ZONOS3 Mini (Zyphra, 44 languages): WebGPU only and ~1 GB on first use, so its voices are marked
+//   desktop only; Zyphra's own browser engine (static/, from vendor/zonos3-web) loads the weights.
 // Each engine loads the first time one of its voices speaks, then comes from the cache.
 import { normalizeForHojo, splitForHojo } from '/hojo-text.js';
 
@@ -171,6 +173,47 @@ class Smoller {
   }
 }
 
+// ZONOS3 Mini: Zyphra's engine serves its HTTP API in-process; one sentence or so per request.
+class Zonos {
+  constructor(url, base) {
+    this.onStatus = () => {};
+    this.ready = (async () => {
+      if (!navigator.gpu) throw new Error('This voice needs WebGPU: use Chrome, Edge or Safari on a desktop or laptop computer.');
+      this.m = await import(url);
+      await this.m.engine.init(p => {
+        if (!p.total) return;
+        this.onStatus(p.fetched ? `Downloading the desktop voice (once)… ${(p.loaded / 1e6).toFixed(0)} MB of ${(p.total / 1e6).toFixed(0)}`
+          : 'Loading the desktop voice…');
+      }, { base });
+    })();
+  }
+  async piece(text, voice, seed, signal) {
+    const r = await this.m.localFetch('/v2/generate', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, language: voice.code, speaker_embedding_id: voice.source, stream: false, format: 'pcm',
+        seed: Number(BigInt.asUintN(32, BigInt(Math.floor(seed)))) }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `The desktop voice failed (${r.status}).`);
+    const rate = +(r.headers.get('x-audio-sample-rate') || 44100);
+    return resample(new Float32Array(await r.arrayBuffer()), rate, 24000);
+  }
+  async synth(text, voice, { seed = 4242, signal }) {
+    await this.ready;
+    const parts = text.replace(/\s+/g, ' ').trim().match(/[^.!?。！？؟।]+[.!?。！？؟।]*["'”’)\]]*\s*/g) || [text];
+    const chunks = [];
+    let buf = '';
+    for (const s of parts) { if ((buf + s).length > 300 && buf) { chunks.push(buf.trim()); buf = s; } else buf += s; }
+    if (buf.trim()) chunks.push(buf.trim());
+    const gap = new Float32Array(Math.round(24000 * 0.2)), out = [];
+    for (const [i, c] of chunks.entries()) {
+      if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+      if (i) out.push(gap);
+      out.push(await this.piece(c, voice, seed + i, signal));
+    }
+    const pcm = new Float32Array(out.reduce((a, p) => a + p.length, 0));
+    let at = 0; for (const p of out) { pcm.set(p, at); at += p.length; }
+    return pcm;
+  }
+}
+
 /**
  * The on-device voices for a page. config() returns the page's /api/voices answer (its
  * `lite` section and `phonon_version`); voices are entries of config().lite.voices.
@@ -207,6 +250,13 @@ export function createLite(config) {
         hojo.onStatus = status;
         try { await hojo.ready; } catch (e) { hojo = null; throw e; }
         return hojo.synth(text, voice.source, voice.lang, { temperature: hojoTemperature(temperature), seed, signal });
+      }
+      if (voice.engine === 'zonos') {
+        const e = workers.zonos ||= new Zonos(voice.engine_url, voice.base);
+        e.onStatus = status;
+        status('Loading the desktop voice…');
+        try { await e.ready; } catch (err) { delete workers.zonos; throw err; }
+        return e.synth(text, voice, { seed, signal });
       }
       if (voice.engine === 'smoller') {
         const e = workers.smoller ||= new Smoller(voice.worker);

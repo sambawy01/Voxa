@@ -197,6 +197,7 @@ class Zonos {
   }
   async synth(text, voice, { seed = 4242, signal }) {
     await this.ready;
+    this.onStatus('Speaking with the desktop voice on your graphics card…');
     const parts = text.replace(/\s+/g, ' ').trim().match(/[^.!?。！？؟।]+[.!?。！？؟।]*["'”’)\]]*\s*/g) || [text];
     const chunks = [];
     let buf = '';
@@ -206,6 +207,7 @@ class Zonos {
     for (const [i, c] of chunks.entries()) {
       if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
       if (i) out.push(gap);
+      if (chunks.length > 1) this.onStatus(`Speaking with the desktop voice… part ${i + 1} of ${chunks.length}`);
       out.push(await this.piece(c, voice, seed + i, signal));
     }
     const pcm = new Float32Array(out.reduce((a, p) => a + p.length, 0));

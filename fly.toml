@@ -16,7 +16,7 @@ primary_region = "fra"
   VOXA_API_DAILY_CHARS = "300000"
 
 # Lasting data (visitor counts, API jobs) lives on a volume at /data, so it survives deploys.
-# fly deploy creates the volume (1 GB) the first time.
+# The deploy workflow creates the volume (1 GB) if it is missing, in the machine's region.
 [mounts]
   source = "voxa_data"
   destination = "/data"

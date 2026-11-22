@@ -21,6 +21,20 @@ jobs:
             exit 1
           fi
       - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      - name: Make sure the data volume exists
+        # fly.toml mounts the volume voxa_data at /data (visitor counts, API jobs). Fly does not
+        # create it on deploy, so create it once, in the region the app's machine runs in.
+        run: |
+          if flyctl volumes list --app voxa-zpukmw --json | grep -q '"name": *"voxa_data"'; then
+            echo "voxa_data exists"
+          else
+            region=$(flyctl machines list --app voxa-zpukmw --json | grep -o '"region": *"[a-z]*"' | head -1 | grep -o '[a-z]*"$' | tr -d '"')
+            region=${region:-fra}
+            echo "creating voxa_data (1 GB) in $region"
+            flyctl volumes create voxa_data --app voxa-zpukmw --region "$region" --size 1 --yes
+          fi
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       - name: Deploy
         run: flyctl deploy --remote-only --app voxa-zpukmw
         env:

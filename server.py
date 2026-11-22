@@ -39,14 +39,16 @@ import re
 import shutil
 import sqlite3
 import threading
+import sys
 import time
 import urllib.request
 import uuid
 
+import agentapi
 import billing
 import podcast
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('voxa')
@@ -739,6 +741,8 @@ def identity_from_claims(claims, ip):
 
 
 _auth = None  # a TokenVerifier once sign-in is configured
+_agent_api = None  # agentapi.Api, started in main()
+MAX_AGENT_BODY = 2_000_000  # a whole book's text fits
 
 
 class QuotaExceeded(Exception):
@@ -1231,6 +1235,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _get(self):
         p = urlparse(self.path).path
+        if p.startswith('/v1/') or p == '/mcp':
+            return self._agent('GET')
         if p == '/index.html':
             p = '/'
         if p.startswith('/static/'):
@@ -1323,11 +1329,71 @@ class Handler(BaseHTTPRequestHandler):
                                     'languages': shown_languages()})
         return self._send(404, {'error': 'not found'})
 
+    # --- The API for AI agents (agentapi.py): REST under /v1/, MCP at /mcp -----------------
+    def _agent(self, method):
+        """Serve /v1/* and /mcp. They need an API key, not the site's sign-in, and work when
+        the site is on-device only."""
+        u = urlparse(self.path)
+        if _agent_api is None:
+            return self._send(503, {'error': 'The Voxa API is not set up on this server.'})
+        qs = parse_qs(u.query)
+        auth = self.headers.get('Authorization', '')
+        key = auth[7:].strip() if auth.startswith('Bearer ') else (qs.get('key') or [''])[0]
+        host = self.headers.get('X-Forwarded-Host') or self.headers.get('Host') or f'localhost:{PORT}'
+        proto = self.headers.get('X-Forwarded-Proto') or ('http' if host.startswith(('localhost', '127.')) else 'https')
+        base = f'{proto}://{host}'
+        body = None
+        if method in ('POST', 'PATCH'):
+            n = int(self.headers.get('Content-Length') or 0)
+            if n > MAX_AGENT_BODY:
+                return self._send(413, {'error': 'The request is too large.'})
+            raw = self.rfile.read(n) if n else b''
+            try:
+                body = json.loads(raw or b'{}')
+            except (ValueError, UnicodeDecodeError):
+                if u.path == '/mcp':
+                    return self._send(400, {'jsonrpc': '2.0', 'id': None, 'error': {'code': -32700, 'message': 'Parse error'}})
+                return self._send(400, {'error': 'The body must be JSON.'})
+        if u.path == '/mcp':
+            if method != 'POST':
+                return self._send(405, {'error': 'POST JSON-RPC messages to /mcp.'}, extra={'Allow': 'POST'})
+            if isinstance(body, list):
+                out = [r for r in (_agent_api.mcp(m, key, base) for m in body) if r is not None]
+                return self._send(200, out) if out else self._send(202, b'')
+            out = _agent_api.mcp(body, key, base)
+            return self._send(200, out) if out is not None else self._send(202, b'')
+        try:
+            if not isinstance(body, (dict, type(None))):
+                raise agentapi.ApiError(400, 'The body must be a JSON object.')
+            status, out, ctype, extra = _agent_api.rest(method, u.path, qs, body or {}, key, base)
+        except agentapi.ApiError as e:
+            extra = {'WWW-Authenticate': 'Bearer'} if e.status == 401 else None
+            return self._send(e.status, {'error': e.message}, extra=extra)
+        return self._send(status, out, ctype or 'application/json', extra)
+
+    def do_DELETE(self):
+        if self.path.startswith('/v1/'):
+            try:
+                return self._agent('DELETE')
+            except Exception:
+                log.exception('DELETE %s failed', self.path)
+                return self._send(500, {'error': 'internal server error'})
+        self._send(405, {'error': 'method not allowed'})
+
+    def do_PATCH(self):
+        if self.path.startswith('/v1/'):
+            try:
+                return self._agent('PATCH')
+            except Exception:
+                log.exception('PATCH %s failed', self.path)
+                return self._send(500, {'error': 'internal server error'})
+        self._send(405, {'error': 'method not allowed'})
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        self.send_header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version')
+        self.send_header('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS')
         self.send_header('Content-Length', '0')
         self.end_headers()
 
@@ -1420,6 +1486,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _post(self):
         p = urlparse(self.path).path
+        if p.startswith('/v1/') or p == '/mcp':
+            return self._agent('POST')
         if ON_DEVICE_ONLY and (p in ('/api/jobs', '/api/tts') or p.startswith('/api/podcast/')):
             return self._send(403, {'error': STUDIO_OFF})
         if p.startswith('/api/billing/'):
@@ -1447,7 +1515,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global _auth, _quota, _podcast_quota, _jobs
+    global _auth, _quota, _podcast_quota, _jobs, _agent_api
     if SUPABASE_URL and SUPABASE_ANON_KEY:
         _auth = TokenVerifier(SUPABASE_URL, SUPABASE_JWT_SECRET)
         log.info('sign-in enabled via %s', SUPABASE_URL)
@@ -1460,6 +1528,8 @@ def main():
         _jobs = JobRouter(_jobs, JobQueue(generate_remote, workers=GPU_WORKERS, name='gpu'))
         log.info('paid jobs go to the GPU service at %s', GPU_URL)
     _jobs.start()
+    _agent_api = agentapi.Api(sys.modules[__name__])
+    log.info('agent API (/v1, /mcp): %s', f'{len(_agent_api.keys.by_hash)} key(s)' if _agent_api.enabled else 'no keys set (VOXA_API_KEYS)')
     try:
         get_pipeline('a')  # warm English
     except Exception as e:

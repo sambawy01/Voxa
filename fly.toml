@@ -10,6 +10,10 @@ primary_region = "fra"
   # "1" hides the Studio (server) voices and serves only the on-device voices.
   # Set to "0" to bring the Studio voices, Audiobooks, Podcasts and Pricing back.
   ON_DEVICE_ONLY = "1"
+  # The API for AI agents (/v1, /mcp): keys as name:sha256 of the key, never the key itself.
+  # Add a key: python3 -c "import hashlib,secrets;k='vx_'+secrets.token_urlsafe(32);print(k, hashlib.sha256(k.encode()).hexdigest())"
+  VOXA_API_KEYS = "owner:a7e79a8cbbdb1b756e59791dcf2b5837b7e4e1db67f0c1ff9de5d31b1d2f0634"
+  VOXA_API_DAILY_CHARS = "300000"
 
 [http_service]
   internal_port = 8080

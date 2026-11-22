@@ -15,6 +15,14 @@ const voices = new Map();
 const cancelled = new Set();
 let received = 0;
 
+// Files come from Hugging Face at a pinned revision (…/resolve/<revision>/<path>). When Voxa moves
+// to a new revision, the same file's older copy is deleted once the new one is saved, so a
+// device keeps one copy of each file.
+const sameFile = u => u.replace(/\/resolve\/[^/]+\//, '/resolve/~/');
+async function prune(cache, url) {
+  for (const req of await cache.keys()) if (req.url !== url && sameFile(req.url) === sameFile(url)) await cache.delete(req);
+}
+
 async function getFile(url) {
   let cache = null;
   try { cache = await caches.open(CACHE); } catch { /* private browsing */ }
@@ -38,7 +46,8 @@ async function getFile(url) {
   const buf = new Uint8Array(got);
   let at = 0;
   for (const c of chunks) { buf.set(c, at); at += c.length; }
-  if (cache) cache.put(url, new Response(buf)).catch(() => {});
+  if (cache) cache.put(url, new Response(buf, { headers: { 'Content-Length': String(buf.length) } }))
+    .then(() => prune(cache, url)).catch(() => {});
   return buf.buffer;
 }
 

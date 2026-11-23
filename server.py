@@ -1158,26 +1158,65 @@ class Handler(BaseHTTPRequestHandler):
         proto = self.headers.get('X-Forwarded-Proto') or ('http' if host.startswith(('localhost', '127.')) else 'https')
         return f'{proto}://{host}'
 
-    def _show_page(self, slug):
-        """/shows/<slug>: the shows page opened on one episode, with link-preview tags for X and others."""
-        ep = _episodes.get(slug, drafts=False) if _episodes else None
-        if not ep:
+    def _share_tags(self, ep, title, description, url):
+        """Link-preview tags for one episode (or the shows page): Open Graph (Facebook, LinkedIn, WhatsApp,
+        Telegram, Discord...), Twitter/X cards, a canonical link, and schema.org data for search engines."""
+        base, esc = self._base(), lambda v: html.escape(str(v or ''), quote=True)
+        image = ep.get('share') or ep.get('cover')
+        wide = bool(ep.get('share'))
+        alt = f'{ep.get("series") or "Voxa Shows"}: {ep["title"]}. A podcast voiced by AI, made with Voxa.'
+        t = [f'<link rel="canonical" href="{url}">',
+             '<meta property="og:site_name" content="Voxa">', '<meta property="og:locale" content="en_US">',
+             f'<meta property="og:title" content="{esc(title)}">', f'<meta property="og:description" content="{esc(description)}">',
+             f'<meta property="og:url" content="{url}">', '<meta property="og:type" content="video.episode">',
+             '<meta name="twitter:site" content="@voxavocals">', '<meta name="twitter:creator" content="@voxavocals">',
+             f'<meta name="twitter:card" content="{"summary_large_image" if image else "summary"}">',
+             f'<meta name="twitter:title" content="{esc(title)}">', f'<meta name="twitter:description" content="{esc(description)}">']
+        if image:
+            t += [f'<meta property="og:image" content="{base}{image}">', f'<meta property="og:image:secure_url" content="{base}{image}">',
+                  '<meta property="og:image:type" content="image/jpeg">',
+                  f'<meta property="og:image:width" content="{1200 if wide else 1080}">', f'<meta property="og:image:height" content="{630 if wide else 1080}">',
+                  f'<meta property="og:image:alt" content="{esc(alt)}">',
+                  f'<meta name="twitter:image" content="{base}{image}">', f'<meta name="twitter:image:alt" content="{esc(alt)}">']
+        if ep.get('video'):     # plays inline where a site supports it (Facebook, Telegram, Discord...)
+            t += [f'<meta property="og:video" content="{base}{ep["video"]}">', f'<meta property="og:video:secure_url" content="{base}{ep["video"]}">',
+                  '<meta property="og:video:type" content="video/mp4">', '<meta property="og:video:width" content="1080">',
+                  '<meta property="og:video:height" content="1080">']
+        if ep.get('audio'):
+            t += [f'<meta property="og:audio" content="{base}{ep["audio"]}">', '<meta property="og:audio:type" content="audio/mpeg">']
+        secs = int(ep.get('duration') or 0)
+        data = {'@context': 'https://schema.org', '@type': 'PodcastEpisode', 'name': ep['title'], 'url': url,
+                'description': ep.get('description', ''), 'datePublished': ep.get('published'),
+                'episodeNumber': ep.get('number'), 'timeRequired': f'PT{secs // 60}M{secs % 60}S',
+                'image': base + image if image else None,
+                'associatedMedia': {'@type': 'MediaObject', 'contentUrl': base + ep['audio']} if ep.get('audio') else None,
+                'partOfSeries': {'@type': 'PodcastSeries', 'name': ep.get('series') or 'Voxa Shows', 'url': f'{base}/shows'},
+                'publisher': {'@type': 'Organization', 'name': 'Voxa', 'url': base}}
+        data = {k: v for k, v in data.items() if v is not None}
+        t.append('<script type="application/ld+json">' + json.dumps(data, ensure_ascii=False).replace('</', '<\\/') + '</script>')
+        return '\n'.join(t)
+
+    def _show_page(self, slug=None):
+        """/shows (latest episode's preview) and /shows/<slug>: the shows page with link-preview tags."""
+        eps = _episodes.list() if _episodes else []
+        ep = _episodes.get(slug, drafts=False) if (_episodes and slug) else (eps[0] if eps else None)
+        if slug and not ep:
             return self._send(404, {'error': 'not found'})
         with open(os.path.join(WEB_DIR, 'shows.html'), encoding='utf-8') as f:
             page = f.read()
         for key, value in web_values().items():
             page = page.replace('{{' + key + '}}', value)
         base, esc = self._base(), lambda v: html.escape(str(v or ''), quote=True)
-        title = f'{ep["title"]} · {ep.get("series") or "Voxa Shows"}'
-        tags = [f'<meta property="og:title" content="{esc(title)}">', f'<meta property="og:description" content="{esc(ep.get("description"))}">',
-                f'<meta property="og:url" content="{base}{ep["url"]}">', '<meta property="og:type" content="video.episode">',
-                f'<meta name="twitter:card" content="{"summary_large_image" if ep.get("cover") else "summary"}">',
-                f'<meta name="twitter:title" content="{esc(title)}">', f'<meta name="twitter:description" content="{esc(ep.get("description"))}">']
-        if ep.get('cover'):
-            tags += [f'<meta property="og:image" content="{base}{ep["cover"]}">', f'<meta name="twitter:image" content="{base}{ep["cover"]}">']
-        page = page.replace('<!--og-->', '\n'.join(tags)).replace('data-slug=""', f'data-slug="{esc(slug)}"')
-        page = re.sub(r'<title>.*?</title>', f'<title>{esc(title)}</title>', page, count=1)
-        self._count_view('/shows/' + slug)
+        if slug:
+            title = f'{ep["title"]} · {ep.get("series") or "Voxa Shows"}'
+            page = page.replace('<!--og-->', self._share_tags(ep, title, ep.get('description'), f'{base}{ep["url"]}'))
+            page = page.replace('data-slug=""', f'data-slug="{esc(slug)}"')
+            page = re.sub(r'<title>.*?</title>', f'<title>{esc(title)}</title>', page, count=1)
+        elif ep:
+            page = page.replace('<!--og-->', self._share_tags(ep, 'Voxa Shows · AI Explained in 3 minutes',
+                                'Short, beginner-friendly podcasts about AI, voiced entirely by AI voices made with Voxa, right in a web browser.',
+                                f'{base}/shows'))
+        self._count_view('/shows/' + slug if slug else '/shows')
         return self._send(200, page, 'text/html; charset=utf-8', {**ISOLATION, 'Cache-Control': 'no-cache'})
 
     def _send_ranged(self, path, ctype):
@@ -1392,6 +1431,8 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r'/shows/([a-z0-9-]+)', p)
         if m:
             return self._show_page(m.group(1))
+        if p == '/shows':
+            return self._show_page()
         if p in WEB_PAGES:
             name = WEB_PAGES[p]
             with open(os.path.join(WEB_DIR, name), encoding='utf-8') as f:

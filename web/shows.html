@@ -49,6 +49,21 @@ video,.audio-only{width:100%;border-radius:20px;background:#000;display:block;as
 .part{font:800 11px var(--font-display);letter-spacing:.14em;text-transform:uppercase;color:#8d84b8;padding:12px 10px 4px}
 .back{display:inline-flex;gap:6px;color:var(--dim);text-decoration:none;font:700 14px var(--font-display);margin-bottom:12px}
 #status{color:var(--dim);font-size:14px}
+.share h2{margin:0 0 4px}
+.share .lead3{color:var(--dim);margin:0 0 14px;font-size:14px}
+.sharegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.sbtn{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:14px;border:1px solid var(--line);background:var(--surface);
+  color:var(--ink);text-decoration:none;font:750 14px var(--font-display);cursor:pointer;text-align:left}
+.sbtn:hover{border-color:var(--c,#a78bfa);background:color-mix(in srgb,var(--c,#a78bfa) 14%,transparent)}
+.sbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.sbtn .ic{flex:none;width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--c,#a78bfa);color:#fff;font:900 15px var(--font-display)}
+.sbtn .ic svg{width:17px;height:17px}
+.share{scroll-margin-top:90px}
+.sbtn.wide{grid-column:1/-1}
+.sbtn .ic.dark{box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.35)}
+.sbtn.big{grid-column:1/-1;justify-content:center;background:var(--grad);border:0;color:#fff;padding:14px}
+.sbtn.big .ic{background:rgba(255,255,255,.2)}
+#sharenote{min-height:20px;font-size:13.5px;color:#c4b5fd;margin:10px 0 0}
 </style></head>
 <body data-page="shows" data-mode="{{MODE}}" data-slug="">
 <header class="topbar"><div class="topbar-in">
@@ -82,13 +97,18 @@ video,.audio-only{width:100%;border-radius:20px;background:#000;display:block;as
       <p id="edesc"></p>
       <div class="badges" id="ebadges"></div>
       <div class="actions">
-        <a class="btn main" id="share" target="_blank" rel="noopener">Share on X</a>
+        <a class="btn main" href="#sharebox" id="sharejump">Share</a>
         <a class="btn" id="download" hidden>Download MP3</a>
         <a class="btn" id="onx" target="_blank" rel="noopener" hidden>Watch on X</a>
-        <button class="btn" id="copy" type="button">Copy link</button>
       </div>
     </div>
   </div>
+  <section class="card flat doc-body share" style="margin-top:18px" id="sharebox">
+    <h2>Share this episode</h2>
+    <p class="lead3">Each button opens the app with a post written for it. Instagram and TikTok take videos, not links: use “Share the video”.</p>
+    <div class="sharegrid" id="sharegrid"></div>
+    <p id="sharenote" role="status"></p>
+  </section>
   <section class="card flat doc-body" style="margin-top:18px" id="txbox" hidden>
     <div class="card-head"><div><h2>Transcript</h2></div></div>
     <ol class="tx" id="tx"></ol>
@@ -150,10 +170,9 @@ function open(slug, push) {
   if (e.made_in) badges.unshift(el('span', { className: 'badge made', textContent: `Made in ${e.made_in} with Voxa` }));
   $('#ebadges').replaceChildren(...badges);
   const url = location.origin + e.url;
-  $('#share').href = 'https://x.com/intent/post?text=' + encodeURIComponent(`🎙️ ${e.title}, made entirely with AI voices by @voxavocals`) + '&url=' + encodeURIComponent(url);
+  shareButtons(e);
   $('#download').hidden = !e.audio; if (e.audio) { $('#download').href = e.audio; $('#download').download = `${e.title}.mp3`; }
   $('#onx').hidden = !e.x_url; if (e.x_url) $('#onx').href = e.x_url;
-  $('#copy').onclick = async () => { try { await navigator.clipboard.writeText(url); $('#copy').textContent = 'Copied'; } catch { $('#copy').textContent = url; } setTimeout(() => { $('#copy').textContent = 'Copy link'; }, 1800); };
   // the player: video if there is one, else audio
   const media = e.video ? el('video', { controls: true, playsInline: true, preload: 'metadata', src: e.video })
     : e.audio ? el('audio', { controls: true, preload: 'metadata', src: e.audio, style: 'width:100%' }) : el('div', { className: 'audio-only', textContent: 'Coming soon' });
@@ -186,6 +205,69 @@ function open(slug, push) {
     if (li) { li.classList.add('now'); const box = $('#tx'); box.scrollTo({ top: li.offsetTop - box.offsetTop - 80, behavior: 'smooth' }); }
   };
   window.scrollTo({ top: 0 });
+}
+
+// --- Sharing: a post written for each platform, and a link tagged with it (?utm_source=...) for the stats page.
+const ICON = {
+  x: '<svg viewBox="0 0 24 24" fill="#fff"><path d="M17.8 2.5h3.1l-6.8 7.8 8 10.6h-6.3l-4.9-6.4-5.6 6.4H2.2l7.3-8.3L1.9 2.5h6.4l4.4 5.9zm-1.1 16.5h1.7L7.4 4.3H5.6z"/></svg>',
+  share: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>',
+  video: '<svg viewBox="0 0 24 24" fill="#fff"><path d="M4 5h11a2 2 0 0 1 2 2v2.5l4-2.5v10l-4-2.5V17a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></svg>',
+  link: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2"/></svg>',
+  mail: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>',
+};
+function shareButtons(e) {
+  const clean = location.origin + e.url;
+  const tag = src => `${clean}?utm_source=${src}&utm_medium=social&utm_campaign=${e.slug}`;
+  const ep = e.number ? `${e.series || 'AI Explained'}, Ep. ${e.number}` : (e.series || 'Voxa Shows');
+  const mins = Math.max(1, Math.round((e.duration || 180) / 60));
+  const made = e.made_in ? `, made in ${e.made_in}` : '';
+  const post = `🎙️ ${e.title}\n\n${ep}: a ${mins}-minute podcast voiced entirely by AI${made} with @voxavocals 👇`;
+  const plain = `🎧 ${e.title} (${ep})\n${e.description || ''}`;
+  const enc = encodeURIComponent;
+  const B = [
+    { id: 'x', label: 'X', c: '#000', dark: true, ic: ICON.x, href: `https://x.com/intent/post?text=${enc(post)}&url=${enc(tag('x'))}` },
+    { id: 'whatsapp', label: 'WhatsApp', c: '#25d366', ic: 'W', href: `https://wa.me/?text=${enc(plain + '\n' + tag('whatsapp'))}` },
+    { id: 'facebook', label: 'Facebook', c: '#1877f2', ic: 'f', href: `https://www.facebook.com/sharer/sharer.php?u=${enc(tag('facebook'))}` },
+    { id: 'linkedin', label: 'LinkedIn', c: '#0a66c2', ic: 'in', href: `https://www.linkedin.com/sharing/share-offsite/?url=${enc(tag('linkedin'))}` },
+    { id: 'telegram', label: 'Telegram', c: '#229ed9', ic: '➤', href: `https://t.me/share/url?url=${enc(tag('telegram'))}&text=${enc(plain)}` },
+    { id: 'reddit', label: 'Reddit', c: '#ff4500', ic: 'r', href: `https://www.reddit.com/submit?url=${enc(tag('reddit'))}&title=${enc(`${e.title}: a ${mins}-minute podcast voiced entirely by AI`)}` },
+    { id: 'threads', label: 'Threads', c: '#000', dark: true, ic: '@', href: `https://www.threads.net/intent/post?text=${enc(post.replace('@voxavocals', 'Voxa') + '\n' + tag('threads'))}` },
+    { id: 'email', label: 'Email', c: '#7c3aed', ic: ICON.mail, href: `mailto:?subject=${enc('Listen: ' + e.title)}&body=${enc(plain + '\n\n' + tag('email'))}` },
+  ];
+  const note = t => { $('#sharenote').textContent = t; };
+  const btn = (b, big) => {
+    const a = el(b.href ? 'a' : 'button', { className: 'sbtn' + (big ? ' big' : '') + (b.wide ? ' wide' : '') });
+    if (b.href) { a.href = b.href; a.target = '_blank'; a.rel = 'noopener'; } else a.type = 'button';
+    a.style.setProperty('--c', b.c);
+    a.innerHTML = `<span class="ic${b.dark ? ' dark' : ''}">${b.ic}</span><span></span>`; a.lastChild.textContent = b.label;
+    a.setAttribute('aria-label', `Share on ${b.label}`);
+    if (b.on) a.onclick = b.on;
+    return a;
+  };
+  const extra = [];
+  if (navigator.share) extra.push(btn({ label: 'Share…', c: '#7c3aed', ic: ICON.share, on: async () => {
+    try { await navigator.share({ title: e.title, text: plain, url: tag('share') }); } catch {}
+  } }, true));
+  if (e.video) extra.push(btn({ wide: true, label: 'Share the video (Instagram, TikTok…)', c: '#e1306c', ic: ICON.video, on: async ev => {
+    const caption = `${e.title} 🎙️ ${ep}: voiced entirely by AI${made}. Made with Voxa: voxavocals.com\n#AI #podcast #AIexplained #tech`;
+    try { await navigator.clipboard.writeText(caption); } catch {}
+    note('Getting the video ready…');
+    try {
+      const blob = await (await fetch(e.video)).blob();
+      const file = new File([blob], `${e.slug}.mp4`, { type: 'video/mp4' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: e.title, text: caption });
+        note('Caption copied too: paste it in your post.');
+      } else {
+        const a = el('a', { href: URL.createObjectURL(blob), download: `${e.slug}.mp4` }); document.body.append(a); a.click(); a.remove();
+        note('Video saved, and the caption is copied: upload it to Instagram or TikTok and paste the caption.');
+      }
+    } catch (err) { if (err.name !== 'AbortError') note('Could not prepare the video: ' + err.message); else note(''); }
+  } }));
+  extra.push(btn({ label: 'Copy link', c: '#475569', ic: ICON.link, on: async () => {
+    try { await navigator.clipboard.writeText(tag('link')); note('Link copied.'); } catch { note(tag('link')); }
+  } }));
+  $('#sharegrid').replaceChildren(...extra.filter(x => x.classList.contains('big')), ...B.map(b => btn(b)), ...extra.filter(x => !x.classList.contains('big')));
 }
 
 addEventListener('popstate', () => { const m = location.pathname.match(/^\/shows\/([a-z0-9-]+)$/); m ? open(m[1]) : showList(); });

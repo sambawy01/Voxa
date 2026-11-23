@@ -4,7 +4,7 @@ Episodes live on the data volume (<data dir>/episodes/<slug>/), not in the code,
 publishes one by uploading it with the owner API key; no deploy is needed:
 
     PUT /api/episodes/<slug>            episode.json (title, series, number, description, ...)
-    PUT /api/episodes/<slug>/<file>     video.mp4, audio.mp3, cover.jpg (raw body)
+    PUT /api/episodes/<slug>/<file>     video.mp4, audio.mp3, cover.jpg, share.jpg (raw body)
     DELETE /api/episodes/<slug>
 
 Readers get GET /api/episodes (the list), /episodes/<slug>/<file> (with byte ranges, which
@@ -20,7 +20,8 @@ import re
 import shutil
 
 SLUG = re.compile(r'^[a-z0-9][a-z0-9-]{0,63}$')
-FILES = {'video.mp4': 'video/mp4', 'audio.mp3': 'audio/mpeg', 'cover.jpg': 'image/jpeg', 'cover.png': 'image/png'}
+FILES = {'video.mp4': 'video/mp4', 'audio.mp3': 'audio/mpeg', 'cover.jpg': 'image/jpeg', 'cover.png': 'image/png',
+         'share.jpg': 'image/jpeg'}   # share.jpg: the 1200x630 link-preview image (X, Facebook, LinkedIn...)
 MAX_FILE = 200 * 1024 * 1024
 FIELDS = {'title': str, 'series': str, 'number': int, 'description': str, 'published': str, 'duration': (int, float),
           'hosts': list, 'made_in': str, 'x_url': str, 'transcript': list, 'language': str, 'draft': bool}
@@ -101,6 +102,7 @@ class Episodes:
                 'video': f'/episodes/{slug}/video.mp4' if 'video.mp4' in files else None,
                 'audio': f'/episodes/{slug}/audio.mp3' if 'audio.mp3' in files else None,
                 'cover': f'/episodes/{slug}/{cover}' if cover else None,
+                'share': f'/episodes/{slug}/share.jpg' if 'share.jpg' in files else None,
                 'audio_bytes': files.get('audio.mp3')}
 
     def list(self, drafts=False):

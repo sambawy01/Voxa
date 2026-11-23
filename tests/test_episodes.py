@@ -27,7 +27,9 @@ class EpisodesTest(unittest.TestCase):
         self.assertIsNone(ep['audio'])
         self.e.put_file('ai-explained-01', 'audio.mp3', io.BytesIO(b'ID3' + b'x' * 97), 100)
         self.e.put_file('ai-explained-01', 'cover.jpg', io.BytesIO(b'\xff\xd8' + b'x' * 8), 10)
+        self.e.put_file('ai-explained-01', 'share.jpg', io.BytesIO(b'\xff\xd8' + b'y' * 8), 10)
         [ep] = self.e.list()
+        self.assertEqual(ep['share'], '/episodes/ai-explained-01/share.jpg')     # the wide link-preview image
         self.assertEqual((ep['audio'], ep['cover'], ep['audio_bytes']), ('/episodes/ai-explained-01/audio.mp3', '/episodes/ai-explained-01/cover.jpg', 100))
         path, ctype = self.e.file('ai-explained-01', 'audio.mp3')
         self.assertEqual(ctype, 'audio/mpeg')

@@ -257,6 +257,8 @@ class Supertonic:
 
     def synth(self, text, style_name, lang, seed=4242):
         import numpy as np
+        if lang == 'ar':
+            text = normalize_arabic(text)                 # digits as words: the voice cannot read them
         with self.lock:
             if self.sessions is None:
                 if self.prepare:
@@ -336,6 +338,218 @@ class Voices:
         with self.kokoro_lock:
             parts = [read_wav(io.BytesIO(w)) for w in self.server.synth(text, voice_id, 1.0, v['language'])]
         return np.concatenate(parts) if parts else np.zeros(0, np.float32)
+
+
+# --- Arabic numbers: digits read as words ----------------------------------------------------
+# The Arabic voices read "1998" or "01012345678" as noise, but read the same numbers written as
+# words perfectly. So digits become words before the voice sees them: cardinals that agree with the
+# counted noun (ثلاث سنوات, ثلاثة كتب), years and amounts, phone numbers digit by digit in groups,
+# times, percentages, decimals, dates and ranges. The browser does the same (web/arabic-numbers.js);
+# tests/arabic_numbers_cases.json holds the cases both must pass.
+
+_AR_UM = ['صفر', 'واحد', 'اثنين', 'ثلاثة', 'أربعة', 'خمسة', 'ستة', 'سبعة', 'ثمانية', 'تسعة', 'عشرة']
+_AR_UF = ['صفر', 'واحدة', 'اثنتين', 'ثلاث', 'أربع', 'خمس', 'ست', 'سبع', 'ثمان', 'تسع', 'عشر']
+_AR_TM = {11: 'أحد عشر', 12: 'اثني عشر', 13: 'ثلاثة عشر', 14: 'أربعة عشر', 15: 'خمسة عشر', 16: 'ستة عشر', 17: 'سبعة عشر',
+          18: 'ثمانية عشر', 19: 'تسعة عشر'}
+_AR_TF = {11: 'إحدى عشرة', 12: 'اثنتي عشرة', 13: 'ثلاث عشرة', 14: 'أربع عشرة', 15: 'خمس عشرة', 16: 'ست عشرة', 17: 'سبع عشرة',
+          18: 'ثماني عشرة', 19: 'تسع عشرة'}
+_AR_TENS = {2: 'عشرين', 3: 'ثلاثين', 4: 'أربعين', 5: 'خمسين', 6: 'ستين', 7: 'سبعين', 8: 'ثمانين', 9: 'تسعين'}
+_AR_HUND = {1: 'مائة', 2: 'مائتين', 3: 'ثلاثمائة', 4: 'أربعمائة', 5: 'خمسمائة', 6: 'ستمائة', 7: 'سبعمائة', 8: 'ثمانمائة', 9: 'تسعمائة'}
+_AR_SCALES = [(10 ** 9, 'مليار', 'مليارين', 'مليارات'), (10 ** 6, 'مليون', 'مليونين', 'ملايين'), (1000, 'ألف', 'ألفين', 'آلاف')]
+_AR_HOUR = {1: 'الأولى', 2: 'الثانية', 3: 'الثالثة', 4: 'الرابعة', 5: 'الخامسة', 6: 'السادسة', 7: 'السابعة', 8: 'الثامنة',
+            9: 'التاسعة', 10: 'العاشرة', 11: 'الحادية عشرة', 12: 'الثانية عشرة'}
+# Feminine counted nouns the endings do not show (and masculine plurals that end in ات).
+_AR_FEM = set('دقائق ثوان ثواني ليالي سنين دول مدن نساء أوراق رسائل أفكار قطع نقاط عيون أيدي أعين أم أخت بنت يد عين دار نار شمس أرض حرب'.split())
+_AR_MASC = set('ملفات أوقات تطبيقات فيديوهات مشروبات مستندات حسابات كيلومترات سنتيمترات ملليمترات دولارات جنيهات ريالات جرامات كيلوجرامات لترات أمتار'.split())
+_AR_DIGITS = str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹٫٬', '01234567890123456789.,')
+_AR_RUN = re.compile(r'(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\+?\d{2,4}(?:[ \-]\d{2,4}){2,}|\+?\d+(?:[.:/\-]\d+)*)(\s*%)?')
+
+
+def _ar_u1000(n, fem):
+    parts = []
+    h, r = divmod(n, 100)
+    if h:
+        parts.append(_AR_HUND[h])
+    if r:
+        if r <= 10:
+            parts.append((_AR_UF if fem else _AR_UM)[r])
+        elif r < 20:
+            parts.append((_AR_TF if fem else _AR_TM)[r])
+        else:
+            t, u = divmod(r, 10)
+            if u:
+                unit = 'إحدى' if (u == 1 and fem) else (_AR_UF if fem else _AR_UM)[u]
+                parts.append(unit + ' و' + _AR_TENS[t])
+            else:
+                parts.append(_AR_TENS[t])
+    return ' و'.join(parts)
+
+
+def _ar_cardinal(n, fem=False):
+    """1998 -> ألف وتسعمائة وثمانية وتسعون. `fem`: the counted noun is feminine (ثلاث سنوات)."""
+    if n == 0:
+        return 'صفر'
+    parts, rest = [], n
+    for size, one, two, few in _AR_SCALES:
+        q, rest = divmod(rest, size)
+        if not q:
+            continue
+        if q == 1:
+            parts.append(one)
+        elif q == 2:
+            parts.append(two)
+        elif q == 200:
+            parts.append('مائتي ' + one)
+        else:
+            parts.append(_ar_u1000(q, False) + ' ' + (few if 3 <= q % 100 <= 10 else one))
+    if rest:
+        parts.append(_ar_u1000(rest, fem))
+    return ' و'.join(parts)
+
+
+def _ar_is_fem(word):
+    w = re.sub('[ً-ٰٟـ]', '', word or '')
+    w = re.sub('^(?:[وفبلك]?ال|لل)', '', w)
+    if w in _AR_FEM:
+        return True
+    if w in _AR_MASC:
+        return False
+    return w.endswith('ة') or w.endswith('ات')
+
+
+def _ar_digits(s, sep=' '):
+    return sep.join(_AR_UM[int(c)] for c in s)
+
+
+def _ar_phone_groups(digits, raw):
+    groups = re.findall(r'\d+', raw)
+    if len(groups) >= 3 and sum(map(len, groups)) == len(digits) and not raw.startswith('+'):
+        return groups
+    if raw.startswith('+') and len(groups) >= 3:
+        return groups
+    if re.fullmatch(r'01[0125]\d{8}', digits):
+        return [digits[:3], digits[3:7], digits[7:]]
+    out, i = [], 0
+    while i < len(digits):
+        out.append(digits[i:i + 3])
+        i += 3
+    if len(out) > 1 and len(out[-1]) == 1:
+        tail = out.pop()
+        out[-1] += tail
+    return out
+
+
+def _ar_is_phone(run):
+    digits = re.sub(r'\D', '', run)
+    if len(digits) < 8:
+        return False
+    if run.startswith('+') or digits.startswith('0'):
+        return True
+    groups = re.findall(r'\d+', run)
+    return bool(re.fullmatch(r'[\d ]+', run) and (len(groups) == 1 and len(digits) >= 9 or
+                                                    len(groups) >= 3 and all(3 <= len(g) <= 4 for g in groups)))
+
+
+def _ar_phone(run):
+    digits = re.sub(r'\D', '', run)
+    words = '، '.join(_ar_digits(g) for g in _ar_phone_groups(digits, run))
+    return ('زائد ' if run.startswith('+') else '') + words
+
+
+def _ar_time(h, m):
+    hh = h % 12 or 12
+    if m == 0:
+        return _AR_HOUR[hh]
+    if m == 15:
+        return _AR_HOUR[hh] + ' وربع'
+    if m == 30:
+        return _AR_HOUR[hh] + ' ونصف'
+    if m == 45:
+        return _AR_HOUR[hh % 12 + 1] + ' إلا ربع'
+    if m == 1:
+        mins = 'دقيقة واحدة'
+    elif m == 2:
+        mins = 'دقيقتان'
+    elif m <= 10:
+        mins = _ar_cardinal(m, True) + ' دقائق'
+    else:
+        mins = _ar_cardinal(m, True) + ' دقيقة'
+    return _AR_HOUR[hh] + ' و' + mins
+
+
+def _ar_int(s, fem):
+    if len(s) > 1 and s[0] == '0':
+        return _ar_digits(s)                          # codes such as 007
+    n = int(s)
+    if n >= 10 ** 12:
+        return '، '.join(_ar_digits(s[i:i + 3]) for i in range(0, len(s), 3))
+    return _ar_cardinal(n, fem)
+
+
+def _ar_compact(c, fem, hour):
+    m = re.fullmatch(r'(\d{1,2}):(\d{2})', c)
+    if m:
+        h, mi = int(m.group(1)), int(m.group(2))
+        if h <= 24 and mi <= 59:
+            return _ar_time(h, mi)
+        return _ar_int(m.group(1), False) + '، ' + _ar_int(m.group(2), False)
+    m = re.fullmatch(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})|(\d{4})-(\d{1,2})-(\d{1,2})', c)
+    if m:
+        g = [x for x in m.groups() if x is not None]
+        if m.group(4):
+            g = [g[2], g[1], g[0]]                    # 2024-05-12 -> day, month, year
+        return '، '.join(_ar_int(str(int(x)), False) for x in g)       # 05 is the month five, not a code
+    if re.fullmatch(r'\d+(?:\.\d+){2,}', c):
+        return ' نقطة '.join(_ar_int(x, False) for x in c.split('.'))
+    m = re.fullmatch(r'(\d+)\.(\d+)', c)
+    if m:
+        frac = m.group(2)
+        tail = _ar_int(frac, False) if (len(frac) <= 3 and frac[0] != '0') else _ar_digits(frac)
+        return _ar_int(m.group(1), False) + ' فاصلة ' + tail
+    m = re.fullmatch(r'(\d+)-(\d+)', c)
+    if m:
+        return _ar_int(m.group(1), fem) + ' إلى ' + _ar_int(m.group(2), fem)
+    m = re.fullmatch(r'(\d+)/(\d+)', c)
+    if m:
+        return _ar_int(m.group(1), False) + ' على ' + _ar_int(m.group(2), False)
+    if c.isdigit():
+        if hour and 1 <= int(c) <= 12:
+            return _AR_HOUR[int(c)]
+        return _ar_int(c, fem)
+    return '، '.join(_ar_int(x, fem) for x in re.findall(r'\d+', c))
+
+
+def normalize_arabic(text):
+    """Arabic text with its digits written as words, for the voice."""
+    if not text or not re.search(r'[0-9٠-٩۰-۹]', text):
+        return text
+    t = text.translate(_AR_DIGITS)
+    out, last = [], 0
+    for m in _AR_RUN.finditer(t):
+        a, b = m.start(), m.end()
+        before = t[a - 1] if a else ''
+        after = t[b] if b < len(t) else ''
+        if re.search(r'[A-Za-z_][\-./:]?$', t[:a]) or re.match(r'[\-./:]?[A-Za-z_]', t[b:]):
+            continue                                    # mp3, A4, COVID-19, 5G: not a number to read out
+        run, pct = m.group(1), bool(m.group(2))
+        nxt = re.match(r'\s*([ء-يٱ-ۓ]+)', t[b:])
+        fem = _ar_is_fem(nxt.group(1)) if nxt else False
+        prev = re.search(r'([ء-يٱ-ۓ]+)\s*$', t[:a])
+        hour = bool(prev and re.sub('[ً-ٟ]', '', prev.group(1)) in ('الساعة', 'الساعه'))
+        if ',' in run:                                  # 15,000: an amount, never a phone number
+            words = _ar_compact(run.replace(',', ''), fem, hour)
+        elif _ar_is_phone(run):
+            words = _ar_phone(run)
+        elif ' ' in run and not re.fullmatch(r'\d{4}-\d{1,2}-\d{1,2}', run):
+            words = ' '.join(_ar_compact(x, fem, hour) for x in run.split())
+        else:
+            words = _ar_compact(run, fem, hour)
+        if pct:
+            words += ' بالمئة'
+        out.append(t[last:a] + words)
+        last = b
+    out.append(t[last:])
+    return ''.join(out)
 
 
 # --- Scripts --------------------------------------------------------------------------------

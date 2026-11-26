@@ -162,7 +162,7 @@ WEB_PAGES = {'/': 'index.html', '/voxa.css': 'voxa.css', '/checkout': 'checkout.
              '/mp3-worker.js': 'mp3-worker.js', '/credits': 'credits.html',
              '/podcast': 'podcast.html', '/player': 'player.html', '/integrations': 'integrations.html', '/storage': 'storage.html', '/shows': 'shows.html', '/stats': 'stats.html', '/claude': 'integrations.html', '/podcast.js': 'podcast.js', '/preview.js': 'preview.js',
              '/listen': 'listen.html', '/listen.js': 'listen.js', '/manifest.webmanifest': 'manifest.webmanifest',
-             '/lite.js': 'lite.js', '/hojo-text.js': 'hojo-text.js', '/hojo-worker.js': 'hojo-worker.js',
+             '/lite.js': 'lite.js', '/arabic-numbers.js': 'arabic-numbers.js', '/hojo-text.js': 'hojo-text.js', '/hojo-worker.js': 'hojo-worker.js',
              '/tiny-voca-text.js': 'tiny-voca-text.js', '/tiny-voca-worker.js': 'tiny-voca-worker.js',
              '/supertonic-worker.js': 'supertonic-worker.js', '/pocket-worker.js': 'pocket-worker.js',
              '/kale-worker.js': 'kale-worker.js', '/kokoro-worker.js': 'kokoro-worker.js'}

@@ -396,3 +396,32 @@ body:not([data-mode="on-device"]) .ondevice-only{display:none!important}
 .tabs .wide { margin-right: -4px }
 @media (max-width: 460px) { .tabs .wide { display: none } .tabs a { padding: 8px 7px; font-size: 13px } .tabs { gap: 2px } }
 @media (max-width: 380px) { .tabs a { padding: 7px 5px; font-size: 12px } }
+
+/* ZONOS3 Mini: the Advanced panel (web/zonos-panel.js) */
+.zadv summary{cursor:pointer;font-weight:700;padding:6px 0}
+.zadv .zgroup{border:1px solid var(--line);border-radius:14px;margin:12px 0;padding:10px 14px 14px}
+.zadv legend{padding:0 8px;font:800 13px var(--font-display);color:var(--dim)}
+.zadv .zrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.zadv .zrow select{flex:1;min-width:150px}
+.zadv .zslider{display:flex;justify-content:space-between;gap:10px;font-size:14px;margin-top:10px}
+.zadv input[type=range]{width:100%}
+.zadv .zconsent{text-transform:none;letter-spacing:normal;font-weight:500;display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.4;margin:10px 0}
+.zadv .zconsent input{margin-top:3px;flex:none}
+.zadv audio{width:100%;margin:8px 0}
+.zadv h4{margin:14px 0 6px;font:800 13px var(--font-display);color:var(--dim)}
+.zadv .zchips{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
+.zadv .znear{display:inline-flex;gap:4px}
+.zadv .zmeter{display:flex;align-items:center;gap:12px;margin:10px 0}
+.zadv .zbar{position:relative;flex:1;height:8px;border-radius:8px;background:rgba(255,255,255,.1)}
+.zadv .zbar i{display:block;height:100%;border-radius:8px;background:var(--grad)}
+.zadv .zbar .zmark{position:absolute;top:-4px;width:2px;height:16px;background:var(--ink);opacity:.5}
+.zadv .zmeter.new .zbar i{background:#f59e0b}
+.zadv .zmeter b{font-size:13px;white-space:nowrap}
+.zadv .zpad{position:relative;height:220px;border:1px solid var(--line);border-radius:14px;margin:8px 0 14px;background:radial-gradient(circle at 50% 50%,rgba(167,139,250,.12),transparent 70%);touch-action:none;cursor:crosshair;overflow:hidden}
+.zadv .zpad::before,.zadv .zpad::after{content:"";position:absolute;background:var(--line)}
+.zadv .zpad::before{left:50%;top:0;bottom:0;width:1px}.zadv .zpad::after{top:50%;left:0;right:0;height:1px}
+.zadv .zax{position:absolute;font-size:11px;color:var(--dim);pointer-events:none}
+.zadv .zax.x{bottom:4px;left:8px}.zadv .zax.y{top:4px;right:8px}
+.zadv .zdot{position:absolute;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:var(--grad);box-shadow:0 0 0 4px rgba(167,139,250,.25);pointer-events:none}
+.zadv .zemo{position:absolute;left:var(--x);top:var(--y);transform:translate(-50%,-50%);padding:3px 8px;font-size:12px}
+.zadv .zemo{font-size:11px;padding:2px 7px;z-index:1}.zadv .zemo:hover,.zadv .zemo:focus-visible{z-index:3}

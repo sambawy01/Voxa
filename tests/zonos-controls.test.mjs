@@ -72,3 +72,69 @@ test('base64 matches Buffer for large input', () => {
   const bytes = Uint8Array.from({ length: 100000 }, (_, i) => i * 7 % 256);
   assert.equal(toBase64(bytes), Buffer.from(bytes).toString('base64'));
 });
+
+import { interp, identityOf, isSameVoice, moodPoint, setMoodFromPad, chooseEmotion, nearbyVoices, blendFields, samplingFields,
+  collapseWithMap, chunkText, spansForChunk, toSpan } from '../web/zonos-controls.js';
+
+test('identity falls as controls move and "same voice" follows the threshold', () => {
+  assert.equal(identityOf(ui, { sliders: {} }), 1);
+  assert.ok(Math.abs(interp([[0, 0.9], [1, 0.7]], 0.5) - 0.8) < 1e-9);
+  const small = { sliders: { gender: 0.2 } }, big = { sliders: { gender: 2 } };
+  assert.ok(identityOf(ui, big) < identityOf(ui, small));
+  assert.equal(isSameVoice(ui, big), false);
+  assert.ok(identityOf(ui, { sliders: {}, accent: { id: 'british', strength: 2 } }) < 0.85);
+});
+
+test('the mood pad sets valence and arousal and clears single emotions', () => {
+  const s = setMoodFromPad(ui, { sliders: { happy: 4, gender: 1 } }, 1, -0.5);
+  assert.equal(s.sliders.happy, undefined);
+  assert.equal(s.sliders.gender, 1);
+  assert.equal(s.sliders.valence, 4);
+  assert.equal(s.sliders.arousal, -2);
+  const p = moodPoint(ui, s);
+  assert.ok(p.x > 0 && p.y < 0);
+});
+
+test('choosing an emotion uses Zyphra\'s recommended dose', () => {
+  const happy = ui.moods.find(m => m.id === 'happy');
+  const s = chooseEmotion(ui, { sliders: { valence: 3, sad: 2 } }, 'happy');
+  assert.equal(s.sliders[happy.control], happy.dose);
+  assert.equal(s.sliders.valence, 0);
+  assert.equal(s.sliders.sad, undefined);
+  assert.deepEqual(chooseEmotion(ui, { sliders: { a: 1 } }, 'nope'), { sliders: { a: 1 } });
+});
+
+test('nearby voices stay inside the safe range and differ from each other', () => {
+  let seed = 7; const rng = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const list = nearbyVoices(ui, { sliders: { gender: 1 } }, 5, rng);
+  assert.equal(list.length, 5);
+  const byId = Object.fromEntries(ui.controls.map(c => [c.id, c]));
+  for (const v of list) for (const [id, x] of Object.entries(v.sliders)) assert.ok(x >= byId[id].safe[0] && x <= byId[id].safe[1], `${id}=${x}`);
+  assert.equal(new Set(list.map(v => JSON.stringify(v.sliders))).size, 5);
+});
+
+test('a blend needs two different voices; sampling sends only changes', () => {
+  assert.deepEqual(blendFields('a', 'b', 0.3), { speaker_blend_embedding_id_a: 'a', speaker_blend_embedding_id_b: 'b', speaker_blend_t: 0.3 });
+  assert.deepEqual(blendFields('a', 'a', 0.3), {});
+  assert.deepEqual(blendFields('a', null, 0.3), {});
+  assert.deepEqual(samplingFields({ temperature: 0.75, top_p: 0.9, laci: true }), { top_p: 0.9, laci: true });
+  assert.deepEqual(samplingFields({}), {});
+});
+
+test('spans follow the words they were marked on, through whitespace and chunking', () => {
+  const raw = 'Hello   there.\n\nThis is   the second sentence.';
+  const { text, map } = collapseWithMap(raw);
+  assert.equal(text, 'Hello there. This is the second sentence.');
+  const start = raw.indexOf('second'), end = start + 'second'.length;
+  const sp = toSpan(ui, { start, end }, map, { happy: 4 });
+  assert.equal(text.slice(sp.start, sp.end), 'second');
+  assert.ok(sp.controls['emotions.happy'] > 0);
+  const chunks = chunkText(text, 15);
+  assert.ok(chunks.length >= 2);
+  const hit = chunks.map(c => spansForChunk([sp], c)).filter(a => a.length);
+  assert.equal(hit.length, 1);
+  const c = chunks.find(c => spansForChunk([sp], c).length), [one] = spansForChunk([sp], c);
+  assert.equal(c.text.slice(one.start, one.end), 'second');
+  assert.equal(toSpan(ui, { start: 3, end: 3 }, map, { happy: 4 }), null);
+  assert.equal(toSpan(ui, { start, end }, map, {}), null);
+});

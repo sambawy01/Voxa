@@ -14,6 +14,7 @@
 //   desktop only; Zyphra's own browser engine (static/, from vendor/zonos3-web) loads the weights.
 // Each engine loads the first time one of its voices speaks, then comes from the cache.
 import { normalizeForHojo, splitForHojo } from '/hojo-text.js';
+import { normalizeArabic } from '/arabic-numbers.js';   // digits as words: the Arabic voices cannot read them
 
 // Phones and tablets: desktop-only voices are refused before anything downloads (a phone that
 // fetches ~1 GB runs out of memory and the browser reloads the page), and only one voice model
@@ -274,6 +275,7 @@ export function createLite(config) {
   return {
     /** Speak `text` with an on-device voice: 24 kHz mono Float32Array. */
     async synth(voice, text, { temperature, seed, signal, status = () => {} }) {
+      if (voice.lang === 'ar') text = normalizeArabic(text);
       if (voice.desktop && IS_PHONE) throw new Error(DESKTOP_ONLY);
       if (IS_PHONE) release(voice.engine);
       if (voice.engine === 'hojo') {

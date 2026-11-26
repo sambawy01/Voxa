@@ -15,7 +15,8 @@
 // Each engine loads the first time one of its voices speaks, then comes from the cache.
 import { normalizeForHojo, splitForHojo } from '/hojo-text.js';
 import { normalizeArabic } from '/arabic-numbers.js';
-import { chunkText, spansForChunk } from '/zonos-controls.js';   // digits as words: the Arabic voices cannot read them
+import { chunkText, spansForChunk } from '/zonos-controls.js';
+import { FloatStream, concat } from '/zonos-studio-logic.js';   // digits as words: the Arabic voices cannot read them
 
 // Phones and tablets: desktop-only voices are refused before anything downloads (a phone that
 // fetches ~1 GB runs out of memory and the browser reloads the page), and only one voice model
@@ -221,30 +222,45 @@ class Zonos {
   }
   // `extra` is the Advanced panel: steering `controls`, or a cloned voice (`speaker_audio_base64`,
   // which replaces the built-in voice).
+  /** Any engine call (speech edit, speakers, phonemize...): `localFetch(path, init)` once the engine is up. */
+  async call(path, init) {
+    await this.ready;
+    return this.m.localFetch(path, init);
+  }
   async piece(text, voice, seed, signal, extra = {}) {
-    const speaker = extra.speaker_audio_base64 || extra.speaker_blend_t != null ? {} : { speaker_embedding_id: voice.source };
+    const speaker = extra.speaker_audio_base64 || extra.speaker_embedding_base64 || extra.speaker_blend_t != null ? {} : { speaker_embedding_id: voice.source };
     const r = await this.m.localFetch('/v2/generate', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...extra, text, language: voice.code, ...speaker, stream: false, format: 'pcm',
+      body: JSON.stringify({ ...extra, text, language: voice.code, ...speaker, stream: !!this.live, format: 'pcm',
         seed: Number(BigInt.asUintN(32, BigInt(Math.floor(seed)))) }) });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `The desktop voice failed (${r.status}).`);
     const rate = +(r.headers.get('x-audio-sample-rate') || 44100);
-    return resample(new Float32Array(await r.arrayBuffer()), rate, 24000);
+    if (!this.live) return resample(new Float32Array(await r.arrayBuffer()), rate, 24000);
+    // Streaming: play each piece as it arrives, and keep the whole take for the player and download.
+    const reader = r.body.getReader(), fs = new FloatStream(), parts = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const f = fs.push(value);
+      if (f.length) { parts.push(f); this.live.push(f, rate); }
+    }
+    return resample(concat(parts), rate, 24000);
   }
-  async synth(text, voice, { seed = 4242, signal, extra, spans }) {
+  async synth(text, voice, { seed = 4242, signal, extra, spans, stream }) {
     await this.ready;
+    this.live = null;
+    if (stream) { const { LivePlayer } = await import('/zonos-live.js'); this.live = new LivePlayer(); }
     this.onStatus('Speaking with the desktop voice on your graphics card…');
     const chunks = chunkText(text.replace(/\s+/g, ' ').trim());
     const gap = new Float32Array(Math.round(24000 * 0.2)), out = [];
     for (const [i, c] of chunks.entries()) {
       if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-      if (i) out.push(gap);
+      if (i) { out.push(gap); this.live?.push(gap, 24000); }
       if (chunks.length > 1) this.onStatus(`Speaking with the desktop voice… part ${i + 1} of ${chunks.length}`);
       const sp = spansForChunk(spans, c);
       out.push(await this.piece(c.text, voice, seed + i, signal, sp.length ? { ...extra, control_spans: sp } : extra));
     }
-    const pcm = new Float32Array(out.reduce((a, p) => a + p.length, 0));
-    let at = 0; for (const p of out) { pcm.set(p, at); at += p.length; }
-    return pcm;
+    this.live?.close(); this.live = null;
+    return concat(out);
   }
 }
 
@@ -291,6 +307,12 @@ export function createLite(config) {
       e.onStatus = status;
       try { return await e.controls(); } catch (err) { delete workers.zonos; throw err; }
     },
+    /** A direct call to ZONOS3's engine API (speech edit, speakers, phonemize): a Response. */
+    async zonosCall(voice, path, init, status = () => {}) {
+      const e = workers.zonos ||= new Zonos(voice.engine_url, voice.base);
+      e.onStatus = status;
+      try { return await e.call(path, init); } catch (err) { delete workers.zonos; throw err; }
+    },
     async synth(voice, text, { temperature, seed, signal, status = () => {}, zonos }) {
       if (voice.lang === 'ar') text = normalizeArabic(text);
       if (voice.desktop && IS_PHONE) throw new Error(DESKTOP_ONLY);
@@ -306,7 +328,7 @@ export function createLite(config) {
         e.onStatus = status;
         status('Loading the desktop voice…');
         try { await e.ready; } catch (err) { delete workers.zonos; throw err; }
-        return e.synth(text, voice, { seed, signal, extra: zonos?.fields, spans: voice.lang === 'ar' ? undefined : zonos?.spans });
+        return e.synth(text, voice, { seed, signal, extra: zonos?.fields, spans: voice.lang === 'ar' ? undefined : zonos?.spans, stream: zonos?.stream });
       }
       if (voice.engine === 'smoller') {
         const e = workers.smoller ||= new Smoller(voice.worker);

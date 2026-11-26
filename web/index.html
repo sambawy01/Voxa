@@ -197,6 +197,7 @@ Promise.all([
   }
   langSel.innerHTML=Object.entries(LANG).map(([k,lab])=>`<option value="${k}">${lab}</option>`).join('');
   refreshVoices();
+  import('/zonos-voices.js').then(m=>{ Z=m; refreshVoices(); }).catch(()=>{});
 }).catch(()=>{ langSel.innerHTML='<option value="a">English (US)</option>'; });
 
 function refreshVoices(){
@@ -227,22 +228,18 @@ function describeVoice(){
 // ZONOS3 Mini's Advanced panel (web/zonos-panel.js): loaded only when such a voice is chosen.
 // "Your ZONOS3 voices" are saved on this device (settings only, never a cloned clip).
 let ZPANEL=null, ZVOICE=null;
-const MINE_KEY='voxa-zonos-voices';
-const mineLoad=()=>{ try{ return JSON.parse(localStorage.getItem(MINE_KEY)||'[]'); }catch{ return []; } };
-const mineSave=l=>{ try{ localStorage.setItem(MINE_KEY, JSON.stringify(l)); }catch{} };
-function registerMine(){
-  for(const m of mineLoad()){
-    const base=LITE_BY_ID[m.base]; if(!base||base.engine!=='zonos') continue;
-    LITE_BY_ID[m.id]={...base, id:m.id, name:m.name+' ✦', mine:true, state:m.state, description:'Your saved ZONOS3 voice, based on '+base.name+'. Desktop only.'};
-  }
-}
+let Z=null; // web/zonos-voices.js, loaded with the panel
+const mineLoad=()=>Z?Z.loadList(Z.MINE_KEY):[];
+const mineSave=l=>Z&&Z.saveList(Z.MINE_KEY,l);
+function registerMine(){ if(Z) Z.registerMine(LITE_BY_ID); }
 const mineFor=lang=>mineLoad().filter(m=>LITE_BY_ID[m.id]&&LITE_BY_ID[m.id].lang===lang);
 async function zonosPanelFor(v){
   ZVOICE=v;
   if(!v){ if(ZPANEL) ZPANEL.show(false); else $('#zadv').hidden=true; return; }
   if(!ZPANEL){
     try{
-      const [{mountZonosPanel}, {createLite}, {encodeWav, floatToInt16, SAMPLE_RATE}]=await Promise.all([import('/zonos-panel.js'), import('/lite.js?v={{LITE_VERSION}}'), import('/book.js?v={{BOOK_VERSION}}')]);
+      const [{mountZonosPanel}, {createLite}, {encodeWav, floatToInt16, SAMPLE_RATE}, zv]=await Promise.all([import('/zonos-panel.js'), import('/lite.js?v={{LITE_VERSION}}'), import('/book.js?v={{BOOK_VERSION}}'), import('/zonos-voices.js')]);
+      Z=zv; registerMine();
       LITE_ENGINES||=createLite(()=>({lite:LITE, phonon_version:PHONON_VERSION}));
       const ta=$('#text');
       ZPANEL=mountZonosPanel($('#zadv'), {
@@ -257,6 +254,12 @@ async function zonosPanelFor(v){
         previewText:()=>`Hello there. It's lovely to meet you.`,
         voices:()=>{ const seen=new Set(); return Object.values(LITE_BY_ID).filter(x=>x.engine==='zonos'&&!x.mine&&!seen.has(x.source)&&seen.add(x.source)).map(x=>({id:x.id,name:x.name,source:x.source})); },
         current:()=>ZVOICE,
+        call:(path,init,status)=>LITE_ENGINES.zonosCall(ZVOICE, path, init, status),
+        replace:(from,to)=>{ const i=ta.value.indexOf(from); if(i<0) return false; ta.setRangeText(to, i, i+from.length, 'end'); ta.dispatchEvent(new Event('input')); return true; },
+        onCast:({name,state})=>{
+          const base=ZVOICE.id, l=Z.loadList(Z.CAST_KEY).filter(c=>c.name!==name);
+          l.push({name, voice:base, state}); Z.saveList(Z.CAST_KEY,l);
+        },
         onSave:({name,state})=>{
           const base=ZVOICE.mine?mineLoad().find(m=>m.id===ZVOICE.id).base:ZVOICE.id;
           const l=mineLoad(); l.push({id:'my-'+Date.now().toString(36), name, base, state}); mineSave(l);

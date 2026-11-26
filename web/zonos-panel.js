@@ -8,6 +8,7 @@ import {
   identityOf, isSameVoice, moodPoint, setMoodFromPad, chooseEmotion, nearbyVoices, blendFields, samplingFields,
   SAMPLING_DEFAULTS, collapseWithMap, toSpan,
 } from '/zonos-controls.js';
+import { toNpy, fromNpy } from '/zonos-studio-logic.js';
 
 const el = (tag, attrs = {}, ...kids) => {
   const n = Object.assign(document.createElement(tag), attrs);
@@ -15,7 +16,7 @@ const el = (tag, attrs = {}, ...kids) => {
   return n;
 };
 const btn = (text, onclick, cls = 'small') => el('button', { type: 'button', className: cls, textContent: text, onclick });
-const blank = () => ({ sliders: {}, accent: null, sampling: {}, blend: null, spans: [] });
+const blank = () => ({ sliders: {}, accent: null, sampling: {}, blend: null, spans: [], stream: false });
 
 /**
  * Mount the panel into `root`. Hooks from the page:
@@ -154,10 +155,30 @@ export function mountZonosPanel(root, hooks) {
   }
 
   // -- pauses and pronunciation
+  async function previewPronunciation(out, ph) {
+    out.replaceChildren();
+    const text = (hooks.getText().slice(hooks.getSelection().start, hooks.getSelection().end).trim() || hooks.getText().trim()).slice(0, 1000);
+    if (!text) { status.textContent = 'Type or select some words first.'; return; }
+    await guarded('Looking up pronunciations…', async () => {
+      const r = await hooks.call('/v2/phonemize', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, language: hooks.current().code, guess: true }) });
+      if (r.status === 404) throw new Error('This voice has no pronunciation dictionary for its language.');
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `The lookup failed (${r.status}).`);
+      const { segments } = await r.json();
+      for (const seg of segments) {
+        if (!seg.ipa) { out.append(el('span', { className: 'zseg', textContent: seg.text })); continue; }
+        const word = el('span', { className: 'zseg ' + seg.status, title: seg.status }, el('b', { textContent: seg.text }), el('i', { textContent: '/' + seg.ipa + '/' }));
+        if (ph) word.append(btn('Use', () => { if (hooks.replace(seg.text, ph.open_marker + seg.ipa + ph.close_marker)) status.textContent = `Pronunciation set for "${seg.text}".`; }, 'small ghost'));
+        out.append(word);
+      }
+    });
+  }
   function buildMarkers() {
     const pauses = caps?.text_tokenizer?.pauses, ph = caps?.text_tokenizer?.phonemes;
-    if (!pauses && !ph) return;
     const box = el('fieldset', { className: 'zgroup' }, el('legend', { textContent: 'Pauses & pronunciation' }));
+    const ipaOut = el('div', { className: 'zipa' });
+    box.append(el('div', { className: 'zrow' }, btn('Preview pronunciation', () => previewPronunciation(ipaOut, ph)),
+      el('span', { className: 'hint', textContent: 'See how each word will sound (IPA). Select words first, or it reads your whole script.' })), ipaOut);
     if (pauses?.markers?.length) {
       box.append(el('p', { className: 'hint', textContent: 'Put the cursor after a word in your script, then add a pause.' }),
         el('div', { className: 'zchips' }, ...pauses.markers.map((m, i) => btn(`${pauses.seconds?.[i] ?? ''} s pause`, () => hooks.insert(m, ''), 'chip'))));
@@ -199,6 +220,10 @@ export function mountZonosPanel(root, hooks) {
     laci.onchange = () => { state.sampling = { ...state.sampling, laci: laci.checked }; changed(); };
     sampEls.set('laci', { input: laci });
     samp.append(el('label', { className: 'zconsent', htmlFor: 'zlaci' }, laci, el('span', { textContent: 'Guard against skipped or repeated words (slower)' })));
+    const live = el('input', { type: 'checkbox', id: 'zlive' });
+    live.onchange = () => { state.stream = live.checked; changed(); };
+    liveEl = live;
+    samp.append(el('label', { className: 'zconsent', htmlFor: 'zlive' }, live, el('span', { textContent: 'Start playing while it generates (you still get the finished audio)' })));
     body.append(samp);
 
     saveName = el('input', { type: 'text', placeholder: 'Name this voice', ariaLabel: 'Name for the saved voice', maxLength: 40 });
@@ -212,9 +237,14 @@ export function mountZonosPanel(root, hooks) {
         const { spans, ...keep } = state; // eslint-disable-line no-unused-vars
         hooks.onSave({ name, state: JSON.parse(JSON.stringify({ ...keep, spans: [] })) });
         status.textContent = `Saved "${name}".`;
-      })), deleteBtn));
+      }), btn('Add to cast', () => {
+        const name = saveName.value.trim() || hooks.current().name;
+        const { spans, ...keep } = state; // eslint-disable-line no-unused-vars
+        hooks.onCast({ name, state: JSON.parse(JSON.stringify({ ...keep, spans: [] })) });
+        status.textContent = `Added "${name}" to the cast. Open the Studio to write a scene.`;
+      }, 'small ghost')), el('p', { className: 'hint' }, el('a', { href: '/studio', textContent: 'Open the Studio: edit speech, direct a cast →' })), deleteBtn));
   }
-  let blendEls = null;
+  let blendEls = null, liveEl = null;
   const sampEls = new Map();
 
   function build() {
@@ -237,6 +267,7 @@ export function mountZonosPanel(root, hooks) {
       if (k === 'laci') input.checked = !!state.sampling?.laci;
       else { input.value = state.sampling?.[k] ?? SAMPLING_DEFAULTS[k]; val.textContent = input.value; }
     }
+    if (liveEl) liveEl.checked = !!state.stream;
     if (blendEls) { blendEls.sel.value = state.blend?.id || ''; blendEls.t.value = state.blend?.t ?? 0.5; }
     spanList.replaceChildren(...state.spans.map((s, i) => btn(`“${s.words.slice(0, 24)}” · ${s.label} ✕`, () => { state.spans = state.spans.filter((_, j) => j !== i); changed(); }, 'chip')));
     const v = hooks.current();
@@ -307,9 +338,54 @@ export function mountZonosPanel(root, hooks) {
     } catch { cloneNote.textContent = 'The microphone is not available. You can upload a file instead.'; }
   };
 
+  // -- speaker files (.npy): save a voice's fingerprint, or load one. Same consent as cloning.
+  const emb = { b64: null, name: '', on: false };
+  const embIn = el('input', { type: 'file', accept: '.npy', ariaLabel: 'Speaker file' });
+  const embUse = el('input', { type: 'checkbox', disabled: true });
+  const embNote = el('p', { className: 'hint', role: 'status' });
+  const embRow = el('label', { className: 'zconsent' }, embUse, el('span', { textContent: 'Speak with this speaker file instead of the voice above' }));
+  const download = (bytes, name) => {
+    const a = el('a', { href: URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' })), download: name });
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+  const SESSION = { 'Content-Type': 'application/json', 'X-TTS-Session-ID': 'voxa' };
+  const saveFile = btn('Save the speaker file (.npy)', () => guarded('Reading the voice…', async () => {
+    const cur = hooks.current();
+    let id = cur.source, label = cur.name;
+    if (clone.on && clone.bytes) {
+      const problem = cloneProblem({ consent: consent.checked, file: clone.file, seconds: clone.seconds });
+      if (problem) throw new Error(problem);
+      const r = await hooks.call('/v2/speakers', { method: 'POST', headers: SESSION, body: JSON.stringify({ label: 'clone', speaker_audio_base64: toBase64(clone.bytes), speaker_audio_name: 'clip' }) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `The voice could not be read (${r.status}).`);
+      id = (await r.json()).id; label = 'my-clone';
+    }
+    const e = await hooks.call(`/v2/speakers/${encodeURIComponent(id)}/embedding`, { headers: { 'X-TTS-Session-ID': 'voxa' } });
+    if (!e.ok) throw new Error((await e.json().catch(() => ({}))).detail || `The speaker file could not be made (${e.status}).`);
+    download(toNpy((await e.json()).embedding), `${label.replace(/[^\w.-]+/g, '-')}.npy`);
+  }), 'small');
+  embIn.onchange = async () => {
+    emb.b64 = null; emb.on = false; embUse.checked = false; embUse.disabled = true;
+    const f = embIn.files[0];
+    if (!f) { embNote.textContent = ''; changed(); return; }
+    try {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      fromNpy(bytes); // checks that it is a speaker vector
+      emb.b64 = toBase64(bytes); emb.name = f.name;
+      embNote.textContent = `${f.name}: a speaker file. Confirm permission above to use it.`;
+      embUse.disabled = !consent.checked;
+    } catch (e) { embNote.textContent = e.message; }
+    changed();
+  };
+  embUse.onchange = () => { emb.on = embUse.checked; changed(); };
+  const syncEmb = () => { embUse.disabled = !(emb.b64 && consent.checked); if (embUse.disabled) { embUse.checked = false; emb.on = false; } };
+  consent.addEventListener('change', syncEmb);
+
   const cloneBox = el('fieldset', { className: 'zgroup' }, el('legend', { textContent: 'Clone a voice' }),
     el('p', { className: 'hint', textContent: 'Give it a short clip and it speaks in that voice. The clip stays on this device: it is never uploaded, and it is forgotten when you close the page.' }),
-    consentLabel, el('div', { className: 'zrow' }, fileIn, recBtn), cloneNote, preview, clearBtn, useRow);
+    consentLabel, el('div', { className: 'zrow' }, fileIn, recBtn), cloneNote, preview, clearBtn, useRow,
+    el('h4', { textContent: 'Speaker files' }),
+    el('p', { className: 'hint', textContent: 'A speaker file (.npy) is a small fingerprint of a voice. Save one to reuse it later without the clip, or load one you saved. It needs the same permission as cloning, and is never stored by Voxa.' }),
+    el('div', { className: 'zrow' }, saveFile, embIn), embNote, embRow);
 
   const details = el('details', { className: 'zadv' }, el('summary', { textContent: 'Advanced: design the voice, or clone one' }),
     note, loadBtn, status, body, player, cloneBox);
@@ -327,10 +403,11 @@ export function mountZonosPanel(root, hooks) {
       const live = state.spans.filter(s => text.slice(s.start, s.end) === collapseWithMap(s.words).text);
       if (live.length) spans = live.map(({ start, end, controls }) => ({ start, end, controls }));
     }
-    if (clone.on && clone.bytes && !cloneProblem({ consent: consent.checked, file: clone.file, seconds: clone.seconds })) {
+    if (emb.on && emb.b64 && consent.checked) fields.speaker_embedding_base64 = emb.b64;
+    else if (clone.on && clone.bytes && !cloneProblem({ consent: consent.checked, file: clone.file, seconds: clone.seconds })) {
       fields.speaker_audio_base64 = toBase64(clone.bytes);
     }
-    return Object.keys(fields).length || spans ? { fields, spans } : undefined;
+    return Object.keys(fields).length || spans ? { fields, spans, stream: !!state.stream } : undefined;
   }
   return {
     options,
@@ -338,10 +415,10 @@ export function mountZonosPanel(root, hooks) {
     signature() {
       const o = options();
       if (!o) return '';
-      const f = { ...o.fields, speaker_audio_base64: o.fields.speaker_audio_base64 ? clone.file?.size + ':' + clone.file?.lastModified : undefined };
+      const f = { ...o.fields, speaker_audio_base64: o.fields.speaker_audio_base64 ? clone.file?.size + ':' + clone.file?.lastModified : undefined, speaker_embedding_base64: o.fields.speaker_embedding_base64 ? emb.name + ':' + emb.b64.length : undefined };
       return JSON.stringify({ f, s: o.spans });
     },
-    cloning: () => !!(clone.on && clone.bytes),
+    cloning: () => !!((clone.on && clone.bytes) || emb.on),
     /** Load the controls document now (a saved voice needs it to apply its settings). */
     ensure,
     show(on) { root.hidden = !on; },

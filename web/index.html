@@ -119,6 +119,7 @@
       <label for="expr">Expressiveness</label>
       <select id="expr"></select>
     </div>
+    <div class="field" id="zadv" hidden></div>
     <div class="field" id="pacebox">
       <label for="speed">Pacing <span class="val" id="speedv">1.00×</span></label>
       <input type="range" id="speed" min="0.6" max="1.4" step="0.05" value="1">
@@ -216,6 +217,21 @@ function describeVoice(){
   $('#voicenote').textContent=v?v.description:'';
   // On-device voices have expressiveness and takes but no pacing control; Kokoro the other way round.
   $('#litebox').hidden=!isLite(id); $('#pacebox').hidden=isLite(id); $('#newtake').hidden=true;
+  zonosPanelFor(v&&v.engine==='zonos'?v:null);
+}
+// ZONOS3 Mini's Advanced panel (steering sliders, voice cloning): loaded only when such a voice is chosen.
+let ZPANEL=null, ZVOICE=null;
+async function zonosPanelFor(v){
+  ZVOICE=v;
+  if(!v){ if(ZPANEL) ZPANEL.show(false); else $('#zadv').hidden=true; return; }
+  if(!ZPANEL){
+    try{
+      const [{mountZonosPanel}, {createLite}]=await Promise.all([import('/zonos-panel.js'), import('/lite.js?v={{LITE_VERSION}}')]);
+      LITE_ENGINES||=createLite(()=>({lite:LITE, phonon_version:PHONON_VERSION}));
+      ZPANEL=mountZonosPanel($('#zadv'), {loadControls:status=>LITE_ENGINES.zonosControls(ZVOICE, status)});
+    }catch(e){ $('#zadv').hidden=true; return; }
+  }
+  if(ZVOICE===v) ZPANEL.show(true);
 }
 langSel.addEventListener('change',refreshVoices);
 voiceSel.addEventListener('change',describeVoice);
@@ -438,14 +454,15 @@ let LITE_ENGINES=null, LITE_SEED=4242424242424242;
 const LITE_CACHE=new Map();
 async function generateLite(text, voiceId, st, signal){
   const v=LITE_BY_ID[voiceId], temperature=+$('#expr').value;
-  const key=[text,voiceId,temperature,LITE_SEED].join('|');
+  const zonos=v.engine==='zonos'&&ZPANEL?ZPANEL.options():undefined;
+  const key=[text,voiceId,temperature,LITE_SEED,zonos?ZPANEL.signature():''].join('|');
   if(LITE_CACHE.has(key)) return {blob:LITE_CACHE.get(key), cached:true};
   st.textContent='Starting the on-device voice…';
   const [{createLite}, {encodeWav, floatToInt16, SAMPLE_RATE}]=await Promise.all([import('/lite.js?v={{LITE_VERSION}}'), import('/book.js?v={{BOOK_VERSION}}')]);
   LITE_ENGINES||=createLite(()=>({lite:LITE, phonon_version:PHONON_VERSION}));
   let audio;
   try{
-    audio=await LITE_ENGINES.synth(v, text, {temperature, seed:LITE_SEED, signal, status:t=>{
+    audio=await LITE_ENGINES.synth(v, text, {temperature, seed:LITE_SEED, signal, zonos, status:t=>{
       st.textContent=t.startsWith('Loading')||t.startsWith('Downloading')?t:'Generating on this device…';
     }});
   }catch(e){

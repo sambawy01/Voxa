@@ -50,7 +50,7 @@ jobs:
         if: steps.check.outputs.ready == 'true'
         run: |
           modal run gpu/compare.py 2>&1 | tee compare.log
-          { echo "## Voice comparison"; echo; echo '```'; grep -E '^(chatterbox|qwen|kokoro) ' compare.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "## Voice comparison"; echo; echo '```'; grep -E '^(chatterbox|qwen|audio8|kokoro) ' compare.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: steps.check.outputs.ready == 'true'

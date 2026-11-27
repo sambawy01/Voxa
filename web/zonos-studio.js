@@ -103,36 +103,22 @@ $('#eOrig').oninput = paintDiff; $('#eTarget').oninput = paintDiff;
 const b64 = bytes => toBase64(bytes);
 async function wavBlob(base64) { return new Blob([Uint8Array.from(atob(base64), c => c.charCodeAt(0))], { type: 'audio/wav' }); }
 
-$('#eTranscribe').onclick = async () => {
-  $('#eErr').textContent = '';
-  if (!E.bytes) { $('#eErr').textContent = 'Choose or record a recording first.'; return; }
-  if (!$('#eConsent').checked) { $('#eErr').textContent = 'Please confirm you have the speaker\'s permission.'; return; }
-  const btn = $('#eTranscribe'); btn.disabled = true; $('#eNote').textContent = 'Listening to the recording…';
-  try {
-    const r = await call(eVoice(), '/v2/edit/transcribe', { method: 'POST', headers: JSONH, body: JSON.stringify({ audio_base64: b64(E.bytes), language: eVoice().code }) }, t => { $('#eNote').textContent = t; });
-    if (!r.ok) throw new Error(await detail(r, `It could not transcribe the recording (${r.status}). Type what it says instead.`));
-    const doc = await r.json();
-    $('#eOrig').value = doc.text; paintDiff(); $('#eNote').textContent = `Transcribed: ${doc.words?.length ?? 0} words.`;
-  } catch (e) { $('#eErr').textContent = errText(e); $('#eNote').textContent = ''; }
-  btn.disabled = false;
-};
-
 $('#eGo').onclick = async () => {
   const err = $('#eErr'); err.textContent = '';
   if (!E.bytes) { err.textContent = 'Choose or record a recording first.'; return; }
   if (E.seconds > EDIT_MAX_SECONDS) { err.textContent = `A recording can be at most ${EDIT_MAX_SECONDS} seconds.`; return; }
   if (!$('#eConsent').checked) { err.textContent = 'Please confirm you have the speaker\'s permission.'; return; }
   const target = $('#eTarget').value.trim(), original = $('#eOrig').value.trim();
+  if (!original) { err.textContent = 'Type what the recording says in the first box: this browser version cannot recognise speech by itself.'; return; }
   if (!target) { err.textContent = 'Write what the recording should say.'; return; }
-  if (original && !changedCount(diffWords(original, target))) { err.textContent = 'The two texts are the same: nothing to change.'; return; }
+  if (!changedCount(diffWords(original, target))) { err.textContent = 'The two texts are the same: nothing to change.'; return; }
   const go = $('#eGo'); go.disabled = true; $('#eCancel').hidden = false;
   E.abort = new AbortController();
   $('#eNote').textContent = 'Starting the voice…';
   try {
-    const body = { audio_base64: b64(E.bytes), target_text: target, language: eVoice().code, num_takes: +$('#eTakes').value };
-    if (original) body.original_text = original;
+    const body = { audio_base64: b64(E.bytes), original_text: original, target_text: target, language: eVoice().code, num_takes: +$('#eTakes').value };
     const r = await call(eVoice(), '/v2/edit', { method: 'POST', headers: JSONH, signal: E.abort.signal, body: JSON.stringify(body) }, t => { $('#eNote').textContent = t; });
-    if (!r.ok) throw new Error(await detail(r, `The edit failed (${r.status}).` + (original ? '' : ' If the recording\'s words are not recognised, type them in the first box.')));
+    if (!r.ok) throw new Error(await detail(r, `The edit failed (${r.status}).` + ''));
     const doc = await r.json();
     const out = $('#eTakesOut'); out.replaceChildren();
     for (const [i, t] of doc.takes.entries()) {

@@ -6,7 +6,7 @@
 import {
   applyPreset, requestFields, hasSettings, cloneProblem, toBase64, CONSENT_TEXT, CLONE_MAX_SECONDS,
   identityOf, isSameVoice, moodPoint, setMoodFromPad, chooseEmotion, nearbyVoices, blendFields, samplingFields,
-  SAMPLING_DEFAULTS, collapseWithMap, toSpan,
+  SAMPLING_DEFAULTS, collapseWithMap, toSpan, withEmbeddingMode,
 } from '/zonos-controls.js';
 import { toNpy, fromNpy } from '/zonos-studio-logic.js';
 
@@ -413,6 +413,7 @@ export function mountZonosPanel(root, hooks) {
     else if (clone.on && clone.bytes && !cloneProblem({ consent: consent.checked, file: clone.file, seconds: clone.seconds })) {
       fields.speaker_audio_base64 = toBase64(clone.bytes);
     }
+    fields = withEmbeddingMode(fields);
     return Object.keys(fields).length || spans ? { fields, spans, stream: !!state.stream } : undefined;
   }
   return {

@@ -138,3 +138,12 @@ test('spans follow the words they were marked on, through whitespace and chunkin
   assert.equal(toSpan(ui, { start: 3, end: 3 }, map, { happy: 4 }), null);
   assert.equal(toSpan(ui, { start, end }, map, {}), null);
 });
+
+import { withEmbeddingMode } from '../web/zonos-controls.js';
+
+test('speaker files and blends ask for embedding mode, which the engine requires', () => {
+  assert.equal(withEmbeddingMode({ speaker_embedding_base64: 'x' }).speaker_mode, 'embedding');
+  assert.equal(withEmbeddingMode({ speaker_blend_embedding_id_a: 'a', speaker_blend_embedding_id_b: 'b', speaker_blend_t: 0.5 }).speaker_mode, 'embedding');
+  assert.deepEqual(withEmbeddingMode({ controls: { a: 1 } }), { controls: { a: 1 } });
+  assert.equal(withEmbeddingMode({ speaker_embedding_base64: 'x', speaker_mode: 'reference' }).speaker_mode, 'reference');
+});

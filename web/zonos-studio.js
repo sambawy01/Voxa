@@ -116,7 +116,9 @@ $('#eGo').onclick = async () => {
   E.abort = new AbortController();
   $('#eNote').textContent = 'Starting the voice…';
   try {
-    const body = { audio_base64: b64(E.bytes), original_text: original, target_text: target, language: eVoice().code, num_takes: +$('#eTakes').value };
+    const body = { audio_base64: b64(E.bytes), original_text: original, target_text: target, language: eVoice().code, num_takes: +$('#eTakes').value,
+      // The browser engine cannot compute a speaker embedding from a recording (it answers 400), so the edit uses the clip itself as the voice reference.
+      speaker_embedding: false };
     const r = await call(eVoice(), '/v2/edit', { method: 'POST', headers: JSONH, signal: E.abort.signal, body: JSON.stringify(body) }, t => { $('#eNote').textContent = t; });
     if (!r.ok) throw new Error(await detail(r, `The edit failed (${r.status}).` + ''));
     const doc = await r.json();

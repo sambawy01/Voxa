@@ -177,8 +177,11 @@ export function mountZonosPanel(root, hooks) {
     const pauses = caps?.text_tokenizer?.pauses, ph = caps?.text_tokenizer?.phonemes;
     const box = el('fieldset', { className: 'zgroup' }, el('legend', { textContent: 'Pauses & pronunciation' }));
     const ipaOut = el('div', { className: 'zipa' });
-    box.append(el('div', { className: 'zrow' }, btn('Preview pronunciation', () => previewPronunciation(ipaOut, ph)),
-      el('span', { className: 'hint', textContent: 'See how each word will sound (IPA). Select words first, or it reads your whole script.' })), ipaOut);
+    if (caps?.phonemize_enabled) {
+      box.append(el('div', { className: 'zrow' }, btn('Preview pronunciation', () => previewPronunciation(ipaOut, ph)),
+        el('span', { className: 'hint', textContent: 'See how each word will sound (IPA). Select words first, or it reads your whole script.' })), ipaOut);
+    }
+    if (!pauses?.markers?.length && !(caps?.phonemize_enabled) && !ph) return;
     if (pauses?.markers?.length) {
       box.append(el('p', { className: 'hint', textContent: 'Put the cursor after a word in your script, then add a pause.' }),
         el('div', { className: 'zchips' }, ...pauses.markers.map((m, i) => btn(`${pauses.seconds?.[i] ?? ''} s pause`, () => hooks.insert(m, ''), 'chip'))));
@@ -193,7 +196,7 @@ export function mountZonosPanel(root, hooks) {
   // -- blend two voices, sampling, save
   function buildMore() {
     const others = hooks.voices();
-    if (others.length > 1) {
+    if (others.length > 1 && caps?.speaker_embedding_blend) {
       const sel = el('select', { ariaLabel: 'Second voice' }, el('option', { value: '', textContent: 'No blend' }),
         ...others.map(v => el('option', { value: v.id, textContent: v.name })));
       const t = el('input', { type: 'range', min: 0, max: 1, step: 0.05, value: 0.5, ariaLabel: 'Blend position' });
@@ -278,6 +281,7 @@ export function mountZonosPanel(root, hooks) {
     if (ui) return;
     const doc = await loadControls(report);
     ui = doc.ui; caps = doc.capabilities || null;
+    spkBox.hidden = !caps?.speaker_embedding_upload;
     build(); loadBtn.hidden = true; note.hidden = true;
   }
   loadBtn.onclick = async () => {
@@ -380,12 +384,14 @@ export function mountZonosPanel(root, hooks) {
   const syncEmb = () => { embUse.disabled = !(emb.b64 && consent.checked); if (embUse.disabled) { embUse.checked = false; emb.on = false; } };
   consent.addEventListener('change', syncEmb);
 
-  const cloneBox = el('fieldset', { className: 'zgroup' }, el('legend', { textContent: 'Clone a voice' }),
-    el('p', { className: 'hint', textContent: 'Give it a short clip and it speaks in that voice. The clip stays on this device: it is never uploaded, and it is forgotten when you close the page.' }),
-    consentLabel, el('div', { className: 'zrow' }, fileIn, recBtn), cloneNote, preview, clearBtn, useRow,
+  // Speaker files only work on checkpoints that take embeddings (speaker_embedding_upload); shown once the engine says so.
+  const spkBox = el('div', { hidden: true },
     el('h4', { textContent: 'Speaker files' }),
     el('p', { className: 'hint', textContent: 'A speaker file (.npy) is a small fingerprint of a voice. Save one to reuse it later without the clip, or load one you saved. It needs the same permission as cloning, and is never stored by Voxa.' }),
     el('div', { className: 'zrow' }, saveFile, embIn), embNote, embRow);
+  const cloneBox = el('fieldset', { className: 'zgroup' }, el('legend', { textContent: 'Clone a voice' }),
+    el('p', { className: 'hint', textContent: 'Give it a short clip and it speaks in that voice. The clip stays on this device: it is never uploaded, and it is forgotten when you close the page.' }),
+    consentLabel, el('div', { className: 'zrow' }, fileIn, recBtn), cloneNote, preview, clearBtn, useRow, spkBox);
 
   const details = el('details', { className: 'zadv' }, el('summary', { textContent: 'Advanced: design the voice, or clone one' }),
     note, loadBtn, status, body, player, cloneBox);
@@ -403,7 +409,7 @@ export function mountZonosPanel(root, hooks) {
       const live = state.spans.filter(s => text.slice(s.start, s.end) === collapseWithMap(s.words).text);
       if (live.length) spans = live.map(({ start, end, controls }) => ({ start, end, controls }));
     }
-    if (emb.on && emb.b64 && consent.checked) fields.speaker_embedding_base64 = emb.b64;
+    if (emb.on && emb.b64 && consent.checked && caps?.speaker_embedding_upload) fields.speaker_embedding_base64 = emb.b64;
     else if (clone.on && clone.bytes && !cloneProblem({ consent: consent.checked, file: clone.file, seconds: clone.seconds })) {
       fields.speaker_audio_base64 = toBase64(clone.bytes);
     }

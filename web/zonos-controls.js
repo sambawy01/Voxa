@@ -211,3 +211,13 @@ export function toSpan(ui, raw, map, sliders) {
   if (!Object.keys(controls).length || raw.end <= raw.start) return null;
   return { start: map[raw.start], end: map[raw.end], controls };
 }
+
+/**
+ * Speaker files and voice blends only work when the request says speaker_mode "embedding": without it the engine
+ * uses the checkpoint's default (raw reference audio) and answers 400 "does not accept speaker embedding files or
+ * embedding blends". Found by running the real engine.
+ */
+export function withEmbeddingMode(fields) {
+  const needs = fields.speaker_embedding_base64 || fields.speaker_blend_embedding_id_a || fields.speaker_blend_embedding_id_b;
+  return needs && !fields.speaker_mode ? { ...fields, speaker_mode: 'embedding' } : fields;
+}
